@@ -1,0 +1,539 @@
+:root {
+  color: #18202f;
+  background: #f6f7f9;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr);
+  min-height: 100vh;
+  background: #f5f6f8;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-right: 1px solid #dde1e7;
+  background: #fbfcfd;
+  padding: 18px 14px;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+
+.brand-block strong,
+.brand-block span {
+  display: block;
+}
+
+.brand-block strong {
+  color: #111827;
+  font-size: 15px;
+}
+
+.brand-block span {
+  margin-top: 2px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.brand-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: #243142;
+  color: #ffffff;
+}
+
+.new-doc-button,
+.primary-button,
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.new-doc-button,
+.primary-button {
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.secondary-button {
+  border: 1px solid #d7dce3;
+  background: #ffffff;
+  color: #263143;
+}
+
+.document-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.document-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  padding: 10px;
+  color: #303847;
+  text-align: left;
+}
+
+.document-item:hover,
+.document-item-active {
+  border-color: #cdd5df;
+  background: #ffffff;
+}
+
+.document-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.document-item time {
+  color: #77808d;
+  font-size: 12px;
+}
+
+.workspace {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 64px;
+  border-bottom: 1px solid #dde1e7;
+  background: #ffffff;
+  padding: 12px 18px;
+}
+
+.document-title {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  color: #4b5563;
+}
+
+.document-title input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: #101827;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(4, 34px);
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid #d8dde5;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.segmented-control button,
+.icon-button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #405064;
+}
+
+.segmented-control button.active,
+.icon-button:hover {
+  background: #243142;
+  color: #ffffff;
+}
+
+.icon-button {
+  border: 1px solid #d8dde5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 34px;
+  border-bottom: 1px solid #e3e7ec;
+  background: #fbfcfd;
+  padding: 0 18px;
+  color: #687385;
+  font-size: 12px;
+}
+
+.statusbar span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.editor-layout {
+  display: grid;
+  min-height: 0;
+}
+
+.editor-layout-typora {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.editor-layout-split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.editor-layout-source,
+.editor-layout-preview {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.markdown-input,
+.markdown-preview,
+.typora-editor {
+  min-width: 0;
+  min-height: 0;
+  height: calc(100vh - 98px);
+  overflow: auto;
+}
+
+.markdown-input {
+  resize: none;
+  border: 0;
+  border-right: 1px solid #dde1e7;
+  outline: none;
+  background: #ffffff;
+  padding: 34px min(7vw, 72px);
+  color: #1f2937;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
+    monospace;
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.editor-layout-source .markdown-input {
+  border-right: 0;
+}
+
+.markdown-preview,
+.typora-editor {
+  background: #ffffff;
+  padding: 32px min(7vw, 78px);
+  line-height: 1.78;
+}
+
+.markdown-preview > *:first-child,
+.typora-rendered-block > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.typora-rendered-block h1,
+.typora-rendered-block h2,
+.typora-rendered-block h3 {
+  color: #111827;
+  line-height: 1.25;
+}
+
+.markdown-preview h1,
+.typora-rendered-block h1 {
+  margin-bottom: 0.8em;
+  font-size: 2.1rem;
+}
+
+.markdown-preview h2,
+.typora-rendered-block h2 {
+  margin-top: 1.7em;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 0.3em;
+  font-size: 1.45rem;
+}
+
+.markdown-preview p,
+.markdown-preview li,
+.markdown-preview td,
+.markdown-preview th,
+.typora-rendered-block p,
+.typora-rendered-block li,
+.typora-rendered-block td,
+.typora-rendered-block th {
+  color: #2d3748;
+}
+
+.markdown-preview code,
+.typora-rendered-block code {
+  border-radius: 5px;
+  background: #eef2f6;
+  padding: 0.15em 0.35em;
+  font-size: 0.88em;
+}
+
+.markdown-preview pre,
+.typora-rendered-block pre {
+  overflow: auto;
+  border-radius: 8px;
+  background: #1f2937;
+  padding: 16px;
+}
+
+.markdown-preview pre code,
+.typora-rendered-block pre code {
+  background: transparent;
+  color: #eef2ff;
+  padding: 0;
+}
+
+.markdown-preview blockquote,
+.typora-rendered-block blockquote {
+  margin-left: 0;
+  border-left: 4px solid #14b8a6;
+  background: #f0fdfa;
+  padding: 8px 16px;
+  color: #335155;
+}
+
+.markdown-preview table,
+.typora-rendered-block table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.markdown-preview th,
+.markdown-preview td,
+.typora-rendered-block th,
+.typora-rendered-block td {
+  border: 1px solid #dbe2ea;
+  padding: 8px 10px;
+}
+
+.markdown-preview th,
+.typora-rendered-block th {
+  background: #f6f8fb;
+}
+
+.markdown-preview img,
+.typora-rendered-block img {
+  max-width: 100%;
+  border: 1px solid #e1e6ee;
+  border-radius: 8px;
+}
+
+.typora-editor {
+  max-width: none;
+}
+
+.typora-rendered-block {
+  margin: 0 auto 12px;
+  max-width: 860px;
+  border-radius: 6px;
+  padding: 2px 8px;
+  outline: 0;
+}
+
+.typora-rendered-block:hover,
+.typora-rendered-block:focus-visible {
+  background: #f7fafc;
+}
+
+.typora-rendered-block > *:last-child {
+  margin-bottom: 0;
+}
+
+.typora-rendered-dense {
+  margin-bottom: 16px;
+}
+
+.typora-block-input {
+  display: block;
+  width: min(860px, 100%);
+  min-height: 42px;
+  margin: 0 auto 12px;
+  resize: none;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  outline: 2px solid transparent;
+  background: #f9fbfd;
+  padding: 8px;
+  color: #1f2937;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
+    monospace;
+  font-size: 15px;
+  line-height: 1.78;
+}
+
+.typora-block-input:focus {
+  outline-color: #c7d2fe;
+}
+
+.typora-block-heading {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.typora-block-code {
+  background: #1f2937;
+  color: #eef2ff;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.56);
+  padding: 24px;
+}
+
+.drawing-modal {
+  display: grid;
+  width: min(1180px, 100%);
+  height: min(780px, calc(100vh - 48px));
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 22px 70px rgba(15, 23, 42, 0.3);
+}
+
+.drawing-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #dde1e7;
+  padding: 12px;
+}
+
+.drawing-toolbar > div {
+  display: flex;
+  gap: 8px;
+}
+
+.drawing-surface {
+  min-height: 0;
+}
+
+.drawing-loading {
+  place-items: center;
+  color: #667085;
+}
+
+@media (max-width: 860px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .toolbar-actions {
+    justify-content: space-between;
+  }
+
+  .statusbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 18px;
+  }
+
+  .editor-layout-split {
+    grid-template-columns: 1fr;
+  }
+
+  .editor-layout-split .markdown-preview {
+    display: none;
+  }
+
+  .markdown-input,
+  .markdown-preview,
+  .typora-editor {
+    height: calc(100vh - 142px);
+    padding: 24px 18px;
+  }
+
+  .typora-block-input,
+  .typora-rendered-block {
+    width: 100%;
+    max-width: 100%;
+  }
+}
