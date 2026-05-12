@@ -1,5 +1,7 @@
 node_modules/
 dist/
+out/
+.idea/
 .env
 .env.local
 npm-debug.log*

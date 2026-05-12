@@ -26,14 +26,19 @@ const defaultMarkdown = `# 项目方案
 
 `;
 
-export function createDocument(title = "未命名文档"): MarkdownDocument {
+export function createDocument(
+  title = "未命名文档",
+  content = defaultMarkdown,
+  filePath?: string,
+): MarkdownDocument {
   const timestamp = now();
 
   return {
     id: crypto.randomUUID(),
     title,
-    content: defaultMarkdown,
+    content,
     drawings: {},
+    filePath,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
