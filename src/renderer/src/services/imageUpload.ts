@@ -2,6 +2,10 @@ import type { UploadResult } from "../types";
 
 const endpoint = import.meta.env.VITE_IMAGE_UPLOAD_ENDPOINT as string | undefined;
 
+export type ImageUploadOptions = {
+  endpoint?: string;
+};
+
 export async function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -11,8 +15,13 @@ export async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-export async function uploadImage(file: File): Promise<UploadResult> {
-  if (!endpoint) {
+export async function uploadImage(
+  file: File,
+  options: ImageUploadOptions = {},
+): Promise<UploadResult> {
+  const uploadEndpoint = options.endpoint || endpoint;
+
+  if (!uploadEndpoint) {
     return {
       url: await fileToDataUrl(file),
       storage: "embedded",
@@ -22,7 +31,7 @@ export async function uploadImage(file: File): Promise<UploadResult> {
   const form = new FormData();
   form.set("file", file);
 
-  const response = await fetch(endpoint, {
+  const response = await fetch(uploadEndpoint, {
     method: "POST",
     body: form,
   });

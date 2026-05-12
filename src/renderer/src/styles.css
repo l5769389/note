@@ -177,6 +177,19 @@ button {
   background: #f1eadf;
 }
 
+.theme-dot-github {
+  background: #f6f8fa;
+}
+
+.theme-dot-newsprint {
+  background: #f5f0df;
+}
+
+.theme-dot-night {
+  border-color: #334155;
+  background: #0f172a;
+}
+
 .theme-dot-dark {
   border-color: #4b5563;
   background: #20242c;
@@ -1082,27 +1095,40 @@ button {
 .markdown-preview code,
 .typora-mdx-content code,
 .typora-editor code {
-  border-radius: 5px;
-  background: #eef2f6;
-  padding: 0.15em 0.35em;
-  font-size: 0.88em;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background: #f1f4f8;
+  box-decoration-break: clone;
+  color: #15305b;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
+    monospace;
+  font-size: 0.86em;
+  line-height: 1;
+  padding: 0.12em 0.34em;
+  vertical-align: 0.04em;
 }
 
 .markdown-preview pre,
 .typora-mdx-content pre,
 .typora-code-block {
   overflow: auto;
-  border-radius: 8px;
-  background: #1f2937;
-  padding: 16px;
+  border: 1px solid #e3e8ef;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #24292f;
+  padding: 16px 18px;
 }
 
 .markdown-preview pre code,
 .typora-mdx-content pre code,
 .typora-code-block code {
+  border: 0;
   background: transparent;
-  color: #eef2ff;
+  color: inherit;
   padding: 0;
+  vertical-align: baseline;
+  white-space: inherit;
 }
 
 .markdown-preview blockquote,
@@ -1273,6 +1299,11 @@ button {
   color: #2d3748;
 }
 
+.typora-milkdown-content .ProseMirror *::grammar-error,
+.typora-milkdown-content .ProseMirror *::spelling-error {
+  text-decoration: none;
+}
+
 .typora-milkdown-content .ProseMirror > *:first-child {
   margin-top: 0;
 }
@@ -1308,6 +1339,14 @@ button {
   line-height: 1.25;
 }
 
+.typora-milkdown-content .ProseMirror .typora-active-heading::before {
+  color: #9aa4b2;
+  content: attr(data-heading-prefix);
+  font-size: 0.78em;
+  font-weight: 500;
+  margin-right: 0.22em;
+}
+
 .typora-milkdown-content .ProseMirror p {
   margin-top: 0;
   margin-bottom: 0.9em;
@@ -1328,20 +1367,41 @@ button {
 }
 
 .typora-milkdown-content .ProseMirror code {
-  border-radius: 5px;
-  background: #eef2f6;
-  padding: 0.15em 0.35em;
-  font-size: 0.88em;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background: #f1f4f8;
+  box-decoration-break: clone;
+  color: #15305b;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
+    monospace;
+  font-size: 0.86em;
+  line-height: 1;
+  padding: 0.12em 0.34em;
+  vertical-align: 0.04em;
+}
+
+.typora-milkdown-content .ProseMirror .typora-active-inline-code {
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.12);
+}
+
+.typora-markdown-syntax-marker {
+  color: #7b8794;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
+    monospace;
+  font-size: 0.86em;
 }
 
 .typora-milkdown-content .ProseMirror pre {
   position: relative;
   overflow: auto;
-  border-radius: 0;
-  background: #dedede;
-  margin: 1.25em 2.25em;
-  padding: 14px 22px;
-  color: #000000;
+  border: 1px solid #dde3eb;
+  border-radius: 7px;
+  background: #f6f8fa;
+  margin: 1.25em 0;
+  padding: 15px 18px;
+  color: #24292f;
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 0.95em;
   line-height: 1.55;
@@ -1350,6 +1410,7 @@ button {
 }
 
 .typora-milkdown-content .ProseMirror pre code {
+  border: 0;
   background: transparent;
   color: inherit;
   padding: 0;
@@ -1364,35 +1425,59 @@ button {
 
 .typora-milkdown-content .ProseMirror pre.typora-code-block-active::after {
   position: absolute;
-  right: 0;
-  bottom: -2.55em;
+  right: 8px;
+  bottom: -2.45em;
   display: grid;
-  min-width: 18em;
-  height: 2em;
+  min-width: 8em;
+  height: 1.9em;
   place-items: center;
-  border-radius: 3px;
-  background: #dedede;
-  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.16);
-  color: #111111;
+  border: 1px solid #dde3eb;
+  border-radius: 5px;
+  background: #ffffff;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.1);
+  color: #536471;
   content: attr(data-code-language);
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 0.9em;
+  font-size: 0.82em;
   line-height: 1;
+  text-transform: uppercase;
 }
 
 .typora-milkdown-content .ProseMirror pre.ProseMirror-selectednode {
   outline: none;
 }
 
+.typora-milkdown-content .ProseMirror pre[data-code-language="javascript"]::after,
+.typora-milkdown-content .ProseMirror pre[data-code-language="js"]::after {
+  color: #9a6700;
+}
+
+.typora-milkdown-content .ProseMirror pre[data-code-language="typescript"]::after,
+.typora-milkdown-content .ProseMirror pre[data-code-language="ts"]::after,
+.typora-milkdown-content .ProseMirror pre[data-code-language="tsx"]::after {
+  color: #0969da;
+}
+
+.typora-milkdown-content .ProseMirror pre[data-code-language="css"]::after,
+.typora-milkdown-content .ProseMirror pre[data-code-language="html"]::after,
+.typora-milkdown-content .ProseMirror pre[data-code-language="xml"]::after {
+  color: #8250df;
+}
+
+.typora-milkdown-content .ProseMirror pre[data-code-language="python"]::after,
+.typora-milkdown-content .ProseMirror pre[data-code-language="py"]::after {
+  color: #1a7f37;
+}
+
 .typora-milkdown-content .ProseMirror pre .token.comment,
 .typora-milkdown-content .ProseMirror pre .token.prolog,
 .typora-milkdown-content .ProseMirror pre .token.doctype,
 .typora-milkdown-content .ProseMirror pre .token.cdata {
-  color: #6a737d;
+  color: #6e7781;
 }
 
 .typora-milkdown-content .ProseMirror pre .token.punctuation {
-  color: #000000;
+  color: #57606a;
 }
 
 .typora-milkdown-content .ProseMirror pre .token.property,
@@ -1400,12 +1485,12 @@ button {
 .typora-milkdown-content .ProseMirror pre .token.constant,
 .typora-milkdown-content .ProseMirror pre .token.symbol,
 .typora-milkdown-content .ProseMirror pre .token.deleted {
-  color: #a31515;
+  color: #cf222e;
 }
 
 .typora-milkdown-content .ProseMirror pre .token.boolean,
 .typora-milkdown-content .ProseMirror pre .token.number {
-  color: #811f9f;
+  color: #0550ae;
 }
 
 .typora-milkdown-content .ProseMirror pre .token.selector,
@@ -1414,30 +1499,115 @@ button {
 .typora-milkdown-content .ProseMirror pre .token.char,
 .typora-milkdown-content .ProseMirror pre .token.builtin,
 .typora-milkdown-content .ProseMirror pre .token.inserted {
-  color: #008000;
+  color: #0a7f42;
 }
 
 .typora-milkdown-content .ProseMirror pre .token.operator,
 .typora-milkdown-content .ProseMirror pre .token.entity,
 .typora-milkdown-content .ProseMirror pre .token.url,
 .typora-milkdown-content .ProseMirror pre .token.variable {
-  color: #9a3412;
+  color: #953800;
 }
 
 .typora-milkdown-content .ProseMirror pre .token.atrule,
 .typora-milkdown-content .ProseMirror pre .token.attr-value,
 .typora-milkdown-content .ProseMirror pre .token.function,
 .typora-milkdown-content .ProseMirror pre .token.class-name {
-  color: #000000;
+  color: #8250df;
 }
 
 .typora-milkdown-content .ProseMirror pre .token.keyword {
-  color: #0000ff;
+  color: #cf222e;
 }
 
 .typora-milkdown-content .ProseMirror pre .token.regex,
 .typora-milkdown-content .ProseMirror pre .token.important {
-  color: #b000b0;
+  color: #116329;
+}
+
+.markdown-preview pre .token.comment,
+.markdown-preview pre .token.prolog,
+.markdown-preview pre .token.doctype,
+.markdown-preview pre .token.cdata,
+.typora-mdx-content pre .token.comment,
+.typora-mdx-content pre .token.prolog,
+.typora-mdx-content pre .token.doctype,
+.typora-mdx-content pre .token.cdata {
+  color: #6e7781;
+}
+
+.markdown-preview pre .token.punctuation,
+.typora-mdx-content pre .token.punctuation {
+  color: #57606a;
+}
+
+.markdown-preview pre .token.property,
+.markdown-preview pre .token.tag,
+.markdown-preview pre .token.constant,
+.markdown-preview pre .token.symbol,
+.markdown-preview pre .token.deleted,
+.typora-mdx-content pre .token.property,
+.typora-mdx-content pre .token.tag,
+.typora-mdx-content pre .token.constant,
+.typora-mdx-content pre .token.symbol,
+.typora-mdx-content pre .token.deleted {
+  color: #cf222e;
+}
+
+.markdown-preview pre .token.boolean,
+.markdown-preview pre .token.number,
+.typora-mdx-content pre .token.boolean,
+.typora-mdx-content pre .token.number {
+  color: #0550ae;
+}
+
+.markdown-preview pre .token.selector,
+.markdown-preview pre .token.attr-name,
+.markdown-preview pre .token.string,
+.markdown-preview pre .token.char,
+.markdown-preview pre .token.builtin,
+.markdown-preview pre .token.inserted,
+.typora-mdx-content pre .token.selector,
+.typora-mdx-content pre .token.attr-name,
+.typora-mdx-content pre .token.string,
+.typora-mdx-content pre .token.char,
+.typora-mdx-content pre .token.builtin,
+.typora-mdx-content pre .token.inserted {
+  color: #0a7f42;
+}
+
+.markdown-preview pre .token.operator,
+.markdown-preview pre .token.entity,
+.markdown-preview pre .token.url,
+.markdown-preview pre .token.variable,
+.typora-mdx-content pre .token.operator,
+.typora-mdx-content pre .token.entity,
+.typora-mdx-content pre .token.url,
+.typora-mdx-content pre .token.variable {
+  color: #953800;
+}
+
+.markdown-preview pre .token.atrule,
+.markdown-preview pre .token.attr-value,
+.markdown-preview pre .token.function,
+.markdown-preview pre .token.class-name,
+.typora-mdx-content pre .token.atrule,
+.typora-mdx-content pre .token.attr-value,
+.typora-mdx-content pre .token.function,
+.typora-mdx-content pre .token.class-name {
+  color: #8250df;
+}
+
+.markdown-preview pre .token.keyword,
+.typora-mdx-content pre .token.keyword {
+  color: #cf222e;
+}
+
+.markdown-preview pre .token.regex,
+.markdown-preview pre .token.important,
+.typora-mdx-content pre .token.regex,
+.typora-mdx-content pre .token.important {
+  color: #116329;
 }
 
 .typora-milkdown-content .ProseMirror blockquote {
@@ -1494,6 +1664,11 @@ button {
   margin: 1.1em 0 1.25em;
   border-collapse: collapse;
   table-layout: fixed;
+  transition: box-shadow 140ms ease;
+}
+
+.typora-milkdown-content .ProseMirror table:hover {
+  box-shadow: 0 0 0 2px rgba(122, 183, 245, 0.16);
 }
 
 .typora-milkdown-content .ProseMirror th,
@@ -1545,28 +1720,26 @@ button {
 .milkdown-table-toolbar {
   position: absolute;
   z-index: 8;
+  display: block;
+  max-width: calc(100% - 16px);
+  min-height: 30px;
+  color: #172033;
+}
+
+.milkdown-table-toolbar-main {
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: calc(100% - 16px);
-  min-height: 34px;
-  border: 1px solid #d9dee6;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.96);
-  padding: 4px 6px;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  justify-content: space-between;
+  gap: 12px;
+  height: 30px;
+  background: rgba(255, 255, 255, 0.88);
   backdrop-filter: blur(8px);
 }
 
-.milkdown-table-toolbar-group {
-  display: flex;
+.milkdown-table-toolbar-side {
+  display: inline-flex;
   align-items: center;
-  gap: 2px;
-}
-
-.milkdown-table-toolbar-group + .milkdown-table-toolbar-group {
-  border-left: 1px solid #e4e8ee;
-  padding-left: 6px;
+  gap: 4px;
 }
 
 .milkdown-table-toolbar-button {
@@ -1574,24 +1747,142 @@ button {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  min-width: 28px;
+  min-width: 26px;
   height: 26px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
-  color: #2f3a4b;
-  padding: 0 6px;
+  color: #172033;
+  padding: 0 5px;
   font-size: 12px;
   line-height: 1;
 }
 
 .milkdown-table-toolbar-button:hover {
-  background: #eef2f6;
+  background: rgba(226, 232, 240, 0.82);
   color: #111827;
 }
 
 .milkdown-table-toolbar-button:focus-visible {
   outline: 2px solid #8fb7ff;
+  outline-offset: 1px;
+}
+
+.milkdown-table-toolbar-text-button {
+  min-width: 34px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.milkdown-table-more-menu {
+  position: absolute;
+  top: 30px;
+  right: 34px;
+  z-index: 10;
+  min-width: 136px;
+  border: 1px solid #d6dce6;
+  border-radius: 7px;
+  background: #fff;
+  padding: 6px;
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.18);
+}
+
+.milkdown-table-more-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #172033;
+  padding: 7px 9px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.milkdown-table-more-menu button:hover {
+  background: #eef2f6;
+}
+
+.milkdown-table-size-picker {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  z-index: 10;
+  width: 234px;
+  border: 1px solid #d6dce6;
+  border-radius: 8px;
+  background: #fff;
+  padding: 28px 16px 18px;
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.2);
+}
+
+.milkdown-table-size-picker::before {
+  position: absolute;
+  top: -8px;
+  left: 20px;
+  width: 14px;
+  height: 14px;
+  border-top: 1px solid #d6dce6;
+  border-left: 1px solid #d6dce6;
+  background: #fff;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.milkdown-table-size-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 20px);
+  gap: 4px;
+  justify-content: center;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e5e8ee;
+}
+
+.milkdown-table-size-cell {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #d3d7de;
+  background: #fafafa;
+  padding: 0;
+}
+
+.milkdown-table-size-cell:hover,
+.milkdown-table-size-cell-active {
+  border-color: #7a7f87;
+  background: #787d84;
+}
+
+.milkdown-table-size-cell:focus-visible {
+  outline: 2px solid #8fb7ff;
+  outline-offset: 1px;
+}
+
+.milkdown-table-size-inputs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding-top: 18px;
+  color: #1f2937;
+  font-family: var(--font-mono);
+  font-size: 20px;
+}
+
+.milkdown-table-size-inputs input {
+  width: 42px;
+  height: 38px;
+  border: 1px solid #cbd2dc;
+  border-radius: 0;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+  text-align: center;
+}
+
+.milkdown-table-size-inputs input:focus-visible {
+  border-color: #8fb7ff;
+  outline: 2px solid rgba(143, 183, 255, 0.35);
   outline-offset: 1px;
 }
 
@@ -1634,7 +1925,7 @@ button {
 }
 
 .milkdown-image-size-control {
-  display: inline-flex;
+  display: none;
   min-width: 190px;
   align-items: center;
   gap: 8px;
@@ -1662,27 +1953,32 @@ button {
   outline-offset: 1px;
 }
 
+.milkdown-image-toolbar > .milkdown-image-toolbar-button:last-child {
+  display: none;
+}
+
 .milkdown-image-resize-handle {
   position: absolute;
   z-index: 24;
-  width: 18px;
-  height: 18px;
-  border: 2px solid #ffffff;
-  border-radius: 999px;
-  background: #635bff;
-  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.28);
+  width: 16px;
+  height: 16px;
+  border-right: 2px solid #635bff;
+  border-bottom: 2px solid #635bff;
+  border-radius: 0 0 5px 0;
+  background: rgba(99, 91, 255, 0.06);
+  box-shadow: none;
   cursor: nwse-resize;
   touch-action: none;
 }
 
 .milkdown-image-resize-handle::after {
   position: absolute;
-  right: 4px;
-  bottom: 4px;
+  right: 3px;
+  bottom: 3px;
   width: 6px;
   height: 6px;
-  border-right: 2px solid #ffffff;
-  border-bottom: 2px solid #ffffff;
+  border-right: 2px solid #635bff;
+  border-bottom: 2px solid #635bff;
   content: "";
 }
 
@@ -1915,6 +2211,12 @@ button {
   outline: none;
 }
 
+.settings-dialog {
+  width: min(680px, calc(100vw - 40px));
+  max-height: min(760px, calc(100vh - 40px));
+  overflow: auto;
+}
+
 .create-file-form {
   display: grid;
   gap: 12px;
@@ -1991,6 +2293,10 @@ button {
   padding: 16px;
 }
 
+.settings-section + .settings-section {
+  border-top: 1px solid #eef1f5;
+}
+
 .settings-section-title {
   color: #4b5563;
   font-size: 13px;
@@ -2020,6 +2326,43 @@ button {
   background: #f6f8fb;
   color: #111827;
   font-weight: 700;
+}
+
+.settings-form-section {
+  gap: 10px;
+}
+
+.settings-field,
+.settings-field-grid {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-field-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-field span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-field input {
+  min-width: 0;
+  height: 36px;
+  border: 1px solid #dce2ea;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 0 10px;
+  color: #111827;
+  outline: 0;
+}
+
+.settings-field input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
 .drawing-modal {
@@ -2058,7 +2401,7 @@ button {
 
 .app-shell {
   grid-template-columns: 334px minmax(0, 1fr);
-  grid-template-rows: 46px minmax(0, 1fr);
+  grid-template-rows: 30px minmax(0, 1fr);
   background:
     radial-gradient(circle at 68% 30%, rgba(99, 102, 241, 0.08), transparent 30%),
     #ffffff;
@@ -2072,21 +2415,21 @@ button {
   grid-row: 1;
   align-items: center;
   justify-content: flex-start;
-  border-bottom: 1px solid #e4e7ec;
-  background: rgba(255, 255, 255, 0.92);
-  padding: 0 12px 0 14px;
+  border-bottom: 1px solid #dfe4eb;
+  background: #f8fafc;
+  padding: 0 0 0 28px;
   overflow: visible;
-  backdrop-filter: blur(18px);
+  backdrop-filter: none;
 }
 
 .menubar-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 0;
 }
 
 .app-logo-button {
-  display: grid;
+  display: none;
   width: 28px;
   height: 28px;
   place-items: center;
@@ -2103,7 +2446,7 @@ button {
 .menubar-menu {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 0;
   overflow: visible;
 }
 
@@ -2114,57 +2457,126 @@ button {
 .menubar-trigger {
   min-height: 28px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   padding: 0 9px;
-  color: #111827;
-  font-size: 13px;
+  color: #030712;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .menubar-trigger:hover,
 .menubar-trigger-active {
-  background: #f3f4f6;
+  background: #e9e9e9;
 }
 
 .menubar-dropdown {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 0px);
   left: 0;
   z-index: 140;
   display: grid;
-  min-width: 226px;
-  overflow: hidden;
-  border: 1px solid #d8dde6;
-  border-radius: 8px;
+  min-width: 292px;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border: 1px solid rgba(229, 231, 235, 0.82);
+  border-radius: 13px;
   background: #ffffff;
-  padding: 6px;
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+  padding: 8px 0;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
 }
 
 .menubar-dropdown button {
   display: grid;
   min-height: 34px;
-  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  grid-template-columns: 20px minmax(0, 1fr) auto 16px;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
-  padding: 0 9px;
-  color: #263143;
-  font-size: 13px;
+  padding: 0 18px 0 16px;
+  color: #030712;
+  font-size: 15px;
   text-align: left;
 }
 
-.menubar-dropdown button:hover {
-  background: #eef2ff;
-  color: #4338ca;
+.menubar-dropdown button:hover:not(:disabled) {
+  background: #f2f2f2;
+  color: #030712;
+}
+
+.menubar-dropdown button:disabled {
+  cursor: default;
+}
+
+.menubar-dropdown-item-disabled {
+  color: #6b7280 !important;
+}
+
+.menubar-dropdown-check {
+  display: inline-flex;
+  width: 18px;
+  justify-content: center;
+  color: #5f6368;
+}
+
+.menubar-dropdown-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menubar-dropdown kbd {
+  color: #1f2937;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.menubar-dropdown button:disabled kbd {
+  color: #4b5563;
+}
+
+.menubar-dropdown-arrow {
+  color: #70757a;
+  justify-self: end;
 }
 
 .menubar-dropdown-separator {
   height: 1px;
-  margin: 6px 4px;
-  background: #edf0f4;
+  margin: 6px 0;
+  background: #d9e0ea;
+}
+
+.menubar-dropdown-file {
+  min-width: 326px;
+}
+
+.menubar-dropdown-edit {
+  min-width: 330px;
+}
+
+.menubar-dropdown-paragraph {
+  min-width: 342px;
+}
+
+.menubar-dropdown-format {
+  min-width: 278px;
+}
+
+.menubar-dropdown-view {
+  min-width: 342px;
+}
+
+.menubar-dropdown-theme {
+  min-width: 178px;
+}
+
+.menubar-dropdown-theme button {
+  min-height: 34px;
+  padding-right: 18px;
 }
 
 .explorer-sidebar {
@@ -2767,6 +3179,250 @@ button {
   color: #3c241d;
 }
 
+:root[data-theme="github"] .app-shell,
+:root[data-theme="github"] .workspace,
+:root[data-theme="github"] .editor-workspace,
+:root[data-theme="github"] .typora-editor,
+:root[data-theme="github"] .markdown-preview,
+:root[data-theme="github"] .markdown-input {
+  background: #ffffff;
+}
+
+:root[data-theme="github"] .app-menubar,
+:root[data-theme="github"] .workspace-topbar,
+:root[data-theme="github"] .explorer-sidebar,
+:root[data-theme="github"] .settings-dialog,
+:root[data-theme="github"] .create-file-dialog {
+  border-color: #d0d7de;
+  background: #f6f8fa;
+}
+
+:root[data-theme="github"] .typora-milkdown-content .ProseMirror,
+:root[data-theme="github"] .markdown-preview {
+  color: #24292f;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+:root[data-theme="github"] .typora-milkdown-content .ProseMirror h2,
+:root[data-theme="github"] .markdown-preview h2 {
+  border-bottom-color: #d8dee4;
+}
+
+:root[data-theme="github"] .typora-milkdown-content .ProseMirror code,
+:root[data-theme="github"] .markdown-preview code {
+  border-color: transparent;
+  background: rgba(175, 184, 193, 0.2);
+  color: #24292f;
+}
+
+:root[data-theme="github"] .typora-milkdown-content .ProseMirror pre,
+:root[data-theme="github"] .markdown-preview pre {
+  border-color: transparent;
+  background: #f6f8fa;
+}
+
+:root[data-theme="newsprint"] {
+  color: #2d2519;
+  background: #f5f0df;
+}
+
+:root[data-theme="newsprint"] .app-shell,
+:root[data-theme="newsprint"] .workspace,
+:root[data-theme="newsprint"] .editor-workspace,
+:root[data-theme="newsprint"] .welcome-home,
+:root[data-theme="newsprint"] .typora-editor,
+:root[data-theme="newsprint"] .markdown-preview,
+:root[data-theme="newsprint"] .markdown-input {
+  background: #f5f0df;
+}
+
+:root[data-theme="newsprint"] .app-menubar,
+:root[data-theme="newsprint"] .workspace-topbar,
+:root[data-theme="newsprint"] .explorer-sidebar,
+:root[data-theme="newsprint"] .settings-dialog,
+:root[data-theme="newsprint"] .create-file-dialog {
+  border-color: #d7cdb7;
+  background: #fbf7ea;
+}
+
+:root[data-theme="newsprint"] .typora-milkdown-content .ProseMirror,
+:root[data-theme="newsprint"] .markdown-preview {
+  color: #2d2519;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+:root[data-theme="newsprint"] .typora-milkdown-content .ProseMirror code,
+:root[data-theme="newsprint"] .markdown-preview code {
+  border-color: #ded2b8;
+  background: #efe6d1;
+  color: #5f3f1b;
+}
+
+:root[data-theme="newsprint"] .typora-milkdown-content .ProseMirror pre,
+:root[data-theme="newsprint"] .markdown-preview pre {
+  border-color: #ded2b8;
+  background: #f0e8d6;
+  color: #2d2519;
+}
+
+:root[data-theme="pixyll"] {
+  color: #111827;
+  background: #ffffff;
+}
+
+:root[data-theme="pixyll"] .app-shell,
+:root[data-theme="pixyll"] .workspace,
+:root[data-theme="pixyll"] .editor-workspace,
+:root[data-theme="pixyll"] .typora-editor,
+:root[data-theme="pixyll"] .markdown-preview,
+:root[data-theme="pixyll"] .markdown-input {
+  background: #ffffff;
+}
+
+:root[data-theme="pixyll"] .app-menubar,
+:root[data-theme="pixyll"] .workspace-topbar,
+:root[data-theme="pixyll"] .explorer-sidebar,
+:root[data-theme="pixyll"] .settings-dialog,
+:root[data-theme="pixyll"] .create-file-dialog {
+  border-color: #e5e7eb;
+  background: #fafafa;
+}
+
+:root[data-theme="pixyll"] .typora-milkdown-content .ProseMirror,
+:root[data-theme="pixyll"] .markdown-preview {
+  color: #111827;
+  font-family: "Avenir Next", "Segoe UI", Arial, sans-serif;
+}
+
+:root[data-theme="pixyll"] .typora-milkdown-content .ProseMirror h1,
+:root[data-theme="pixyll"] .typora-milkdown-content .ProseMirror h2,
+:root[data-theme="pixyll"] .typora-milkdown-content .ProseMirror h3,
+:root[data-theme="pixyll"] .markdown-preview h1,
+:root[data-theme="pixyll"] .markdown-preview h2,
+:root[data-theme="pixyll"] .markdown-preview h3 {
+  color: #0f4c81;
+}
+
+:root[data-theme="pixyll"] .typora-milkdown-content .ProseMirror code,
+:root[data-theme="pixyll"] .markdown-preview code {
+  border-color: #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+:root[data-theme="whitey"] {
+  color: #151515;
+  background: #ffffff;
+}
+
+:root[data-theme="whitey"] .app-shell,
+:root[data-theme="whitey"] .workspace,
+:root[data-theme="whitey"] .editor-workspace,
+:root[data-theme="whitey"] .typora-editor,
+:root[data-theme="whitey"] .markdown-preview,
+:root[data-theme="whitey"] .markdown-input {
+  background: #ffffff;
+}
+
+:root[data-theme="whitey"] .app-menubar,
+:root[data-theme="whitey"] .workspace-topbar,
+:root[data-theme="whitey"] .explorer-sidebar,
+:root[data-theme="whitey"] .settings-dialog,
+:root[data-theme="whitey"] .create-file-dialog {
+  border-color: #eeeeee;
+  background: #ffffff;
+}
+
+:root[data-theme="whitey"] .typora-milkdown-content .ProseMirror,
+:root[data-theme="whitey"] .markdown-preview {
+  color: #151515;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+:root[data-theme="whitey"] .typora-milkdown-content .ProseMirror code,
+:root[data-theme="whitey"] .markdown-preview code {
+  border-color: #eeeeee;
+  background: #f7f7f7;
+  color: #333333;
+}
+
+:root[data-theme="night"] {
+  color: #cbd5e1;
+  background: #0f172a;
+  color-scheme: dark;
+}
+
+:root[data-theme="night"] .app-shell,
+:root[data-theme="night"] .workspace,
+:root[data-theme="night"] .welcome-home,
+:root[data-theme="night"] .editor-workspace,
+:root[data-theme="night"] .typora-editor,
+:root[data-theme="night"] .markdown-preview,
+:root[data-theme="night"] .markdown-input {
+  background: #0f172a;
+  color: #cbd5e1;
+}
+
+:root[data-theme="night"] .app-menubar,
+:root[data-theme="night"] .workspace-topbar,
+:root[data-theme="night"] .explorer-sidebar,
+:root[data-theme="night"] .menubar-dropdown,
+:root[data-theme="night"] .settings-dialog,
+:root[data-theme="night"] .create-file-dialog {
+  border-color: #26344f;
+  background: #111c33;
+  color: #cbd5e1;
+}
+
+:root[data-theme="night"] .menubar-menu button,
+:root[data-theme="night"] .explorer-title,
+:root[data-theme="night"] .explorer-section-row,
+:root[data-theme="night"] .directory-tree-folder,
+:root[data-theme="night"] .directory-tree-file,
+:root[data-theme="night"] .workspace-actions,
+:root[data-theme="night"] .theme-select-button,
+:root[data-theme="night"] .settings-title,
+:root[data-theme="night"] .settings-mode-item,
+:root[data-theme="night"] .settings-field input,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror h1,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror h2,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror h3,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror h4,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror h5,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror h6 {
+  color: #e2e8f0;
+}
+
+:root[data-theme="night"] .theme-select-button,
+:root[data-theme="night"] .settings-mode-item,
+:root[data-theme="night"] .settings-field input {
+  border-color: #26344f;
+  background: #0f172a;
+}
+
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror p,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror li,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror td,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror th,
+:root[data-theme="night"] .markdown-preview {
+  color: #cbd5e1;
+}
+
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror code,
+:root[data-theme="night"] .markdown-preview code {
+  border-color: #26344f;
+  background: #18243a;
+  color: #bfdbfe;
+}
+
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror pre,
+:root[data-theme="night"] .markdown-preview pre {
+  border-color: #26344f;
+  background: #0b1220;
+  color: #dbeafe;
+}
+
 :root[data-theme="dark"] .app-menubar,
 :root[data-theme="dark"] .workspace-topbar,
 :root[data-theme="dark"] .explorer-sidebar {
@@ -2853,6 +3509,161 @@ button {
 
 :root[data-theme="dark"] .menubar-dropdown-separator {
   background: rgba(148, 163, 184, 0.2);
+}
+
+:root[data-theme="dark"] .markdown-preview code,
+:root[data-theme="dark"] .typora-mdx-content code,
+:root[data-theme="dark"] .typora-editor code,
+:root[data-theme="dark"] .typora-milkdown-content .ProseMirror code {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: #202631;
+  color: #bfdbfe;
+}
+
+:root[data-theme="dark"] .markdown-preview pre,
+:root[data-theme="dark"] .typora-mdx-content pre,
+:root[data-theme="dark"] .typora-code-block,
+:root[data-theme="dark"] .typora-milkdown-content .ProseMirror pre {
+  border-color: rgba(148, 163, 184, 0.2);
+  background: #111827;
+  color: #dbeafe;
+}
+
+:root[data-theme="dark"] .typora-milkdown-content .ProseMirror pre.typora-code-block-active::after,
+:root[data-theme="dark"] .milkdown-table-toolbar {
+  color: #d1d5db;
+}
+
+:root[data-theme="dark"] .milkdown-table-toolbar-main {
+  background: rgba(17, 24, 39, 0.86);
+}
+
+:root[data-theme="dark"] .milkdown-table-toolbar-button {
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .milkdown-table-toolbar-button:hover {
+  background: #252b34;
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .milkdown-table-size-picker,
+:root[data-theme="dark"] .milkdown-table-size-picker::before,
+:root[data-theme="dark"] .milkdown-table-more-menu,
+:root[data-theme="dark"] .milkdown-table-size-inputs input {
+  border-color: #303746;
+  background: #1f242d;
+  color: #e5e7eb;
+}
+
+:root[data-theme="dark"] .milkdown-table-more-menu button {
+  color: #d1d5db;
+}
+
+:root[data-theme="dark"] .milkdown-table-more-menu button:hover {
+  background: #252b34;
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .milkdown-table-size-grid {
+  border-bottom-color: #303746;
+}
+
+:root[data-theme="dark"] .milkdown-table-size-cell {
+  border-color: #3b4352;
+  background: #111827;
+}
+
+:root[data-theme="dark"] .milkdown-table-size-cell:hover,
+:root[data-theme="dark"] .milkdown-table-size-cell-active {
+  border-color: #8ea0b8;
+  background: #8ea0b8;
+}
+
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.comment,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.prolog,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.doctype,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.cdata {
+  color: #8b949e;
+}
+
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.keyword,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.deleted {
+  color: #ff7b72;
+}
+
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.string,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.char,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.attr-value,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.inserted {
+  color: #a5d6ff;
+}
+
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.function,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.class-name {
+  color: #d2a8ff;
+}
+
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.number,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.boolean,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.constant {
+  color: #79c0ff;
+}
+
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.operator,
+:root[data-theme="dark"]
+  :is(.markdown-preview, .typora-mdx-content, .typora-milkdown-content .ProseMirror)
+  pre
+  .token.punctuation {
+  color: #c9d1d9;
 }
 
 @media (max-width: 860px) {

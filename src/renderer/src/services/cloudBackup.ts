@@ -11,6 +11,11 @@ export interface CloudBackupProvider {
   restore(): Promise<WorkspaceSnapshot | null>;
 }
 
+export type CloudBackupSettings = {
+  endpoint?: string;
+  token?: string;
+};
+
 class DisabledCloudBackupProvider implements CloudBackupProvider {
   async backup(): Promise<BackupResult> {
     return {
@@ -71,11 +76,14 @@ class HttpCloudBackupProvider implements CloudBackupProvider {
   }
 }
 
-export function createCloudBackupProvider(): CloudBackupProvider {
-  const backupEndpoint = import.meta.env.VITE_CLOUD_BACKUP_ENDPOINT as
-    | string
-    | undefined;
-  const token = import.meta.env.VITE_CLOUD_BACKUP_TOKEN as string | undefined;
+export function createCloudBackupProvider(
+  settings: CloudBackupSettings = {},
+): CloudBackupProvider {
+  const backupEndpoint =
+    settings.endpoint ||
+    (import.meta.env.VITE_CLOUD_BACKUP_ENDPOINT as string | undefined);
+  const token =
+    settings.token || (import.meta.env.VITE_CLOUD_BACKUP_TOKEN as string | undefined);
 
   if (!backupEndpoint) {
     return new DisabledCloudBackupProvider();

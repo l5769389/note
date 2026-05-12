@@ -11,17 +11,13 @@ import {
   FileText,
   Folder,
   FolderOpen,
-  ImagePlus,
   MoreVertical,
   PanelRight,
-  Pencil,
   Plus,
   RefreshCw,
   Search,
   Settings,
   SplitSquareHorizontal,
-  Table2,
-  UploadCloud,
   X,
 } from "lucide-react";
 import {
@@ -58,7 +54,6 @@ import type {
   WorkspaceSnapshot,
 } from "./types";
 
-const backupProvider = createCloudBackupProvider();
 const DrawingModal = lazy(() =>
   import("./components/DrawingModal").then((module) => ({
     default: module.DrawingModal,
@@ -76,15 +71,51 @@ const editorModeOptions: Array<{
   { value: "preview", label: "预览", icon: <PanelRight size={16} /> },
 ];
 
-type MenubarMenu = "file" | "edit" | "paragraph" | "format" | "view" | "help";
+type MenubarMenu = "file" | "edit" | "paragraph" | "format" | "view" | "theme" | "help";
 type TopMenu = MenubarMenu | null;
-type AppTheme = "light" | "paper" | "dark";
+const appThemeValues = [
+  "light",
+  "paper",
+  "github",
+  "newsprint",
+  "night",
+  "pixyll",
+  "whitey",
+  "dark",
+] as const;
+type AppTheme = (typeof appThemeValues)[number];
 type SidebarTab = "files" | "current";
+type AppSettings = {
+  imageUploadEndpoint: string;
+  ossAccessKeyId: string;
+  ossAccessKeySecret: string;
+  ossBaseUrl: string;
+  ossBucket: string;
+  ossEndpoint: string;
+  ossRegion: string;
+  remoteServerToken: string;
+  remoteServerUrl: string;
+};
+
+const appSettingsStorageKey = "typora-like-settings";
+const defaultAppSettings: AppSettings = {
+  imageUploadEndpoint: "",
+  ossAccessKeyId: "",
+  ossAccessKeySecret: "",
+  ossBaseUrl: "",
+  ossBucket: "",
+  ossEndpoint: "",
+  ossRegion: "",
+  remoteServerToken: "",
+  remoteServerUrl: "",
+};
 
 const themeOptions: Array<{ label: string; value: AppTheme }> = [
-  { label: "明亮", value: "light" },
-  { label: "纸张", value: "paper" },
-  { label: "深色", value: "dark" },
+  { label: "Github", value: "github" },
+  { label: "Newsprint", value: "newsprint" },
+  { label: "Night", value: "night" },
+  { label: "Pixyll", value: "pixyll" },
+  { label: "Whitey", value: "whitey" },
 ];
 
 const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
@@ -93,13 +124,33 @@ const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
   { key: "paragraph", label: "段落(P)" },
   { key: "format", label: "格式(O)" },
   { key: "view", label: "视图(V)" },
+  { key: "theme", label: "主题(T)" },
   { key: "help", label: "帮助(H)" },
 ];
 
 function getInitialTheme(): AppTheme {
   const storedTheme = window.localStorage.getItem("typora-like-theme");
 
-  return storedTheme === "paper" || storedTheme === "dark" ? storedTheme : "light";
+  return themeOptions.some((option) => option.value === storedTheme)
+    ? (storedTheme as AppTheme)
+    : "github";
+}
+
+function loadAppSettings(): AppSettings {
+  try {
+    const storedSettings = window.localStorage.getItem(appSettingsStorageKey);
+
+    if (!storedSettings) {
+      return defaultAppSettings;
+    }
+
+    return {
+      ...defaultAppSettings,
+      ...(JSON.parse(storedSettings) as Partial<AppSettings>),
+    };
+  } catch {
+    return defaultAppSettings;
+  }
 }
 
 const now = () => new Date().toISOString();
@@ -141,6 +192,50 @@ function createMarkdownTable({ columns, rows }: TableSize) {
     ...bodyRows,
     "",
   ].join("\n");
+}
+
+function MenuSeparator() {
+  return <div className="menubar-dropdown-separator" role="separator" />;
+}
+
+function MenuItem({
+  checked,
+  disabled,
+  label,
+  onSelect,
+  shortcut,
+  submenu,
+}: {
+  checked?: boolean;
+  disabled?: boolean;
+  label: ReactNode;
+  onSelect?: () => void;
+  shortcut?: string;
+  submenu?: boolean;
+}) {
+  const role = checked === undefined ? "menuitem" : "menuitemcheckbox";
+
+  return (
+    <button
+      aria-checked={checked === undefined ? undefined : checked}
+      className={[
+        "menubar-dropdown-item",
+        checked ? "menubar-dropdown-item-checked" : "",
+        disabled ? "menubar-dropdown-item-disabled" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      disabled={disabled}
+      onClick={onSelect}
+      role={role}
+      type="button"
+    >
+      <span className="menubar-dropdown-check">{checked ? <Check size={17} /> : null}</span>
+      <span className="menubar-dropdown-label">{label}</span>
+      {shortcut && <kbd>{shortcut}</kbd>}
+      {submenu && <ChevronRight className="menubar-dropdown-arrow" size={18} />}
+    </button>
+  );
 }
 
 function formatRecentTimestamp(value: string) {
@@ -381,6 +476,7 @@ export function App() {
   const [mode, setMode] = useState<EditorMode>("typora");
   const [topMenu, setTopMenu] = useState<TopMenu>(null);
   const [theme, setTheme] = useState<AppTheme>(getInitialTheme);
+  const [settings, setSettings] = useState<AppSettings>(loadAppSettings);
   const [isHomeOpen, setIsHomeOpen] = useState(true);
   const [, setSaveState] = useState<SaveState>("idle");
   const [, setBackupMessage] = useState("本地自动保存已启用");
@@ -428,6 +524,17 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("typora-like-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(appSettingsStorageKey, JSON.stringify(settings));
+  }, [settings]);
+
+  function updateSetting(key: keyof AppSettings, value: string) {
+    setSettings((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }
 
   async function loadDirectoryTree(directoryPath = workspace.workspacePath) {
     if (!directoryPath || !window.desktop?.readDirectoryTree) {
@@ -743,7 +850,9 @@ export function App() {
 
   async function handleImageFile(file: File) {
     try {
-      const result = await uploadImage(file);
+      const result = await uploadImage(file, {
+        endpoint: settings.imageUploadEndpoint.trim() || undefined,
+      });
       insertMarkdown(`\n![${file.name}](${result.url} "align=center")\n`);
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
@@ -766,11 +875,41 @@ export function App() {
   async function backupNow() {
     try {
       setBackupMessage("正在备份");
+      const backupProvider = createCloudBackupProvider({
+        endpoint: settings.remoteServerUrl.trim() || undefined,
+        token: settings.remoteServerToken.trim() || undefined,
+      });
       const result = await backupProvider.backup(workspace);
       setBackupMessage(result.message);
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "云备份失败");
     }
+  }
+
+  async function saveNow() {
+    try {
+      saveWorkspace(workspace);
+
+      if (activeDocument.filePath && window.desktop?.writeMarkdownFile) {
+        await window.desktop.writeMarkdownFile({
+          content: activeDocument.content,
+          filePath: activeDocument.filePath,
+        });
+      }
+
+      setSaveState("saved");
+    } catch {
+      setSaveState("failed");
+    }
+  }
+
+  function setEditorMode(nextMode: EditorMode) {
+    setMode(nextMode);
+    setIsHomeOpen(false);
+  }
+
+  function runDocumentCommand(command: string) {
+    document.execCommand(command);
   }
 
   function runTopMenuAction(action: () => void) {
@@ -783,171 +922,183 @@ export function App() {
       case "file":
         return (
           <>
-            <button type="button" role="menuitem" onClick={() => runTopMenuAction(createNewDocument)}>
-              <FilePlus2 size={15} />
-              <span>新建 Markdown 文件</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => runTopMenuAction(() => void openWorkspaceFolder())}
-            >
-              <FolderOpen size={15} />
-              <span>打开文件夹...</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => runTopMenuAction(() => void showWorkspaceInFolder())}
-            >
-              <ExternalLink size={15} />
-              <span>在资源管理器中显示</span>
-            </button>
-            <div className="menubar-dropdown-separator" />
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => runTopMenuAction(() => void loadDirectoryTree())}
-            >
-              <RefreshCw size={15} />
-              <span>刷新目录</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => runTopMenuAction(() => void backupNow())}
-            >
-              <UploadCloud size={15} />
-              <span>立即云备份</span>
-            </button>
+            <MenuItem label="新建" shortcut="Ctrl+N" onSelect={() => runTopMenuAction(createNewDocument)} />
+            <MenuItem label="新建窗口" shortcut="Ctrl+Shift+N" disabled />
+            <MenuSeparator />
+            <MenuItem label="打开..." shortcut="Ctrl+O" onSelect={() => runTopMenuAction(() => void openWorkspaceFolder())} />
+            <MenuItem label="打开文件夹..." onSelect={() => runTopMenuAction(() => void openWorkspaceFolder())} />
+            <MenuSeparator />
+            <MenuItem label="快速打开..." shortcut="Ctrl+P" onSelect={() => runTopMenuAction(() => setIsActionsOpen(true))} />
+            <MenuItem label="打开最近文件" submenu disabled />
+            <MenuSeparator />
+            <MenuItem label="保存" shortcut="Ctrl+S" onSelect={() => runTopMenuAction(() => void saveNow())} />
+            <MenuItem label="另存为..." shortcut="Ctrl+Shift+S" disabled />
+            <MenuItem label="移动到..." disabled />
+            <MenuItem label="保存全部打开的文件..." onSelect={() => runTopMenuAction(() => void saveNow())} />
+            <MenuSeparator />
+            <MenuItem label="属性..." disabled />
+            <MenuItem label="打开文件位置..." onSelect={() => runTopMenuAction(() => void showWorkspaceInFolder())} />
+            <MenuItem label="在侧边栏中显示" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
+            <MenuItem label="删除..." disabled />
+            <MenuSeparator />
+            <MenuItem label="导入..." disabled />
+            <MenuItem label="导出" submenu onSelect={() => runTopMenuAction(() => void backupNow())} />
+            <MenuItem label="打印..." shortcut="Alt+Shift+P" disabled />
+            <MenuSeparator />
+            <MenuItem label="偏好设置..." shortcut="Ctrl+逗号" onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
+            <MenuSeparator />
+            <MenuItem label="关闭" shortcut="Ctrl+W" disabled />
           </>
         );
       case "edit":
         return (
           <>
-            <button type="button" role="menuitem" onClick={() => runTopMenuAction(() => setIsHomeOpen(false))}>
-              <Pencil size={15} />
-              <span>编辑当前文档</span>
-            </button>
-            <button type="button" role="menuitem" onClick={() => runTopMenuAction(() => setIsActionsOpen(true))}>
-              <Search size={15} />
-              <span>打开文件操作</span>
-            </button>
-            <button type="button" role="menuitem" onClick={() => runTopMenuAction(() => setIsSettingsOpen(true))}>
-              <Settings size={15} />
-              <span>设置</span>
-            </button>
+            <MenuItem label="撤消" shortcut="Ctrl+Z" onSelect={() => runTopMenuAction(() => runDocumentCommand("undo"))} />
+            <MenuItem label="重做" shortcut="Ctrl+Y" onSelect={() => runTopMenuAction(() => runDocumentCommand("redo"))} />
+            <MenuSeparator />
+            <MenuItem label="剪切" shortcut="Ctrl+X" onSelect={() => runTopMenuAction(() => runDocumentCommand("cut"))} />
+            <MenuItem label="复制" shortcut="Ctrl+C" onSelect={() => runTopMenuAction(() => runDocumentCommand("copy"))} />
+            <MenuItem label="拷贝图片" disabled />
+            <MenuItem label="粘贴" shortcut="Ctrl+V" onSelect={() => runTopMenuAction(() => runDocumentCommand("paste"))} />
+            <MenuSeparator />
+            <MenuItem label="复制为纯文本" disabled />
+            <MenuItem label="复制为 Markdown" shortcut="Ctrl+Shift+C" disabled />
+            <MenuItem label="复制为 HTML 代码" disabled />
+            <MenuItem label="复制内容并简化格式" disabled />
+            <MenuSeparator />
+            <MenuItem label="粘贴为纯文本" shortcut="Ctrl+Shift+V" disabled />
+            <MenuSeparator />
+            <MenuItem label="选择" submenu disabled />
+            <MenuItem label="上移该行" shortcut="Alt+向上箭头" disabled />
+            <MenuItem label="下移该行" shortcut="Alt+向下箭头" disabled />
+            <MenuSeparator />
+            <MenuItem label="删除" onSelect={() => runTopMenuAction(() => runDocumentCommand("delete"))} />
+            <MenuItem label="删除范围" submenu disabled />
+            <MenuSeparator />
+            <MenuItem label="数学工具" submenu disabled />
+            <MenuSeparator />
+            <MenuItem label="智能标点" submenu disabled />
+            <MenuItem label="换行符" submenu disabled />
+            <MenuItem label="空格与换行" submenu disabled />
+            <MenuItem label="拼写检查..." disabled />
+            <MenuSeparator />
+            <MenuItem label="查找和替换" submenu onSelect={() => runTopMenuAction(() => setIsActionsOpen(true))} />
+            <MenuSeparator />
+            <MenuItem label="表情与符号" shortcut="Win 键+句号" disabled />
           </>
         );
       case "paragraph":
         return (
           <>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() =>
-                runTopMenuAction(() => {
-                  setIsHomeOpen(false);
-                  insertTable({ columns: 3, rows: 3 });
-                })
-              }
-            >
-              <Table2 size={15} />
-              <span>插入 3 x 3 表格</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() =>
-                runTopMenuAction(() => {
-                  setIsHomeOpen(false);
-                  setIsDrawingOpen(true);
-                })
-              }
-            >
-              <Pencil size={15} />
-              <span>插入 Excalidraw</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() =>
-                runTopMenuAction(() => {
-                  setIsHomeOpen(false);
-                  readFileInput(imageInputRef.current);
-                })
-              }
-            >
-              <ImagePlus size={15} />
-              <span>插入图片</span>
-            </button>
+            <MenuItem label="一级标题" shortcut="Ctrl+1" onSelect={() => runTopMenuAction(() => insertMarkdown("# "))} />
+            <MenuItem label="二级标题" shortcut="Ctrl+2" onSelect={() => runTopMenuAction(() => insertMarkdown("## "))} />
+            <MenuItem label="三级标题" shortcut="Ctrl+3" onSelect={() => runTopMenuAction(() => insertMarkdown("### "))} />
+            <MenuItem label="四级标题" shortcut="Ctrl+4" onSelect={() => runTopMenuAction(() => insertMarkdown("#### "))} />
+            <MenuItem label="五级标题" shortcut="Ctrl+5" onSelect={() => runTopMenuAction(() => insertMarkdown("##### "))} />
+            <MenuItem label="六级标题" shortcut="Ctrl+6" onSelect={() => runTopMenuAction(() => insertMarkdown("###### "))} />
+            <MenuSeparator />
+            <MenuItem label="段落" shortcut="Ctrl+0" onSelect={() => runTopMenuAction(() => insertMarkdown("\n"))} />
+            <MenuSeparator />
+            <MenuItem label="提升标题级别" shortcut="Ctrl+=" disabled />
+            <MenuItem label="降低标题级别" shortcut="Ctrl+-" disabled />
+            <MenuSeparator />
+            <MenuItem label="表格" submenu onSelect={() => runTopMenuAction(() => insertTable({ columns: 3, rows: 3 }))} />
+            <MenuItem label="公式块" shortcut="Ctrl+Shift+M" onSelect={() => runTopMenuAction(() => insertMarkdown("\n$$\n\n$$\n"))} />
+            <MenuItem label="代码块" shortcut="Ctrl+Shift+K" onSelect={() => runTopMenuAction(() => insertMarkdown("\n```\n\n```\n"))} />
+            <MenuItem label="代码工具" submenu disabled />
+            <MenuItem label="警告框" submenu disabled />
+            <MenuSeparator />
+            <MenuItem label="引用" shortcut="Ctrl+Shift+Q" onSelect={() => runTopMenuAction(() => insertMarkdown("> "))} />
+            <MenuSeparator />
+            <MenuItem label="有序列表" shortcut="Ctrl+Shift+[" onSelect={() => runTopMenuAction(() => insertMarkdown("1. "))} />
+            <MenuItem label="无序列表" shortcut="Ctrl+Shift+]" onSelect={() => runTopMenuAction(() => insertMarkdown("- "))} />
+            <MenuItem label="任务列表" shortcut="Ctrl+Shift+X" onSelect={() => runTopMenuAction(() => insertMarkdown("- [ ] "))} />
+            <MenuItem label="任务状态" submenu disabled />
+            <MenuItem label="列表缩进" submenu disabled />
+            <MenuSeparator />
+            <MenuItem label="在上方插入段落" onSelect={() => runTopMenuAction(() => insertMarkdown("\n"))} />
+            <MenuItem label="在下方插入段落" onSelect={() => runTopMenuAction(() => insertMarkdown("\n"))} />
+            <MenuSeparator />
+            <MenuItem label="链接引用" disabled />
+            <MenuItem label="脚注" disabled />
+            <MenuSeparator />
+            <MenuItem label="水平分割线" onSelect={() => runTopMenuAction(() => insertMarkdown("\n---\n"))} />
+            <MenuItem label="内容目录" onSelect={() => runTopMenuAction(() => setSidebarTab("current"))} />
+            <MenuItem label="YAML Front Matter" onSelect={() => runTopMenuAction(() => insertMarkdown("---\n\n---\n"))} />
           </>
         );
       case "format":
         return (
           <>
-            {editorModeOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="menuitemradio"
-                aria-checked={mode === option.value}
-                onClick={() =>
-                  runTopMenuAction(() => {
-                    setMode(option.value);
-                    setIsHomeOpen(false);
-                  })
-                }
-              >
-                {option.icon}
-                <span>{option.label}</span>
-                {mode === option.value && <Check size={14} />}
-              </button>
-            ))}
+            <MenuItem label="加粗" shortcut="Ctrl+B" onSelect={() => runTopMenuAction(() => insertMarkdown("****"))} />
+            <MenuItem label="斜体" shortcut="Ctrl+I" onSelect={() => runTopMenuAction(() => insertMarkdown("**"))} />
+            <MenuItem label="下划线" shortcut="Ctrl+U" onSelect={() => runTopMenuAction(() => runDocumentCommand("underline"))} />
+            <MenuItem label="代码" shortcut="Ctrl+Shift+`" onSelect={() => runTopMenuAction(() => insertMarkdown("``"))} />
+            <MenuSeparator />
+            <MenuItem label="删除线" shortcut="Alt+Shift+5" onSelect={() => runTopMenuAction(() => insertMarkdown("~~~~"))} />
+            <MenuItem label="注释" disabled />
+            <MenuSeparator />
+            <MenuItem label="超链接" shortcut="Ctrl+K" onSelect={() => runTopMenuAction(() => insertMarkdown("[]()"))} />
+            <MenuItem label="链接操作" submenu disabled />
+            <MenuItem label="图像" submenu onSelect={() => runTopMenuAction(() => readFileInput(imageInputRef.current))} />
+            <MenuSeparator />
+            <MenuItem label="清除样式" shortcut="Ctrl+\\" disabled />
           </>
         );
       case "view":
         return (
           <>
-            <button type="button" role="menuitem" onClick={() => runTopMenuAction(() => setIsHomeOpen(true))}>
-              <BookOpenText size={15} />
-              <span>欢迎页</span>
-            </button>
-            <button type="button" role="menuitem" onClick={() => runTopMenuAction(() => setIsHomeOpen(false))}>
-              <FileText size={15} />
-              <span>当前文档</span>
-            </button>
-            <div className="menubar-dropdown-separator" />
+            <MenuItem label="显示 / 隐藏侧边栏" shortcut="Ctrl+Shift+L" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
+            <MenuItem label="大纲" shortcut="Ctrl+Shift+1" onSelect={() => runTopMenuAction(() => setSidebarTab("current"))} />
+            <MenuItem label="文档列表" shortcut="Ctrl+Shift+2" onSelect={() => runTopMenuAction(() => setIsHomeOpen(true))} />
+            <MenuItem label="文件树" shortcut="Ctrl+Shift+3" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
+            <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(() => setIsActionsOpen(true))} />
+            <MenuSeparator />
+            <MenuItem label="源代码模式" shortcut="Ctrl+/" checked={mode === "source"} onSelect={() => runTopMenuAction(() => setEditorMode("source"))} />
+            <MenuSeparator />
+            <MenuItem label="专注模式" shortcut="F8" disabled />
+            <MenuItem label="打字机模式" shortcut="F9" disabled />
+            <MenuSeparator />
+            <MenuItem label="显示状态栏" checked disabled />
+            <MenuItem label="字数统计窗口" disabled />
+            <MenuSeparator />
+            <MenuItem label="切换全屏" shortcut="F11" disabled />
+            <MenuItem label="保持窗口在最前端" disabled />
+            <MenuSeparator />
+            <MenuItem label="实际大小" shortcut="Ctrl+Shift+9" checked disabled />
+            <MenuItem label="放大" shortcut="Ctrl+Shift+=" disabled />
+            <MenuItem label="缩小" shortcut="Ctrl+Shift+-" disabled />
+            <MenuSeparator />
+            <MenuItem label="应用内窗口切换" shortcut="Ctrl+Tab 键" disabled />
+            <MenuSeparator />
+            <MenuItem label="开发者工具" shortcut="Shift+F12" disabled />
+          </>
+        );
+      case "theme":
+        return (
+          <>
             {themeOptions.map((option) => (
-              <button
+              <MenuItem
+                checked={theme === option.value}
                 key={option.value}
-                type="button"
-                role="menuitemradio"
-                aria-checked={theme === option.value}
-                onClick={() => runTopMenuAction(() => setTheme(option.value))}
-              >
-                <span className={`theme-dot theme-dot-${option.value}`} />
-                <span>{option.label}</span>
-                {theme === option.value && <Check size={14} />}
-              </button>
+                label={option.label}
+                onSelect={() => runTopMenuAction(() => setTheme(option.value))}
+              />
             ))}
           </>
         );
       case "help":
         return (
           <>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() =>
+            <MenuItem
+              label="关于 Typora Like"
+              onSelect={() =>
                 runTopMenuAction(() => {
                   setBackupMessage("Markdown 编辑器 · Electron + Milkdown");
                 })
               }
-            >
-              <BookOpenText size={15} />
-              <span>关于编辑器</span>
-            </button>
+            />
+            <MenuItem label="打开设置" onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
           </>
         );
       default:
@@ -979,6 +1130,11 @@ export function App() {
                     }
                     type="button"
                     aria-expanded={topMenu === item.key}
+                    onMouseEnter={() => {
+                      if (topMenu) {
+                        setTopMenu(item.key);
+                      }
+                    }}
                     onClick={() =>
                       setTopMenu((current) => (current === item.key ? null : item.key))
                     }
@@ -986,7 +1142,11 @@ export function App() {
                     {item.label}
                   </button>
                   {topMenu === item.key && (
-                    <div className="menubar-dropdown" role="menu" aria-label={item.label}>
+                    <div
+                      className={`menubar-dropdown menubar-dropdown-${item.key}`}
+                      role="menu"
+                      aria-label={item.label}
+                    >
                       {renderMenubarDropdown(item.key)}
                     </div>
                   )}
@@ -1145,6 +1305,13 @@ export function App() {
                 }}
               >
                 <RefreshCw size={16} />
+              </button>
+              <button
+                type="button"
+                aria-label="Settings"
+                onClick={() => setIsSettingsOpen(true)}
+              >
+                <Settings size={16} />
               </button>
               <button
                 type="button"
@@ -1369,6 +1536,106 @@ export function App() {
                     </ToggleGroup.Item>
                   ))}
                 </ToggleGroup.Root>
+              </section>
+              <section className="settings-section settings-form-section">
+                <div className="settings-section-title">Remote Sync</div>
+                <label className="settings-field">
+                  <span>Server URL</span>
+                  <input
+                    placeholder="https://example.com/backup"
+                    value={settings.remoteServerUrl}
+                    onChange={(event) =>
+                      updateSetting("remoteServerUrl", event.target.value)
+                    }
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>Token</span>
+                  <input
+                    type="password"
+                    value={settings.remoteServerToken}
+                    onChange={(event) =>
+                      updateSetting("remoteServerToken", event.target.value)
+                    }
+                  />
+                </label>
+              </section>
+              <section className="settings-section settings-form-section">
+                <div className="settings-section-title">Image Upload / OSS</div>
+                <label className="settings-field">
+                  <span>Upload API</span>
+                  <input
+                    placeholder="https://example.com/upload"
+                    value={settings.imageUploadEndpoint}
+                    onChange={(event) =>
+                      updateSetting("imageUploadEndpoint", event.target.value)
+                    }
+                  />
+                </label>
+                <div className="settings-field-grid">
+                  <label className="settings-field">
+                    <span>OSS Endpoint</span>
+                    <input
+                      placeholder="oss-cn-shanghai.aliyuncs.com"
+                      value={settings.ossEndpoint}
+                      onChange={(event) =>
+                        updateSetting("ossEndpoint", event.target.value)
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Region</span>
+                    <input
+                      placeholder="oss-cn-shanghai"
+                      value={settings.ossRegion}
+                      onChange={(event) =>
+                        updateSetting("ossRegion", event.target.value)
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="settings-field-grid">
+                  <label className="settings-field">
+                    <span>Bucket</span>
+                    <input
+                      value={settings.ossBucket}
+                      onChange={(event) =>
+                        updateSetting("ossBucket", event.target.value)
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Base URL</span>
+                    <input
+                      placeholder="https://bucket.oss-cn-shanghai.aliyuncs.com"
+                      value={settings.ossBaseUrl}
+                      onChange={(event) =>
+                        updateSetting("ossBaseUrl", event.target.value)
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="settings-field-grid">
+                  <label className="settings-field">
+                    <span>Access Key ID</span>
+                    <input
+                      value={settings.ossAccessKeyId}
+                      onChange={(event) =>
+                        updateSetting("ossAccessKeyId", event.target.value)
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Access Key Secret</span>
+                    <input
+                      type="password"
+                      value={settings.ossAccessKeySecret}
+                      onChange={(event) =>
+                        updateSetting("ossAccessKeySecret", event.target.value)
+                      }
+                    />
+                  </label>
+                </div>
               </section>
             </Dialog.Content>
           </Dialog.Portal>

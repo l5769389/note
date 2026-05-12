@@ -12,23 +12,25 @@ import {
   deleteColumn,
   deleteRow,
   deleteTable,
+  findTable,
   isInTable,
   setCellAttr,
+  TableMap,
 } from "@milkdown/kit/prose/tables";
 import type { Node as ProseMirrorNode } from "@milkdown/kit/prose/model";
-import { NodeSelection, Plugin } from "@milkdown/kit/prose/state";
+import { NodeSelection, Plugin, Selection } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { $prose, insert, replaceAll } from "@milkdown/kit/utils";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
-import jsx from "refractor/jsx";
-import tsx from "refractor/tsx";
 import {
   AlignCenter,
   AlignLeft,
   AlignRight,
   Columns2,
+  EllipsisVertical,
+  Grid3x3,
   Maximize2,
   Rows2,
   Trash2,
@@ -44,6 +46,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { registerMarkdownLanguages } from "../syntaxHighlighting";
 
 type TyporaEditorProps = {
   onActiveLineChange?: (lineIndex: number) => void;
@@ -133,6 +136,105 @@ const codeBlockLanguageDecoration = $prose(
     }),
 );
 
+function selectionTouchesRange(
+  selectionFrom: number,
+  selectionTo: number,
+  rangeFrom: number,
+  rangeTo: number,
+) {
+  if (selectionFrom === selectionTo) {
+    return selectionFrom >= rangeFrom && selectionFrom <= rangeTo;
+  }
+
+  return selectionFrom < rangeTo && selectionTo > rangeFrom;
+}
+
+function createMarkdownSyntaxMarker(value: string) {
+  const marker = document.createElement("span");
+  marker.className = "typora-markdown-syntax-marker";
+  marker.textContent = value;
+  return marker;
+}
+
+const markdownSyntaxDecoration = $prose(
+  () =>
+    new Plugin({
+      props: {
+        decorations(state) {
+          const decorations: Decoration[] = [];
+          const { from, to } = state.selection;
+          const codeRanges: Array<{ from: number; to: number }> = [];
+
+          state.doc.descendants((node: ProseMirrorNode, pos) => {
+            if (/^heading$/i.test(node.type.name)) {
+              const level =
+                typeof node.attrs.level === "number" ? node.attrs.level : 1;
+              const rangeFrom = pos;
+              const rangeTo = pos + node.nodeSize;
+
+              if (selectionTouchesRange(from, to, rangeFrom, rangeTo)) {
+                decorations.push(
+                  Decoration.node(rangeFrom, rangeTo, {
+                    class: "typora-active-heading",
+                    "data-heading-prefix": `${"#".repeat(level)} `,
+                  }),
+                );
+              }
+            }
+
+            if (!node.isText || !node.marks.some((mark) => mark.type.name === "code")) {
+              return;
+            }
+
+            const range = { from: pos, to: pos + node.nodeSize };
+            const previousRange = codeRanges.at(-1);
+
+            if (previousRange && previousRange.to === range.from) {
+              previousRange.to = range.to;
+              return;
+            }
+
+            codeRanges.push(range);
+          });
+
+          for (const range of codeRanges) {
+            if (!selectionTouchesRange(from, to, range.from, range.to)) {
+              continue;
+            }
+
+            decorations.push(
+              Decoration.inline(range.from, range.to, {
+                class: "typora-active-inline-code",
+              }),
+              Decoration.widget(range.from, () => createMarkdownSyntaxMarker("`"), {
+                side: -1,
+              }),
+              Decoration.widget(range.to, () => createMarkdownSyntaxMarker("`"), {
+                side: 1,
+              }),
+            );
+          }
+
+          return DecorationSet.create(state.doc, decorations);
+        },
+      },
+    }),
+);
+
+const disableNativeWritingChecks = $prose(
+  () =>
+    new Plugin({
+      props: {
+        attributes: {
+          autocapitalize: "off",
+          autocomplete: "off",
+          autocorrect: "off",
+          spellcheck: "false",
+        },
+      },
+    }),
+);
+
 const editableImageDecoration = $prose(
   () =>
     new Plugin({
@@ -178,6 +280,15 @@ const editableImageSelection = $prose(
             return false;
           }
 
+          const nodeDom = view.nodeDOM(nodePos);
+
+          if (
+            !(nodeDom instanceof HTMLImageElement) ||
+            !nodeDom.classList.contains("typora-editable-image")
+          ) {
+            return false;
+          }
+
           event.preventDefault();
           view.dispatch(
             view.state.tr.setSelection(NodeSelection.create(view.state.doc, nodePos)),
@@ -193,7 +304,11 @@ const editableImageSelection = $prose(
 
             const imageElement = event.target.closest("img");
 
-            if (!imageElement || !view.dom.contains(imageElement)) {
+            if (
+              !imageElement ||
+              !view.dom.contains(imageElement) ||
+              !imageElement.classList.contains("typora-editable-image")
+            ) {
               return false;
             }
 
@@ -300,6 +415,10 @@ function getHeadingElements(root: HTMLElement) {
   return Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6"));
 }
 
+function getOverlayContainer(root: HTMLElement) {
+  return root.querySelector<HTMLElement>(".typora-milkdown-content") ?? root;
+}
+
 function getElementFromSelection() {
   const anchorNode = window.getSelection()?.anchorNode;
 
@@ -328,12 +447,20 @@ function appendMarkdown(currentValue: string, markdown: string) {
   return `${currentValue}${separator}${markdown}`;
 }
 
+type TableSize = {
+  columns: number;
+  rows: number;
+};
+
 type TableToolbarState =
   | { visible: false }
   | {
+      columns: number;
       left: number;
+      rows: number;
       top: number;
       visible: true;
+      width: number;
     };
 
 type TableCommand = (
@@ -348,6 +475,76 @@ type TableToolbarAction = {
   label: string;
   text?: string;
 };
+
+const minTableRows = 2;
+const maxTablePickerColumns = 8;
+const maxTablePickerRows = 10;
+const maxTableSize = 20;
+
+function clampTableSize(size: TableSize): TableSize {
+  return {
+    columns: Math.max(1, Math.min(maxTableSize, Math.round(size.columns) || 1)),
+    rows: Math.max(minTableRows, Math.min(maxTableSize, Math.round(size.rows) || minTableRows)),
+  };
+}
+
+function getTableSize(tableNode: ProseMirrorNode): TableSize {
+  const map = TableMap.get(tableNode);
+
+  return { columns: map.width, rows: map.height };
+}
+
+function normalizeTableCellAttrs(attrs: ProseMirrorNode["attrs"], alignment: string) {
+  return {
+    ...attrs,
+    alignment,
+    colspan: 1,
+    colwidth: null,
+    rowspan: 1,
+  };
+}
+
+function createResizedTableNode(
+  state: EditorView["state"],
+  tableNode: ProseMirrorNode,
+  size: TableSize,
+) {
+  const { columns, rows } = clampTableSize(size);
+  const tableType = state.schema.nodes.table;
+  const headerRowType = state.schema.nodes.table_header_row;
+  const rowType = state.schema.nodes.table_row;
+  const headerCellType = state.schema.nodes.table_header;
+  const cellType = state.schema.nodes.table_cell;
+
+  if (!tableType || !headerRowType || !rowType || !headerCellType || !cellType) {
+    return tableNode;
+  }
+
+  const headerRow = tableNode.maybeChild(0);
+  const nextRows = Array.from({ length: rows }, (_, rowIndex) => {
+    const sourceRow = tableNode.maybeChild(rowIndex);
+    const nextRowType = rowIndex === 0 ? headerRowType : rowType;
+    const nextCellType = rowIndex === 0 ? headerCellType : cellType;
+    const nextCells = Array.from({ length: columns }, (__, columnIndex) => {
+      const sourceCell = sourceRow?.maybeChild(columnIndex);
+      const headerCell = headerRow?.maybeChild(columnIndex);
+      const alignment = String(
+        sourceCell?.attrs.alignment ?? headerCell?.attrs.alignment ?? "left",
+      );
+      const attrs = normalizeTableCellAttrs(sourceCell?.attrs ?? {}, alignment);
+
+      if (sourceCell) {
+        return nextCellType.create(attrs, sourceCell.content, sourceCell.marks);
+      }
+
+      return nextCellType.createAndFill(attrs) ?? nextCellType.create(attrs);
+    });
+
+    return nextRowType.create(sourceRow?.attrs, nextCells);
+  });
+
+  return tableType.create(tableNode.attrs, nextRows);
+}
 
 type ImageToolbarState =
   | { visible: false }
@@ -365,7 +562,7 @@ type ImageToolbarState =
       width?: number;
     };
 
-function TableToolbar({
+export function LegacyTableToolbar({
   onRun,
   state,
 }: {
@@ -426,6 +623,242 @@ function TableToolbar({
           ))}
         </div>
       ))}
+    </div>
+  );
+}
+
+function TableSizePicker({
+  columns,
+  onApply,
+  rows,
+}: {
+  columns: number;
+  onApply: (size: TableSize) => void;
+  rows: number;
+}) {
+  const [draftSize, setDraftSize] = useState<TableSize>(() => clampTableSize({ columns, rows }));
+  const [previewSize, setPreviewSize] = useState<TableSize | null>(null);
+  const displaySize = previewSize ?? draftSize;
+
+  useEffect(() => {
+    setDraftSize(clampTableSize({ columns, rows }));
+    setPreviewSize(null);
+  }, [columns, rows]);
+
+  function applySize(size: TableSize) {
+    const nextSize = clampTableSize(size);
+
+    setDraftSize(nextSize);
+    setPreviewSize(null);
+    onApply(nextSize);
+  }
+
+  function updateDraft(partialSize: Partial<TableSize>) {
+    setPreviewSize(null);
+    setDraftSize((current) => clampTableSize({ ...current, ...partialSize }));
+  }
+
+  return (
+    <div
+      className="milkdown-table-size-picker"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          applySize(draftSize);
+        }
+      }}
+      onMouseLeave={() => setPreviewSize(null)}
+    >
+      <div className="milkdown-table-size-grid">
+        {Array.from({ length: maxTablePickerRows }).flatMap((_, rowIndex) =>
+          Array.from({ length: maxTablePickerColumns }).map((__, columnIndex) => {
+            const cellSize = { columns: columnIndex + 1, rows: rowIndex + 1 };
+            const isActive =
+              cellSize.columns <= displaySize.columns && cellSize.rows <= displaySize.rows;
+
+            return (
+              <button
+                aria-label={`${cellSize.rows} x ${cellSize.columns}`}
+                className={[
+                  "milkdown-table-size-cell",
+                  isActive ? "milkdown-table-size-cell-active" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                key={`${cellSize.rows}-${cellSize.columns}`}
+                onClick={() => applySize(cellSize)}
+                onMouseEnter={() => setPreviewSize(clampTableSize(cellSize))}
+                type="button"
+              />
+            );
+          }),
+        )}
+      </div>
+      <div className="milkdown-table-size-inputs">
+        <input
+          aria-label="Rows"
+          max={maxTableSize}
+          min={minTableRows}
+          onChange={(event) => updateDraft({ rows: Number(event.target.value) })}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              applySize(draftSize);
+            }
+          }}
+          type="number"
+          value={displaySize.rows}
+        />
+        <span>x</span>
+        <input
+          aria-label="Columns"
+          max={maxTableSize}
+          min={1}
+          onChange={(event) => updateDraft({ columns: Number(event.target.value) })}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              applySize(draftSize);
+            }
+          }}
+          type="number"
+          value={displaySize.columns}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TableToolbar({
+  onResize,
+  onRun,
+  state,
+}: {
+  onResize: (size: TableSize) => void;
+  onRun: (command: TableCommand) => void;
+  state: TableToolbarState;
+}) {
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const [isSizePickerOpen, setIsSizePickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!state.visible) {
+      setIsActionsOpen(false);
+      setIsSizePickerOpen(false);
+    }
+  }, [state.visible]);
+
+  if (!state.visible) {
+    return null;
+  }
+
+  const alignActions: TableToolbarAction[] = [
+    { command: setCellAttr("alignment", "left"), icon: <AlignLeft size={15} />, label: "Left" },
+    {
+      command: setCellAttr("alignment", "center"),
+      icon: <AlignCenter size={15} />,
+      label: "Center",
+    },
+    { command: setCellAttr("alignment", "right"), icon: <AlignRight size={15} />, label: "Right" },
+  ];
+  const insertActions: TableToolbarAction[] = [
+    { command: addColumnBefore, icon: <Columns2 size={15} />, label: "Insert column before" },
+    { command: addColumnAfter, icon: <Columns2 size={15} />, label: "Insert column after" },
+    { command: addRowBefore, icon: <Rows2 size={15} />, label: "Insert row before" },
+    { command: addRowAfter, icon: <Rows2 size={15} />, label: "Insert row after" },
+  ];
+
+  return (
+    <div
+      className="milkdown-table-toolbar"
+      style={{ left: state.left, top: state.top, width: state.width }}
+      onMouseDown={(event) => {
+        if (!(event.target instanceof HTMLInputElement)) {
+          event.preventDefault();
+        }
+      }}
+    >
+      <div className="milkdown-table-toolbar-main">
+        <div className="milkdown-table-toolbar-side">
+          <button
+            aria-expanded={isSizePickerOpen}
+            aria-label="Table size"
+            className="milkdown-table-toolbar-button"
+            onClick={() => {
+              setIsActionsOpen(false);
+              setIsSizePickerOpen((current) => !current);
+            }}
+            title="Table size"
+            type="button"
+          >
+            <Grid3x3 size={16} />
+          </button>
+          {alignActions.map((action) => (
+            <button
+              aria-label={action.label}
+              className="milkdown-table-toolbar-button"
+              key={action.label}
+              onClick={() => onRun(action.command)}
+              title={action.label}
+              type="button"
+            >
+              {action.icon}
+            </button>
+          ))}
+        </div>
+        <div className="milkdown-table-toolbar-side">
+          {insertActions.map((action) => (
+            <button
+              aria-label={action.label}
+              className="milkdown-table-toolbar-button"
+              key={action.label}
+              onClick={() => onRun(action.command)}
+              title={action.label}
+              type="button"
+            >
+              {action.icon}
+            </button>
+          ))}
+          <button
+            aria-label="More table actions"
+            className="milkdown-table-toolbar-button"
+            onClick={() => {
+              setIsSizePickerOpen(false);
+              setIsActionsOpen((current) => !current);
+            }}
+            title="More table actions"
+            type="button"
+          >
+            <EllipsisVertical size={16} />
+          </button>
+          <button
+            aria-label="Delete table"
+            className="milkdown-table-toolbar-button"
+            onClick={() => onRun(deleteTable)}
+            title="Delete table"
+            type="button"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+      </div>
+      {isSizePickerOpen && (
+        <TableSizePicker
+          columns={state.columns}
+          rows={state.rows}
+          onApply={(size) => {
+            setIsSizePickerOpen(false);
+            onResize(size);
+          }}
+        />
+      )}
+      {isActionsOpen && (
+        <div className="milkdown-table-more-menu">
+          <button type="button" onClick={() => onRun(deleteRow)}>
+            Delete row
+          </button>
+          <button type="button" onClick={() => onRun(deleteColumn)}>
+            Delete column
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -520,8 +953,8 @@ function ImageResizeHandle({
       className="milkdown-image-resize-handle"
       role="presentation"
       style={{
-        left: state.imageLeft + state.imageWidth - 9,
-        top: state.imageTop + state.imageHeight - 9,
+        left: state.imageLeft + state.imageWidth - 16,
+        top: state.imageTop + state.imageHeight - 16,
       }}
       onPointerDown={(event) => onResizeStart(event, state)}
     />
@@ -552,6 +985,7 @@ function MilkdownRuntime({
   const [tableToolbar, setTableToolbar] = useState<TableToolbarState>({
     visible: false,
   });
+  const scrollFrameRef = useRef<number | null>(null);
   const imageResizeRef = useRef<{
     pos: number;
     startWidth: number;
@@ -613,14 +1047,17 @@ function MilkdownRuntime({
       return;
     }
 
+    const overlay = getOverlayContainer(root);
     const rootRect = root.getBoundingClientRect();
+    const overlayRect = overlay.getBoundingClientRect();
     const imageRect = imageDom.getBoundingClientRect();
-    const maxLeft = root.scrollLeft + root.clientWidth - 460;
-    const rawLeft = imageRect.left - rootRect.left + root.scrollLeft;
+    const visibleTop = rootRect.top + 8 - overlayRect.top;
+    const maxLeft = overlay.clientWidth - 132;
+    const rawLeft = imageRect.left - overlayRect.left;
     const left = Math.max(8, Math.min(rawLeft, Math.max(8, maxLeft)));
     const top = Math.max(
-      root.scrollTop + 8,
-      imageRect.top - rootRect.top + root.scrollTop - 46,
+      visibleTop,
+      imageRect.top - overlayRect.top - 46,
     );
     const meta = parseImageMeta(image.node.attrs.title);
 
@@ -628,8 +1065,8 @@ function MilkdownRuntime({
       align: meta.align,
       displayWidth: clampImageWidth(imageRect.width || minImageWidth),
       imageHeight: imageRect.height,
-      imageLeft: imageRect.left - rootRect.left + root.scrollLeft,
-      imageTop: imageRect.top - rootRect.top + root.scrollTop,
+      imageLeft: imageRect.left - overlayRect.left,
+      imageTop: imageRect.top - overlayRect.top,
       imageWidth: imageRect.width,
       left,
       pos: image.pos,
@@ -660,30 +1097,29 @@ function MilkdownRuntime({
       return;
     }
 
-    const rootRect = root.getBoundingClientRect();
-    const tableRect = table.getBoundingClientRect();
-    const cellRect = cell.getBoundingClientRect();
-    const maxLeft = root.scrollLeft + root.clientWidth - 420;
-    const rawLeft = tableRect.left - rootRect.left + root.scrollLeft;
-    const left = Math.max(8, Math.min(rawLeft, Math.max(8, maxLeft)));
-    const top = Math.max(
-      root.scrollTop + 8,
-      cellRect.top - rootRect.top + root.scrollTop - 42,
-    );
+    const tableInfo = findTable(view.state.selection.$from);
 
-    setTableToolbar({ left, top, visible: true });
-  }
-
-  function refreshTableToolbar() {
-    const editor = get();
-
-    if (!editor) {
+    if (!tableInfo) {
+      setTableToolbar({ visible: false });
       return;
     }
 
-    editor.action((ctx) => {
-      updateTableToolbarFromView(ctx.get(editorViewCtx));
-    });
+    const overlay = getOverlayContainer(root);
+    const rootRect = root.getBoundingClientRect();
+    const overlayRect = overlay.getBoundingClientRect();
+    const tableRect = table.getBoundingClientRect();
+    const visibleTop = rootRect.top + 8 - overlayRect.top;
+    const width = Math.max(220, Math.min(tableRect.width, overlay.clientWidth - 16));
+    const maxLeft = overlay.clientWidth - width - 8;
+    const rawLeft = tableRect.left - overlayRect.left;
+    const left = Math.max(8, Math.min(rawLeft, Math.max(8, maxLeft)));
+    const top = Math.max(
+      visibleTop,
+      tableRect.top - overlayRect.top - 34,
+    );
+    const size = getTableSize(tableInfo.node);
+
+    setTableToolbar({ ...size, left, top, visible: true, width });
   }
 
   function refreshImageToolbar() {
@@ -695,6 +1131,18 @@ function MilkdownRuntime({
 
     editor.action((ctx) => {
       updateImageToolbarFromView(ctx.get(editorViewCtx));
+    });
+  }
+
+  function refreshTableToolbar() {
+    const editor = get();
+
+    if (!editor) {
+      return;
+    }
+
+    editor.action((ctx) => {
+      updateTableToolbarFromView(ctx.get(editorViewCtx));
     });
   }
 
@@ -797,6 +1245,45 @@ function MilkdownRuntime({
     });
   }
 
+  function resizeSelectedTable(size: TableSize) {
+    const editor = get();
+
+    if (!editor) {
+      return;
+    }
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const tableInfo = findTable(view.state.selection.$from);
+
+      if (!tableInfo) {
+        setTableToolbar({ visible: false });
+        return;
+      }
+
+      const nextTable = createResizedTableNode(view.state, tableInfo.node, size);
+      const transaction = view.state.tr.replaceWith(
+        tableInfo.pos,
+        tableInfo.pos + tableInfo.node.nodeSize,
+        nextTable,
+      );
+      const selectionPosition = Math.min(tableInfo.pos + 3, transaction.doc.content.size);
+      const nextSelection = Selection.findFrom(
+        transaction.doc.resolve(selectionPosition),
+        1,
+        true,
+      );
+
+      if (nextSelection) {
+        transaction.setSelection(nextSelection);
+      }
+
+      view.dispatch(transaction.scrollIntoView());
+      view.focus();
+      requestAnimationFrame(() => updateTableToolbarFromView(view));
+    });
+  }
+
   const { get, loading } = useEditor((root) => {
     return Editor.make()
       .config((ctx) => {
@@ -804,8 +1291,7 @@ function MilkdownRuntime({
         ctx.set(defaultValueCtx, markdownRef.current);
         ctx.set(prismConfig.key, {
           configureRefractor(refractor) {
-            refractor.register(jsx);
-            refractor.register(tsx);
+            registerMarkdownLanguages(refractor);
           },
         });
         ctx
@@ -839,7 +1325,9 @@ function MilkdownRuntime({
       .use(clipboard)
       .use(gfm)
       .use(prism)
+      .use(disableNativeWritingChecks)
       .use(codeBlockLanguageDecoration)
+      .use(markdownSyntaxDecoration)
       .use(editableImageSelection)
       .use(editableImageDecoration);
   }, []);
@@ -886,6 +1374,50 @@ function MilkdownRuntime({
     }
   }
 
+  function reportActiveHeadingFromScroll() {
+    const root = rootRef.current;
+
+    if (!root) {
+      return;
+    }
+
+    const headings = getHeadingElements(root);
+
+    if (!headings.length) {
+      onActiveLineChange?.(0);
+      return;
+    }
+
+    const rootRect = root.getBoundingClientRect();
+    const activationY = rootRect.top + Math.min(140, root.clientHeight * 0.24);
+    let activeHeading = headings[0];
+
+    for (const heading of headings) {
+      if (heading.getBoundingClientRect().top <= activationY) {
+        activeHeading = heading;
+        continue;
+      }
+
+      break;
+    }
+
+    const level = Number(activeHeading.tagName.slice(1));
+    const title = normalizeHeadingTitle(activeHeading.textContent ?? "");
+    const occurrence =
+      headings
+        .slice(0, headings.indexOf(activeHeading) + 1)
+        .filter(
+          (heading) =>
+            Number(heading.tagName.slice(1)) === level &&
+            normalizeHeadingTitle(heading.textContent ?? "") === title,
+        ).length || 1;
+    const lineIndex = findHeadingLineIndex(markdownRef.current, level, title, occurrence);
+
+    if (lineIndex >= 0) {
+      onActiveLineChange?.(lineIndex);
+    }
+  }
+
   useEffect(() => {
     const editor = get();
 
@@ -900,6 +1432,39 @@ function MilkdownRuntime({
       applyingExternalValueRef.current = false;
     });
   }, [get, loading, markdownRef, value]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+
+    if (!root) {
+      return;
+    }
+
+    const handleScroll = () => {
+      if (scrollFrameRef.current !== null) {
+        return;
+      }
+
+      scrollFrameRef.current = window.requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        reportActiveHeadingFromScroll();
+        refreshImageToolbar();
+        refreshTableToolbar();
+      });
+    };
+
+    root.addEventListener("scroll", handleScroll, { passive: true });
+    window.requestAnimationFrame(reportActiveHeadingFromScroll);
+
+    return () => {
+      root.removeEventListener("scroll", handleScroll);
+
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, [get, rootRef]);
 
   useEffect(() => {
     controllerRef.current = {
@@ -949,10 +1514,25 @@ function MilkdownRuntime({
   return (
     <div
       className="typora-milkdown-content"
-      onClick={() => {
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
+      onClick={(event) => {
+        const target = event.target;
+        const isTableInteraction =
+          target instanceof Element &&
+          (target.closest("table") || target.closest(".milkdown-table-toolbar"));
+
+        if (!isTableInteraction) {
+          setTableToolbar({ visible: false });
+        }
+
         reportActiveHeading();
         requestAnimationFrame(refreshImageToolbar);
-        requestAnimationFrame(refreshTableToolbar);
+
+        if (isTableInteraction) {
+          requestAnimationFrame(refreshTableToolbar);
+        }
       }}
       onKeyUp={() => {
         reportActiveHeading();
@@ -967,7 +1547,7 @@ function MilkdownRuntime({
         onSetWidth={setImageWidth}
       />
       <ImageResizeHandle state={imageToolbar} onResizeStart={startImageResize} />
-      <TableToolbar state={tableToolbar} onRun={runTableCommand} />
+      <TableToolbar state={tableToolbar} onResize={resizeSelectedTable} onRun={runTableCommand} />
       <Milkdown />
     </div>
   );
@@ -1007,7 +1587,10 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
         ref={rootRef}
         className="typora-editor typora-rich-editor"
         aria-label="Milkdown markdown editor"
+        autoCapitalize="off"
+        autoCorrect="off"
         onPaste={onPaste}
+        spellCheck={false}
       >
         <MilkdownProvider>
           <MilkdownRuntime
