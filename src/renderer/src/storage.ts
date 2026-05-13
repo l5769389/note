@@ -49,7 +49,7 @@ export function createInitialWorkspace(): WorkspaceSnapshot {
 
   return {
     version: 1,
-    activeDocumentId: document.id,
+    activeDocumentId: "",
     documents: [document],
     updatedAt: now(),
   };
@@ -69,7 +69,10 @@ export function loadWorkspace(): WorkspaceSnapshot {
       return createInitialWorkspace();
     }
 
-    return parsed;
+    return {
+      ...parsed,
+      activeDocumentId: "",
+    };
   } catch {
     return createInitialWorkspace();
   }

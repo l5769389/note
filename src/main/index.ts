@@ -184,6 +184,7 @@ function createMainWindow(): void {
     minHeight: 640,
     backgroundColor: "#f5f6f8",
     autoHideMenuBar: true,
+    frame: false,
     title: "Markdown Studio",
     webPreferences: {
       contextIsolation: true,
@@ -298,9 +299,34 @@ function registerFileIpc() {
   });
 }
 
+function registerWindowIpc() {
+  ipcMain.handle("window:minimize", () => {
+    mainWindow?.minimize();
+  });
+
+  ipcMain.handle("window:maximize", () => {
+    if (!mainWindow) {
+      return false;
+    }
+
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+      return false;
+    }
+
+    mainWindow.maximize();
+    return true;
+  });
+
+  ipcMain.handle("window:close", () => {
+    mainWindow?.close();
+  });
+}
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   registerFileIpc();
+  registerWindowIpc();
   createMainWindow();
 
   app.on("activate", () => {

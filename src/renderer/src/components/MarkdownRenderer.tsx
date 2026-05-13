@@ -1,8 +1,10 @@
-import type { ReactNode } from "react";
+import { Children, isValidElement, type ReactNode } from "react";
 import { refractor } from "refractor/core";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MermaidDiagram } from "./MermaidDiagram";
 import { registerMarkdownLanguages } from "../syntaxHighlighting";
+import { getMarkdownAlertByMarker } from "../markdownAlerts";
 
 type MarkdownRendererProps = {
   children: string;
@@ -81,11 +83,67 @@ function CodeRenderer({
   );
 }
 
+function getReactNodeText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+
+  if (Array.isArray(node)) {
+    return node.map(getReactNodeText).join("");
+  }
+
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return getReactNodeText(node.props.children);
+  }
+
+  return "";
+}
+
+function getMarkdownAlert(children: ReactNode) {
+  const firstChild = Children.toArray(children)[0];
+  const marker = getReactNodeText(firstChild).trim();
+  return getMarkdownAlertByMarker(marker);
+}
+
+function PreRenderer({ children }: { children?: ReactNode }) {
+  const child = Children.toArray(children)[0];
+
+  if (
+    isValidElement<{ children?: ReactNode; className?: string }>(child)
+  ) {
+    const language = child.props.className?.match(languagePattern)?.[1]?.toLowerCase();
+
+    if (language === "mermaid") {
+      const code = String(child.props.children ?? "").replace(/\n$/, "");
+      return <MermaidDiagram code={code} />;
+    }
+  }
+
+  return <pre>{children}</pre>;
+}
+
+function BlockquoteRenderer({ children }: { children?: ReactNode }) {
+  const alert = getMarkdownAlert(children);
+
+  if (!alert) {
+    return <blockquote>{children}</blockquote>;
+  }
+
+  return (
+    <blockquote className={`markdown-alert markdown-alert-${alert.kind}`}>
+      <div className="markdown-alert-title">{alert.title}</div>
+      {Children.toArray(children).slice(1)}
+    </blockquote>
+  );
+}
+
 export function MarkdownRenderer({ children }: MarkdownRendererProps) {
   return (
     <ReactMarkdown
       components={{
+        blockquote: BlockquoteRenderer,
         code: CodeRenderer,
+        pre: PreRenderer,
       }}
       remarkPlugins={[remarkGfm]}
       urlTransform={markdownUrlTransform}

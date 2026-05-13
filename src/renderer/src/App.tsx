@@ -4,6 +4,7 @@ import {
   BookOpenText,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Code2,
   ExternalLink,
@@ -11,6 +12,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  Minus,
   MoreVertical,
   PanelRight,
   Plus,
@@ -18,6 +20,7 @@ import {
   Search,
   Settings,
   SplitSquareHorizontal,
+  Square,
   X,
 } from "lucide-react";
 import {
@@ -29,6 +32,7 @@ import {
   useState,
   type ClipboardEvent,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
@@ -36,7 +40,25 @@ import {
   TyporaEditor,
   type TyporaEditorHandle,
 } from "./components/TyporaEditor";
-import { createCloudBackupProvider } from "./services/cloudBackup";
+import type {
+  TyporaEditCommand,
+  TyporaFormatCommand,
+  TyporaParagraphCommand,
+} from "./editorCommands";
+import { getEditorShortcutAction } from "./editorShortcuts";
+import { createParagraphCommandMarkdown } from "./markdownCommands";
+import {
+  createClearInlineStyleEdit,
+  createMarkdownImageEdit,
+  createRemoveMarkdownLinkEdit,
+  createWrappedSelectionEdit,
+  findMarkdownLinkInRange,
+} from "./markdownEditing";
+import { markdownAlertOptions } from "./markdownAlerts";
+import {
+  countMarkdownWords,
+  getMarkdownOutline,
+} from "./markdownStructure";
 import { uploadImage } from "./services/imageUpload";
 import {
   createDocument,
@@ -85,6 +107,11 @@ const appThemeValues = [
 ] as const;
 type AppTheme = (typeof appThemeValues)[number];
 type SidebarTab = "files" | "current";
+
+const defaultSidebarWidth = 334;
+const minSidebarWidth = 236;
+const maxSidebarWidth = 560;
+
 type AppSettings = {
   imageUploadEndpoint: string;
   ossAccessKeyId: string;
@@ -154,6 +181,10 @@ function loadAppSettings(): AppSettings {
 }
 
 const now = () => new Date().toISOString();
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
 
 type TableSize = {
   columns: number;
@@ -238,6 +269,28 @@ function MenuItem({
   );
 }
 
+function MenuSubmenu({
+  children,
+  label,
+}: {
+  children: ReactNode;
+  label: ReactNode;
+}) {
+  return (
+    <div className="menubar-submenu">
+      <button className="menubar-dropdown-item" role="menuitem" type="button">
+        <span className="menubar-dropdown-check" />
+        <span className="menubar-dropdown-label">{label}</span>
+        <span />
+        <ChevronRight className="menubar-dropdown-arrow" size={18} />
+      </button>
+      <div className="menubar-submenu-panel" role="menu">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function formatRecentTimestamp(value: string) {
   const date = new Date(value);
 
@@ -318,47 +371,6 @@ function mergeDocumentByFilePath(
   return documents.map((item, index) =>
     index === existingIndex ? { ...item, ...document, id: item.id } : item,
   );
-}
-
-type OutlineEntry = {
-  id: string;
-  level: number;
-  lineIndex: number;
-  title: string;
-};
-
-function normalizeOutlineTitle(value: string) {
-  return value
-    .replace(/\[(.*?)\]\(.*?\)/g, "$1")
-    .replace(/[`*_~#]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function getDocumentOutline(markdown: string): OutlineEntry[] {
-  return markdown
-    .split("\n")
-    .map((line, lineIndex) => {
-      const match = line.match(/^(#{1,6})\s+(.+)$/);
-
-      if (!match) {
-        return null;
-      }
-
-      const title = normalizeOutlineTitle(match[2]);
-
-      if (!title) {
-        return null;
-      }
-
-      return {
-        id: `${lineIndex}-${title}`,
-        level: match[1].length,
-        lineIndex,
-        title,
-      };
-    })
-    .filter((entry): entry is OutlineEntry => Boolean(entry));
 }
 
 function collectDirectoryPaths(item: DirectoryTreeItem): string[] {
@@ -485,6 +497,14 @@ export function App() {
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const storedWidth = Number(window.localStorage.getItem("typora-like-sidebar-width"));
+
+    return Number.isFinite(storedWidth)
+      ? clamp(storedWidth, minSidebarWidth, maxSidebarWidth)
+      : defaultSidebarWidth;
+  });
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [newFileName, setNewFileName] = useState("Untitled");
   const [directoryTree, setDirectoryTree] = useState<DirectoryTreeItem | null>(
     null,
@@ -496,12 +516,18 @@ export function App() {
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const typoraEditorRef = useRef<TyporaEditorHandle | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const savedFileContentByPathRef = useRef(
+    new Map(
+      workspace.documents
+        .filter((document) => document.filePath)
+        .map((document) => [document.filePath!, document.content]),
+    ),
+  );
 
   const activeDocument = useMemo(
     () =>
-      workspace.documents.find((item) => item.id === workspace.activeDocumentId) ??
-      workspace.documents[0],
-    [workspace],
+      workspace.documents.find((item) => item.id === workspace.activeDocumentId) ?? null,
+    [workspace.activeDocumentId, workspace.documents],
   );
   const workspaceLabel = getPathLabel(workspace.workspacePath);
   const recentDocuments = useMemo(
@@ -516,8 +542,12 @@ export function App() {
     [workspace.documents],
   );
   const activeDocumentOutline = useMemo(
-    () => getDocumentOutline(activeDocument.content),
-    [activeDocument.content],
+    () => (activeDocument ? getMarkdownOutline(activeDocument.content) : []),
+    [activeDocument],
+  );
+  const activeDocumentWordCount = useMemo(
+    () => (activeDocument ? countMarkdownWords(activeDocument.content) : 0),
+    [activeDocument],
   );
 
   useEffect(() => {
@@ -529,11 +559,41 @@ export function App() {
     window.localStorage.setItem(appSettingsStorageKey, JSON.stringify(settings));
   }, [settings]);
 
+  useEffect(() => {
+    window.localStorage.setItem("typora-like-sidebar-width", String(sidebarWidth));
+  }, [sidebarWidth]);
+
   function updateSetting(key: keyof AppSettings, value: string) {
     setSettings((current) => ({
       ...current,
       [key]: value,
     }));
+  }
+
+  function startSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    function resizeSidebar(pointerEvent: PointerEvent) {
+      const nextWidth = pointerEvent.clientX;
+
+      if (nextWidth < minSidebarWidth) {
+        setIsSidebarCollapsed(true);
+        return;
+      }
+
+      setIsSidebarCollapsed(false);
+      setSidebarWidth(clamp(nextWidth, minSidebarWidth, maxSidebarWidth));
+    }
+
+    function stopSidebarResize(pointerEvent: PointerEvent) {
+      resizeSidebar(pointerEvent);
+      window.removeEventListener("pointermove", resizeSidebar);
+      window.removeEventListener("pointerup", stopSidebarResize);
+    }
+
+    window.addEventListener("pointermove", resizeSidebar);
+    window.addEventListener("pointerup", stopSidebarResize);
   }
 
   async function loadDirectoryTree(directoryPath = workspace.workspacePath) {
@@ -608,8 +668,52 @@ export function App() {
   }, [isActionsOpen, topMenu]);
 
   useEffect(() => {
+    function isFormControl(target: EventTarget | null) {
+      return (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLSelectElement
+      );
+    }
+
+    function handleGlobalEditShortcuts(event: KeyboardEvent) {
+      if (isCreateFileOpen || isSettingsOpen || isFormControl(event.target)) {
+        return;
+      }
+
+      const action = getEditorShortcutAction(event);
+
+      if (!action) {
+        return;
+      }
+
+      event.preventDefault();
+
+      switch (action.type) {
+        case "createLink":
+          createLinkFromPrompt();
+          break;
+        case "edit":
+          void runEditCommand(action.command);
+          break;
+        case "format":
+          runFormatCommand(action.command);
+          break;
+        case "paragraph":
+          runParagraphCommand(action.command);
+          break;
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalEditShortcuts);
+
+    return () => {
+      window.removeEventListener("keydown", handleGlobalEditShortcuts);
+    };
+  }, [activeDocument, isCreateFileOpen, isSettingsOpen, mode]);
+
+  useEffect(() => {
     setActiveEditorLineIndex(0);
-  }, [activeDocument.id]);
+  }, [activeDocument?.id]);
 
   useEffect(() => {
     setSaveState("saving");
@@ -617,7 +721,9 @@ export function App() {
       try {
         saveWorkspace(workspace);
         const writableDocuments = workspace.documents.filter(
-          (document) => document.filePath,
+          (document) =>
+            document.filePath &&
+            savedFileContentByPathRef.current.get(document.filePath) !== document.content,
         );
 
         if (!writableDocuments.length || !window.desktop?.writeMarkdownFile) {
@@ -634,6 +740,9 @@ export function App() {
           ),
         )
           .then(() => {
+            writableDocuments.forEach((document) => {
+              savedFileContentByPathRef.current.set(document.filePath!, document.content);
+            });
             setSaveState("saved");
             void loadDirectoryTree();
           })
@@ -641,7 +750,7 @@ export function App() {
       } catch {
         setSaveState("failed");
       }
-    }, 250);
+    }, 650);
 
     return () => window.clearTimeout(timer);
   }, [workspace]);
@@ -689,6 +798,10 @@ export function App() {
       const document = localFile
         ? createDocumentFromLocalFile(localFile)
         : createDocument(title, `# ${title}\n\n`);
+
+      if (document.filePath) {
+        savedFileContentByPathRef.current.set(document.filePath, document.content);
+      }
 
       setWorkspace((current) => ({
         ...current,
@@ -738,10 +851,15 @@ export function App() {
       const localDocuments = localFiles.map(createDocumentFromLocalFile);
       const fallbackDocument = createDocument("Untitled", "# Untitled\n\n");
       const nextDocuments = localDocuments.length ? localDocuments : [fallbackDocument];
+      localDocuments.forEach((document) => {
+        if (document.filePath) {
+          savedFileContentByPathRef.current.set(document.filePath, document.content);
+        }
+      });
 
       setWorkspace((current) => ({
         ...current,
-        activeDocumentId: nextDocuments[0].id,
+        activeDocumentId: "",
         documents: nextDocuments,
         workspacePath: directoryPath,
       }));
@@ -776,6 +894,10 @@ export function App() {
 
     const document = createDocumentFromLocalFile(localFile);
 
+    if (document.filePath) {
+      savedFileContentByPathRef.current.set(document.filePath, document.content);
+    }
+
     setWorkspace((current) => ({
       ...current,
       activeDocumentId: document.id,
@@ -786,7 +908,7 @@ export function App() {
   }
 
   async function showWorkspaceInFolder() {
-    const targetPath = workspace.workspacePath || activeDocument.filePath;
+    const targetPath = workspace.workspacePath || activeDocument?.filePath;
 
     if (!targetPath) {
       return;
@@ -799,8 +921,12 @@ export function App() {
   function patchActiveDocument(patch: Partial<MarkdownDocument>) {
     setWorkspace((current) => {
       const currentDocument =
-        current.documents.find((item) => item.id === current.activeDocumentId) ??
-        current.documents[0];
+        current.documents.find((item) => item.id === current.activeDocumentId) ?? null;
+
+      if (!currentDocument) {
+        return current;
+      }
+
       const nextDocument = {
         ...currentDocument,
         ...patch,
@@ -812,13 +938,49 @@ export function App() {
   }
 
   function updateMarkdown(content: string) {
+    if (!activeDocument) {
+      return;
+    }
+
     patchActiveDocument({
       content,
       title: renameFromMarkdown(content, activeDocument.title),
     });
   }
 
+  async function openMarkdownFile() {
+    try {
+      const localFile = await window.desktop?.selectMarkdownFile?.();
+
+      if (!localFile) {
+        return;
+      }
+
+      const document = createDocumentFromLocalFile(localFile);
+
+      if (document.filePath) {
+        savedFileContentByPathRef.current.set(document.filePath, document.content);
+      }
+
+      setWorkspace((current) => ({
+        ...current,
+        activeDocumentId: document.id,
+        documents: mergeDocumentByFilePath(current.documents, document),
+        workspacePath: current.workspacePath || getDirectoryPath(document.filePath),
+      }));
+      setIsHomeOpen(false);
+      setTopMenu(null);
+      setSaveState("saved");
+    } catch {
+      setSaveState("failed");
+    }
+  }
+
   function insertMarkdown(markdown: string) {
+    if (!activeDocument) {
+      return;
+    }
+
     if (mode === "typora" && typoraEditorRef.current) {
       typoraEditorRef.current.insertMarkdown(markdown);
       return;
@@ -844,6 +1006,174 @@ export function App() {
     });
   }
 
+  function getSelectedEditorText() {
+    const editor = editorRef.current;
+
+    if (!editor || !activeDocument) {
+      return "";
+    }
+
+    return activeDocument.content.slice(editor.selectionStart, editor.selectionEnd);
+  }
+
+  function wrapTextareaSelection(prefix: string, suffix: string, placeholder: string) {
+    const editor = editorRef.current;
+
+    if (!editor || !activeDocument) {
+      insertMarkdown(`${prefix}${placeholder}${suffix}`);
+      return;
+    }
+
+    const edit = createWrappedSelectionEdit(
+      activeDocument.content,
+      editor.selectionStart,
+      editor.selectionEnd,
+      prefix,
+      suffix,
+      placeholder,
+    );
+
+    setTextareaContent(editor, edit.content, edit.selectionStart, edit.selectionEnd);
+  }
+
+  function clearTextareaInlineStyle() {
+    const editor = editorRef.current;
+
+    if (!editor || !activeDocument) {
+      return;
+    }
+
+    const edit = createClearInlineStyleEdit(getSelectedTextareaLineRange(editor));
+
+    setTextareaContent(
+      editor,
+      edit.content,
+      edit.selectionStart,
+      edit.selectionEnd,
+    );
+  }
+
+  function getTextareaLinkRange() {
+    const editor = editorRef.current;
+
+    if (!editor || !activeDocument) {
+      return null;
+    }
+
+    return findMarkdownLinkInRange(getSelectedTextareaLineRange(editor));
+  }
+
+  function removeTextareaLink() {
+    const editor = editorRef.current;
+    const link = getTextareaLinkRange();
+
+    if (!editor || !activeDocument || !link) {
+      return;
+    }
+
+    const edit = createRemoveMarkdownLinkEdit(activeDocument.content, link);
+
+    setTextareaContent(
+      editor,
+      edit.content,
+      edit.selectionStart,
+      edit.selectionEnd,
+    );
+  }
+
+  function updateTextareaImage(command: TyporaFormatCommand) {
+    const editor = editorRef.current;
+
+    if (!editor || !activeDocument) {
+      return false;
+    }
+
+    const edit = createMarkdownImageEdit(getSelectedTextareaLineRange(editor), {
+      align: command.type === "imageAlign" ? command.align : undefined,
+      resetWidth: command.type === "imageResetSize",
+    });
+
+    if (!edit) {
+      return false;
+    }
+
+    setTextareaContent(editor, edit.content, edit.selectionStart, edit.selectionEnd);
+    return true;
+  }
+
+  function runFormatCommand(command: TyporaFormatCommand) {
+    if (!activeDocument && command.type !== "copyLink" && command.type !== "openLink") {
+      return;
+    }
+
+    if (mode === "typora" && typoraEditorRef.current) {
+      typoraEditorRef.current.runFormatCommand(command);
+      return;
+    }
+
+    switch (command.type) {
+      case "bold":
+        wrapTextareaSelection("**", "**", "加粗文本");
+        break;
+      case "italic":
+        wrapTextareaSelection("*", "*", "斜体文本");
+        break;
+      case "underline":
+        wrapTextareaSelection("<u>", "</u>", "下划线文本");
+        break;
+      case "inlineCode":
+        wrapTextareaSelection("`", "`", "code");
+        break;
+      case "strikethrough":
+        wrapTextareaSelection("~~", "~~", "删除线文本");
+        break;
+      case "comment":
+        wrapTextareaSelection("<!-- ", " -->", "注释");
+        break;
+      case "link":
+        wrapTextareaSelection("[", `](${command.href.trim() || "https://"})`, "链接文本");
+        break;
+      case "removeLink":
+        removeTextareaLink();
+        break;
+      case "copyLink": {
+        const href = getTextareaLinkRange()?.href;
+
+        if (href) {
+          void navigator.clipboard?.writeText(href);
+        }
+        break;
+      }
+      case "openLink": {
+        const href = getTextareaLinkRange()?.href;
+
+        if (href) {
+          window.open(href, "_blank", "noopener,noreferrer");
+        }
+        break;
+      }
+      case "clearStyle":
+        clearTextareaInlineStyle();
+        break;
+      case "imageAlign":
+      case "imageResetSize":
+        updateTextareaImage(command);
+        break;
+    }
+  }
+
+  function createLinkFromPrompt() {
+    const selectedText = getSelectedEditorText().trim();
+    const defaultHref = /^https?:\/\//i.test(selectedText) ? selectedText : "https://";
+    const href = window.prompt("链接地址", defaultHref);
+
+    if (href === null) {
+      return;
+    }
+
+    runFormatCommand({ type: "link", href });
+  }
+
   function insertTable(size: TableSize) {
     insertMarkdown(createMarkdownTable(size));
   }
@@ -853,7 +1183,7 @@ export function App() {
       const result = await uploadImage(file, {
         endpoint: settings.imageUploadEndpoint.trim() || undefined,
       });
-      insertMarkdown(`\n![${file.name}](${result.url} "align=center")\n`);
+      insertMarkdown(`![${file.name}](${result.url} "align=left") `);
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
     }
@@ -872,29 +1202,19 @@ export function App() {
     await handleImageFile(image);
   }
 
-  async function backupNow() {
-    try {
-      setBackupMessage("正在备份");
-      const backupProvider = createCloudBackupProvider({
-        endpoint: settings.remoteServerUrl.trim() || undefined,
-        token: settings.remoteServerToken.trim() || undefined,
-      });
-      const result = await backupProvider.backup(workspace);
-      setBackupMessage(result.message);
-    } catch (error) {
-      setBackupMessage(error instanceof Error ? error.message : "云备份失败");
-    }
-  }
-
   async function saveNow() {
     try {
       saveWorkspace(workspace);
 
-      if (activeDocument.filePath && window.desktop?.writeMarkdownFile) {
+      if (activeDocument?.filePath && window.desktop?.writeMarkdownFile) {
         await window.desktop.writeMarkdownFile({
           content: activeDocument.content,
           filePath: activeDocument.filePath,
         });
+        savedFileContentByPathRef.current.set(
+          activeDocument.filePath,
+          activeDocument.content,
+        );
       }
 
       setSaveState("saved");
@@ -908,8 +1228,203 @@ export function App() {
     setIsHomeOpen(false);
   }
 
-  function runDocumentCommand(command: string) {
-    document.execCommand(command);
+  async function saveAllNow() {
+    try {
+      saveWorkspace(workspace);
+
+      const writableDocuments = workspace.documents.filter(
+        (document) => document.filePath,
+      );
+
+      if (window.desktop?.writeMarkdownFile) {
+        await Promise.all(
+          writableDocuments.map((document) =>
+            window.desktop!.writeMarkdownFile({
+              content: document.content,
+              filePath: document.filePath!,
+            }),
+          ),
+        );
+        writableDocuments.forEach((document) => {
+          savedFileContentByPathRef.current.set(document.filePath!, document.content);
+        });
+      }
+
+      setSaveState("saved");
+    } catch {
+      setSaveState("failed");
+    }
+  }
+
+  function getSelectedTextareaLineRange(textarea: HTMLTextAreaElement) {
+    const content = textarea.value;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+    const lineStart = content.lastIndexOf("\n", Math.max(selectionStart - 1, 0)) + 1;
+    const rawLineEnd = content.indexOf("\n", selectionEnd);
+    const lineEnd =
+      rawLineEnd < 0 ? content.length : Math.min(rawLineEnd + 1, content.length);
+
+    return { content, lineEnd, lineStart, selectionEnd, selectionStart };
+  }
+
+  function setTextareaContent(
+    textarea: HTMLTextAreaElement,
+    content: string,
+    selectionStart: number,
+    selectionEnd = selectionStart,
+  ) {
+    updateMarkdown(content);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(selectionStart, selectionEnd);
+    });
+  }
+
+  function moveTextareaLines(direction: "down" | "up") {
+    const textarea = editorRef.current;
+
+    if (!textarea || !activeDocument) {
+      return;
+    }
+
+    const { content, lineEnd, lineStart } = getSelectedTextareaLineRange(textarea);
+    const selectedText = content.slice(lineStart, lineEnd);
+
+    if (direction === "up") {
+      if (lineStart === 0) {
+        return;
+      }
+
+      const previousLineStart = content.lastIndexOf("\n", lineStart - 2) + 1;
+      const previousText = content.slice(previousLineStart, lineStart);
+      const nextContent =
+        content.slice(0, previousLineStart) +
+        selectedText +
+        previousText +
+        content.slice(lineEnd);
+
+      setTextareaContent(
+        textarea,
+        nextContent,
+        previousLineStart,
+        previousLineStart + selectedText.length,
+      );
+      return;
+    }
+
+    if (lineEnd >= content.length) {
+      return;
+    }
+
+    const nextLineEndIndex = content.indexOf("\n", lineEnd);
+    const nextLineEnd =
+      nextLineEndIndex < 0 ? content.length : Math.min(nextLineEndIndex + 1, content.length);
+    const nextText = content.slice(lineEnd, nextLineEnd);
+    const nextContent =
+      content.slice(0, lineStart) +
+      nextText +
+      selectedText +
+      content.slice(nextLineEnd);
+
+    setTextareaContent(
+      textarea,
+      nextContent,
+      lineStart + nextText.length,
+      lineStart + nextText.length + selectedText.length,
+    );
+  }
+
+  function deleteTextareaSelectionOrLine() {
+    const textarea = editorRef.current;
+
+    if (!textarea || !activeDocument) {
+      return;
+    }
+
+    const content = textarea.value;
+
+    if (textarea.selectionStart !== textarea.selectionEnd) {
+      const nextContent =
+        content.slice(0, textarea.selectionStart) + content.slice(textarea.selectionEnd);
+      setTextareaContent(textarea, nextContent, textarea.selectionStart);
+      return;
+    }
+
+    const { lineEnd, lineStart } = getSelectedTextareaLineRange(textarea);
+    const nextContent = content.slice(0, lineStart) + content.slice(lineEnd);
+
+    setTextareaContent(textarea, nextContent, lineStart);
+  }
+
+  async function runEditCommand(command: TyporaEditCommand) {
+    if (!activeDocument && command !== "copy") {
+      return;
+    }
+
+    if (mode === "typora" && typoraEditorRef.current) {
+      typoraEditorRef.current.runEditCommand(command);
+      return;
+    }
+
+    const textarea = editorRef.current;
+
+    if (textarea) {
+      textarea.focus();
+    }
+
+    switch (command) {
+      case "moveLineUp":
+        moveTextareaLines("up");
+        break;
+      case "moveLineDown":
+        moveTextareaLines("down");
+        break;
+      case "delete":
+        if (textarea) {
+          deleteTextareaSelectionOrLine();
+        } else {
+          document.execCommand("delete");
+        }
+        break;
+      case "paste":
+        if (!document.execCommand("paste") && textarea && navigator.clipboard?.readText) {
+          const text = await navigator.clipboard.readText();
+          const nextContent =
+            textarea.value.slice(0, textarea.selectionStart) +
+            text +
+            textarea.value.slice(textarea.selectionEnd);
+          const cursor = textarea.selectionStart + text.length;
+          setTextareaContent(textarea, nextContent, cursor);
+        }
+        break;
+      case "copy":
+      case "cut":
+      case "undo":
+      case "redo":
+        document.execCommand(command);
+        break;
+    }
+  }
+
+  function runParagraphCommand(command: TyporaParagraphCommand) {
+    if (!activeDocument) {
+      return;
+    }
+
+    if (mode === "typora" && typoraEditorRef.current) {
+      typoraEditorRef.current.runParagraphCommand(command);
+      return;
+    }
+
+    const markdown = createParagraphCommandMarkdown(
+      command,
+      activeDocument?.content ?? "",
+    );
+
+    if (markdown) {
+      insertMarkdown(markdown);
+    }
   }
 
   function runTopMenuAction(action: () => void) {
@@ -925,24 +1440,27 @@ export function App() {
             <MenuItem label="新建" shortcut="Ctrl+N" onSelect={() => runTopMenuAction(createNewDocument)} />
             <MenuItem label="新建窗口" shortcut="Ctrl+Shift+N" disabled />
             <MenuSeparator />
-            <MenuItem label="打开..." shortcut="Ctrl+O" onSelect={() => runTopMenuAction(() => void openWorkspaceFolder())} />
+            <MenuItem label="打开..." shortcut="Ctrl+O" onSelect={() => runTopMenuAction(() => void openMarkdownFile())} />
             <MenuItem label="打开文件夹..." onSelect={() => runTopMenuAction(() => void openWorkspaceFolder())} />
             <MenuSeparator />
-            <MenuItem label="快速打开..." shortcut="Ctrl+P" onSelect={() => runTopMenuAction(() => setIsActionsOpen(true))} />
+            <MenuItem label="快速打开..." shortcut="Ctrl+P" disabled />
             <MenuItem label="打开最近文件" submenu disabled />
             <MenuSeparator />
             <MenuItem label="保存" shortcut="Ctrl+S" onSelect={() => runTopMenuAction(() => void saveNow())} />
             <MenuItem label="另存为..." shortcut="Ctrl+Shift+S" disabled />
             <MenuItem label="移动到..." disabled />
-            <MenuItem label="保存全部打开的文件..." onSelect={() => runTopMenuAction(() => void saveNow())} />
+            <MenuItem label="保存全部打开的文件..." onSelect={() => runTopMenuAction(() => void saveAllNow())} />
             <MenuSeparator />
             <MenuItem label="属性..." disabled />
             <MenuItem label="打开文件位置..." onSelect={() => runTopMenuAction(() => void showWorkspaceInFolder())} />
-            <MenuItem label="在侧边栏中显示" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
+            <MenuItem label="在侧边栏中显示" onSelect={() => runTopMenuAction(() => {
+              setIsSidebarCollapsed(false);
+              setSidebarTab("files");
+            })} />
             <MenuItem label="删除..." disabled />
             <MenuSeparator />
             <MenuItem label="导入..." disabled />
-            <MenuItem label="导出" submenu onSelect={() => runTopMenuAction(() => void backupNow())} />
+            <MenuItem label="导出" submenu disabled />
             <MenuItem label="打印..." shortcut="Alt+Shift+P" disabled />
             <MenuSeparator />
             <MenuItem label="偏好设置..." shortcut="Ctrl+逗号" onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
@@ -953,13 +1471,13 @@ export function App() {
       case "edit":
         return (
           <>
-            <MenuItem label="撤消" shortcut="Ctrl+Z" onSelect={() => runTopMenuAction(() => runDocumentCommand("undo"))} />
-            <MenuItem label="重做" shortcut="Ctrl+Y" onSelect={() => runTopMenuAction(() => runDocumentCommand("redo"))} />
+            <MenuItem label="撤消" shortcut="Ctrl+Z" onSelect={() => runTopMenuAction(() => void runEditCommand("undo"))} />
+            <MenuItem label="重做" shortcut="Ctrl+Y" onSelect={() => runTopMenuAction(() => void runEditCommand("redo"))} />
             <MenuSeparator />
-            <MenuItem label="剪切" shortcut="Ctrl+X" onSelect={() => runTopMenuAction(() => runDocumentCommand("cut"))} />
-            <MenuItem label="复制" shortcut="Ctrl+C" onSelect={() => runTopMenuAction(() => runDocumentCommand("copy"))} />
+            <MenuItem label="剪切" shortcut="Ctrl+X" onSelect={() => runTopMenuAction(() => void runEditCommand("cut"))} />
+            <MenuItem label="复制" shortcut="Ctrl+C" onSelect={() => runTopMenuAction(() => void runEditCommand("copy"))} />
             <MenuItem label="拷贝图片" disabled />
-            <MenuItem label="粘贴" shortcut="Ctrl+V" onSelect={() => runTopMenuAction(() => runDocumentCommand("paste"))} />
+            <MenuItem label="粘贴" shortcut="Ctrl+V" onSelect={() => runTopMenuAction(() => void runEditCommand("paste"))} />
             <MenuSeparator />
             <MenuItem label="复制为纯文本" disabled />
             <MenuItem label="复制为 Markdown" shortcut="Ctrl+Shift+C" disabled />
@@ -969,10 +1487,10 @@ export function App() {
             <MenuItem label="粘贴为纯文本" shortcut="Ctrl+Shift+V" disabled />
             <MenuSeparator />
             <MenuItem label="选择" submenu disabled />
-            <MenuItem label="上移该行" shortcut="Alt+向上箭头" disabled />
-            <MenuItem label="下移该行" shortcut="Alt+向下箭头" disabled />
+            <MenuItem label="上移该行" shortcut="Alt+向上箭头" onSelect={() => runTopMenuAction(() => void runEditCommand("moveLineUp"))} />
+            <MenuItem label="下移该行" shortcut="Alt+向下箭头" onSelect={() => runTopMenuAction(() => void runEditCommand("moveLineDown"))} />
             <MenuSeparator />
-            <MenuItem label="删除" onSelect={() => runTopMenuAction(() => runDocumentCommand("delete"))} />
+            <MenuItem label="删除" shortcut="Delete" onSelect={() => runTopMenuAction(() => void runEditCommand("delete"))} />
             <MenuItem label="删除范围" submenu disabled />
             <MenuSeparator />
             <MenuItem label="数学工具" submenu disabled />
@@ -982,7 +1500,7 @@ export function App() {
             <MenuItem label="空格与换行" submenu disabled />
             <MenuItem label="拼写检查..." disabled />
             <MenuSeparator />
-            <MenuItem label="查找和替换" submenu onSelect={() => runTopMenuAction(() => setIsActionsOpen(true))} />
+            <MenuItem label="查找和替换" submenu disabled />
             <MenuSeparator />
             <MenuItem label="表情与符号" shortcut="Win 键+句号" disabled />
           </>
@@ -990,69 +1508,93 @@ export function App() {
       case "paragraph":
         return (
           <>
-            <MenuItem label="一级标题" shortcut="Ctrl+1" onSelect={() => runTopMenuAction(() => insertMarkdown("# "))} />
-            <MenuItem label="二级标题" shortcut="Ctrl+2" onSelect={() => runTopMenuAction(() => insertMarkdown("## "))} />
-            <MenuItem label="三级标题" shortcut="Ctrl+3" onSelect={() => runTopMenuAction(() => insertMarkdown("### "))} />
-            <MenuItem label="四级标题" shortcut="Ctrl+4" onSelect={() => runTopMenuAction(() => insertMarkdown("#### "))} />
-            <MenuItem label="五级标题" shortcut="Ctrl+5" onSelect={() => runTopMenuAction(() => insertMarkdown("##### "))} />
-            <MenuItem label="六级标题" shortcut="Ctrl+6" onSelect={() => runTopMenuAction(() => insertMarkdown("###### "))} />
+            <MenuItem label="一级标题" shortcut="Ctrl+1" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "heading", level: 1 }))} />
+            <MenuItem label="二级标题" shortcut="Ctrl+2" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "heading", level: 2 }))} />
+            <MenuItem label="三级标题" shortcut="Ctrl+3" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "heading", level: 3 }))} />
+            <MenuItem label="四级标题" shortcut="Ctrl+4" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "heading", level: 4 }))} />
+            <MenuItem label="五级标题" shortcut="Ctrl+5" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "heading", level: 5 }))} />
+            <MenuItem label="六级标题" shortcut="Ctrl+6" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "heading", level: 6 }))} />
             <MenuSeparator />
-            <MenuItem label="段落" shortcut="Ctrl+0" onSelect={() => runTopMenuAction(() => insertMarkdown("\n"))} />
+            <MenuItem label="段落" shortcut="Ctrl+0" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "paragraph" }))} />
             <MenuSeparator />
-            <MenuItem label="提升标题级别" shortcut="Ctrl+=" disabled />
-            <MenuItem label="降低标题级别" shortcut="Ctrl+-" disabled />
+            <MenuItem label="提升标题级别" shortcut="Ctrl+=" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "promoteHeading" }))} />
+            <MenuItem label="降低标题级别" shortcut="Ctrl+-" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "demoteHeading" }))} />
             <MenuSeparator />
-            <MenuItem label="表格" submenu onSelect={() => runTopMenuAction(() => insertTable({ columns: 3, rows: 3 }))} />
-            <MenuItem label="公式块" shortcut="Ctrl+Shift+M" onSelect={() => runTopMenuAction(() => insertMarkdown("\n$$\n\n$$\n"))} />
-            <MenuItem label="代码块" shortcut="Ctrl+Shift+K" onSelect={() => runTopMenuAction(() => insertMarkdown("\n```\n\n```\n"))} />
+            <MenuItem label="表格" onSelect={() => runTopMenuAction(() => insertTable({ columns: 3, rows: 3 }))} />
+            <MenuItem label="公式块" shortcut="Ctrl+Shift+M" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "mathBlock" }))} />
+            <MenuItem label="代码块" shortcut="Ctrl+Shift+K" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "codeBlock" }))} />
             <MenuItem label="代码工具" submenu disabled />
-            <MenuItem label="警告框" submenu disabled />
+            <MenuSubmenu label="警告框">
+              {markdownAlertOptions.map((option) => (
+                <MenuItem
+                  key={option.kind}
+                  label={option.contentLabel}
+                  onSelect={() =>
+                    runTopMenuAction(() =>
+                      runParagraphCommand({ type: "alert", kind: option.kind }),
+                    )
+                  }
+                />
+              ))}
+            </MenuSubmenu>
             <MenuSeparator />
-            <MenuItem label="引用" shortcut="Ctrl+Shift+Q" onSelect={() => runTopMenuAction(() => insertMarkdown("> "))} />
+            <MenuItem label="引用" shortcut="Ctrl+Shift+Q" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "blockquote" }))} />
             <MenuSeparator />
-            <MenuItem label="有序列表" shortcut="Ctrl+Shift+[" onSelect={() => runTopMenuAction(() => insertMarkdown("1. "))} />
-            <MenuItem label="无序列表" shortcut="Ctrl+Shift+]" onSelect={() => runTopMenuAction(() => insertMarkdown("- "))} />
-            <MenuItem label="任务列表" shortcut="Ctrl+Shift+X" onSelect={() => runTopMenuAction(() => insertMarkdown("- [ ] "))} />
+            <MenuItem label="有序列表" shortcut="Ctrl+Shift+[" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "orderedList" }))} />
+            <MenuItem label="无序列表" shortcut="Ctrl+Shift+]" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "bulletList" }))} />
+            <MenuItem label="任务列表" shortcut="Ctrl+Shift+X" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "taskList" }))} />
             <MenuItem label="任务状态" submenu disabled />
-            <MenuItem label="列表缩进" submenu disabled />
+            <MenuItem label="增加列表缩进" shortcut="Tab" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "indentList" }))} />
+            <MenuItem label="减少列表缩进" shortcut="Shift+Tab" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "outdentList" }))} />
             <MenuSeparator />
-            <MenuItem label="在上方插入段落" onSelect={() => runTopMenuAction(() => insertMarkdown("\n"))} />
-            <MenuItem label="在下方插入段落" onSelect={() => runTopMenuAction(() => insertMarkdown("\n"))} />
+            <MenuItem label="在上方插入段落" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "insertParagraphBefore" }))} />
+            <MenuItem label="在下方插入段落" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "insertParagraphAfter" }))} />
             <MenuSeparator />
             <MenuItem label="链接引用" disabled />
             <MenuItem label="脚注" disabled />
             <MenuSeparator />
-            <MenuItem label="水平分割线" onSelect={() => runTopMenuAction(() => insertMarkdown("\n---\n"))} />
-            <MenuItem label="内容目录" onSelect={() => runTopMenuAction(() => setSidebarTab("current"))} />
-            <MenuItem label="YAML Front Matter" onSelect={() => runTopMenuAction(() => insertMarkdown("---\n\n---\n"))} />
+            <MenuItem label="水平分割线" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "horizontalRule" }))} />
+            <MenuItem label="内容目录" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "toc" }))} />
+            <MenuItem label="YAML Front Matter" disabled />
           </>
         );
       case "format":
         return (
           <>
-            <MenuItem label="加粗" shortcut="Ctrl+B" onSelect={() => runTopMenuAction(() => insertMarkdown("****"))} />
-            <MenuItem label="斜体" shortcut="Ctrl+I" onSelect={() => runTopMenuAction(() => insertMarkdown("**"))} />
-            <MenuItem label="下划线" shortcut="Ctrl+U" onSelect={() => runTopMenuAction(() => runDocumentCommand("underline"))} />
-            <MenuItem label="代码" shortcut="Ctrl+Shift+`" onSelect={() => runTopMenuAction(() => insertMarkdown("``"))} />
+            <MenuItem label="加粗" shortcut="Ctrl+B" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "bold" }))} />
+            <MenuItem label="斜体" shortcut="Ctrl+I" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "italic" }))} />
+            <MenuItem label="下划线" shortcut="Ctrl+U" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "underline" }))} />
+            <MenuItem label="代码" shortcut="Ctrl+Shift+`" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "inlineCode" }))} />
             <MenuSeparator />
-            <MenuItem label="删除线" shortcut="Alt+Shift+5" onSelect={() => runTopMenuAction(() => insertMarkdown("~~~~"))} />
-            <MenuItem label="注释" disabled />
+            <MenuItem label="删除线" shortcut="Alt+Shift+5" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "strikethrough" }))} />
+            <MenuItem label="注释" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "comment" }))} />
             <MenuSeparator />
-            <MenuItem label="超链接" shortcut="Ctrl+K" onSelect={() => runTopMenuAction(() => insertMarkdown("[]()"))} />
-            <MenuItem label="链接操作" submenu disabled />
-            <MenuItem label="图像" submenu onSelect={() => runTopMenuAction(() => readFileInput(imageInputRef.current))} />
+            <MenuItem label="超链接" shortcut="Ctrl+K" onSelect={() => runTopMenuAction(createLinkFromPrompt)} />
+            <MenuSubmenu label="链接操作">
+              <MenuItem label="打开链接" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "openLink" }))} />
+              <MenuItem label="复制链接" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "copyLink" }))} />
+              <MenuItem label="移除链接" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "removeLink" }))} />
+            </MenuSubmenu>
+            <MenuSubmenu label="图像">
+              <MenuItem label="插入本地图片..." onSelect={() => runTopMenuAction(() => readFileInput(imageInputRef.current))} />
+              <MenuSeparator />
+              <MenuItem label="左对齐" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "imageAlign", align: "left" }))} />
+              <MenuItem label="居中" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "imageAlign", align: "center" }))} />
+              <MenuItem label="右对齐" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "imageAlign", align: "right" }))} />
+              <MenuItem label="恢复原始大小" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "imageResetSize" }))} />
+            </MenuSubmenu>
             <MenuSeparator />
-            <MenuItem label="清除样式" shortcut="Ctrl+\\" disabled />
+            <MenuItem label="清除样式" shortcut="Ctrl+\\" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "clearStyle" }))} />
           </>
         );
       case "view":
         return (
           <>
-            <MenuItem label="显示 / 隐藏侧边栏" shortcut="Ctrl+Shift+L" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
+            <MenuItem label="显示 / 隐藏侧边栏" shortcut="Ctrl+Shift+L" onSelect={() => runTopMenuAction(() => setIsSidebarCollapsed((current) => !current))} />
             <MenuItem label="大纲" shortcut="Ctrl+Shift+1" onSelect={() => runTopMenuAction(() => setSidebarTab("current"))} />
             <MenuItem label="文档列表" shortcut="Ctrl+Shift+2" onSelect={() => runTopMenuAction(() => setIsHomeOpen(true))} />
             <MenuItem label="文件树" shortcut="Ctrl+Shift+3" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
-            <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(() => setIsActionsOpen(true))} />
+            <MenuItem label="搜索" shortcut="Ctrl+Shift+F" disabled />
             <MenuSeparator />
             <MenuItem label="源代码模式" shortcut="Ctrl+/" checked={mode === "source"} onSelect={() => runTopMenuAction(() => setEditorMode("source"))} />
             <MenuSeparator />
@@ -1108,7 +1650,18 @@ export function App() {
 
   return (
     <>
-      <main className="app-shell">
+      <main
+        className={
+          isSidebarCollapsed
+            ? "app-shell app-shell-sidebar-collapsed"
+            : "app-shell"
+        }
+        style={
+          {
+            "--sidebar-width": `${isSidebarCollapsed ? 0 : sidebarWidth}px`,
+          } as CSSProperties
+        }
+      >
         <header className="app-menubar">
           <div className="menubar-left">
             <button
@@ -1154,9 +1707,35 @@ export function App() {
               ))}
             </nav>
           </div>
+          <div className="window-controls" aria-label="窗口控制">
+            <button
+              className="window-control-button"
+              type="button"
+              aria-label="最小化"
+              onClick={() => void window.desktop?.windowControl?.("minimize")}
+            >
+              <Minus size={15} />
+            </button>
+            <button
+              className="window-control-button"
+              type="button"
+              aria-label="最大化"
+              onClick={() => void window.desktop?.windowControl?.("maximize")}
+            >
+              <Square size={12} />
+            </button>
+            <button
+              className="window-control-button window-control-close"
+              type="button"
+              aria-label="关闭"
+              onClick={() => void window.desktop?.windowControl?.("close")}
+            >
+              <X size={15} />
+            </button>
+          </div>
         </header>
 
-        <aside className="sidebar explorer-sidebar">
+        <aside className="sidebar explorer-sidebar" aria-hidden={isSidebarCollapsed}>
           <div className="explorer-tabs" role="tablist" aria-label="侧边栏视图">
             <button
               className={sidebarTab === "files" ? "explorer-tab explorer-tab-active" : "explorer-tab"}
@@ -1183,8 +1762,8 @@ export function App() {
               directoryTree ? (
                 directoryTree.children?.length ? (
                   <DirectoryTree
-                    activeDirectoryPath={getDirectoryPath(activeDocument.filePath)}
-                    activeFilePath={activeDocument.filePath}
+                    activeDirectoryPath={getDirectoryPath(activeDocument?.filePath)}
+                    activeFilePath={activeDocument?.filePath}
                     expandedPaths={expandedDirectoryPaths}
                     item={directoryTree}
                     onOpenFile={(filePath) => {
@@ -1212,7 +1791,7 @@ export function App() {
                   </button>
                 </div>
               )
-            ) : activeDocumentOutline.length ? (
+            ) : activeDocument && activeDocumentOutline.length ? (
               <div className="outline-tree">
                 {activeDocumentOutline.map((entry) => (
                   <button
@@ -1238,8 +1817,10 @@ export function App() {
                   </button>
                 ))}
               </div>
-            ) : (
+            ) : activeDocument ? (
               <div className="outline-empty">当前文件没有可显示的标题</div>
+            ) : (
+              <div className="outline-empty" aria-label="当前文件为空" />
             )}
           </div>
 
@@ -1326,8 +1907,21 @@ export function App() {
           </div>
         </aside>
 
+        <div
+          className={
+            isSidebarCollapsed
+              ? "sidebar-resizer sidebar-resizer-collapsed"
+              : "sidebar-resizer"
+          }
+          role="separator"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          onDoubleClick={() => setIsSidebarCollapsed((current) => !current)}
+          onPointerDown={startSidebarResize}
+        />
+
         <section className="workspace">
-          {isHomeOpen ? (
+          {isHomeOpen || !activeDocument ? (
             <section className="welcome-home">
               <div className="welcome-hero">
                 <div className="welcome-logo">T</div>
@@ -1374,6 +1968,7 @@ export function App() {
                 {mode === "typora" && (
                   <TyporaEditor
                     ref={typoraEditorRef}
+                    documentId={activeDocument.id}
                     value={activeDocument.content}
                     onChange={updateMarkdown}
                     onActiveLineChange={setActiveEditorLineIndex}
@@ -1400,6 +1995,18 @@ export function App() {
               </div>
             </section>
           )}
+          <footer className="workspace-statusbar">
+            <button
+              className="workspace-status-button"
+              type="button"
+              aria-label={isSidebarCollapsed ? "展开左侧栏" : "折叠左侧栏"}
+              onClick={() => setIsSidebarCollapsed((current) => !current)}
+            >
+              {isSidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
+            </button>
+            <span className="workspace-status-spacer" />
+            <span className="workspace-word-count">{activeDocument ? activeDocumentWordCount : 0} 词</span>
+          </footer>
         </section>
 
         <input
@@ -1428,21 +2035,23 @@ export function App() {
                   </section>
                 }
               >
-                <DrawingModal
-                  assetIndex={Object.keys(activeDocument.drawings).length + 1}
-                  onClose={() => setIsDrawingOpen(false)}
-                  onInsert={(asset: DrawingAsset) => {
-                    patchActiveDocument({
-                      drawings: {
-                        ...activeDocument.drawings,
-                        [asset.id]: asset,
-                      },
-                    });
-                    insertMarkdown(
-                      `\n![${asset.name}](${asset.dataUrl} "excalidraw:${asset.id}")\n`,
-                    );
-                  }}
-                />
+                {activeDocument && (
+                  <DrawingModal
+                    assetIndex={Object.keys(activeDocument.drawings).length + 1}
+                    onClose={() => setIsDrawingOpen(false)}
+                    onInsert={(asset: DrawingAsset) => {
+                      patchActiveDocument({
+                        drawings: {
+                          ...activeDocument.drawings,
+                          [asset.id]: asset,
+                        },
+                      });
+                      insertMarkdown(
+                        `![${asset.name}](${asset.dataUrl} "excalidraw:${asset.id} align=left") `,
+                      );
+                    }}
+                  />
+                )}
               </Suspense>
             </Dialog.Content>
           </Dialog.Portal>

@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld("desktop", {
     chrome: process.versions.chrome,
     electron: process.versions.electron,
   },
+  windowControl: (action: "close" | "maximize" | "minimize") =>
+    ipcRenderer.invoke(`window:${action}`),
   writeMarkdownFile: (payload: { content: string; filePath: string }) =>
     ipcRenderer.invoke("workspace:write-markdown-file", payload),
 });

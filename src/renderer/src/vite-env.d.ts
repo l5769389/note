@@ -24,6 +24,7 @@ type DesktopApi = {
     chrome: string;
     electron: string;
   };
+  windowControl: (action: "close" | "maximize" | "minimize") => Promise<boolean | void>;
   writeMarkdownFile: (payload: {
     content: string;
     filePath: string;
