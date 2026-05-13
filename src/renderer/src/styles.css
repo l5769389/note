@@ -1480,7 +1480,7 @@ button {
 }
 
 .typora-inline-code-source-input {
-  display: inline;
+  display: inline-block;
   border: 0;
   background: transparent;
   caret-color: currentcolor;
@@ -1496,9 +1496,54 @@ button {
   white-space: pre;
 }
 
-.typora-inline-code-source-input:focus {
+.typora-inline-code-source-input:focus,
+.typora-inline-code-source-input:focus-within {
   background: transparent;
   box-shadow: none;
+}
+
+.typora-inline-code-source-input .cm-editor {
+  display: inline-block;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  height: auto;
+  outline: none;
+}
+
+.typora-inline-code-source-input .cm-editor.cm-focused {
+  outline: none;
+}
+
+.typora-inline-code-source-input .cm-scroller {
+  overflow: visible;
+  font: inherit;
+  line-height: inherit;
+}
+
+.typora-inline-code-source-input .cm-content {
+  min-height: 0;
+  padding: 0;
+  caret-color: currentcolor;
+  font: inherit;
+  line-height: inherit;
+  white-space: pre;
+}
+
+.typora-inline-code-source-input .cm-line {
+  padding: 0;
+}
+
+.typora-inline-code-source-input .cm-cursor {
+  border-left-color: currentcolor;
+}
+
+.typora-inline-code-source-input .cm-selectionBackground {
+  background: rgba(59, 130, 246, 0.22) !important;
+}
+
+.typora-inline-code-source-input .cm-gutters {
+  display: none;
 }
 
 .typora-milkdown-content .ProseMirror pre {

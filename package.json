@@ -14,6 +14,9 @@
     "preview": "electron-vite preview"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.42.1",
     "@excalidraw/excalidraw": "^0.18.0",
     "@milkdown/kit": "^7.20.0",
     "@milkdown/plugin-prism": "^7.20.0",

@@ -1,3 +1,6 @@
+import { defaultKeymap } from "@codemirror/commands";
+import { EditorState as CodeMirrorState, Prec } from "@codemirror/state";
+import { EditorView as CodeMirrorView, keymap } from "@codemirror/view";
 import { defaultValueCtx, editorViewCtx, Editor, rootCtx } from "@milkdown/kit/core";
 import { clipboard } from "@milkdown/kit/plugin/clipboard";
 import { history } from "@milkdown/kit/plugin/history";
@@ -357,67 +360,6 @@ function commitInlineCodeSource(
   if (options.focusEditor) {
     view.focus();
   }
-}
-
-function getContentEditableCursorOffset(element: HTMLElement) {
-  const selection = window.getSelection();
-
-  if (!selection || !selection.rangeCount) {
-    return element.textContent?.length ?? 0;
-  }
-
-  const range = selection.getRangeAt(0);
-
-  if (!element.contains(range.startContainer)) {
-    return element.textContent?.length ?? 0;
-  }
-
-  const prefixRange = range.cloneRange();
-  prefixRange.selectNodeContents(element);
-  prefixRange.setEnd(range.startContainer, range.startOffset);
-
-  return prefixRange.toString().length;
-}
-
-function isContentEditableSelectionCollapsed(element: HTMLElement) {
-  const selection = window.getSelection();
-
-  return Boolean(
-    selection?.isCollapsed &&
-      selection.rangeCount &&
-      element.contains(selection.getRangeAt(0).startContainer),
-  );
-}
-
-function setContentEditableCursorOffset(element: HTMLElement, offset: number) {
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  let remainingOffset = Math.max(0, offset);
-  let currentNode = walker.nextNode();
-
-  while (currentNode) {
-    const length = currentNode.textContent?.length ?? 0;
-
-    if (remainingOffset <= length) {
-      const range = document.createRange();
-      const selection = window.getSelection();
-
-      range.setStart(currentNode, remainingOffset);
-      range.collapse(true);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      return;
-    }
-
-    remainingOffset -= length;
-    currentNode = walker.nextNode();
-  }
-
-  const range = document.createRange();
-  const selection = window.getSelection();
-  range.selectNodeContents(element);
-  range.collapse(false);
-  selection?.removeAllRanges();
-  selection?.addRange(range);
 }
 
 function selectionTouchesNode(selection: Selection, pos: number, node: ProseMirrorNode) {
@@ -921,31 +863,29 @@ const markdownSyntaxDecoration = $prose(
 
             function createInlineCodeSourceEditor() {
               return (view: EditorView) => {
-                const editor = document.createElement("span");
+                const editorHost = document.createElement("span");
                 const source = `\`${getInlineCodeText(view.state.doc, range)}\``;
                 const selection = view.state.selection;
                 let hasCommitted = false;
                 let pendingPointerSelection: number | null = null;
+                let codeMirrorView: CodeMirrorView | null = null;
                 const shouldAutofocus =
                   selection.empty &&
                   selection.from >= range.from &&
                   selection.from <= range.to &&
                   document.activeElement === view.dom;
 
-                editor.className =
+                editorHost.className =
                   "typora-markdown-syntax-marker typora-inline-code-source-input";
-                editor.contentEditable = "true";
-                editor.dataset.inlineCodeFrom = String(range.from);
-                editor.dataset.inlineCodeTo = String(range.to);
-                editor.spellcheck = false;
-                editor.textContent = source;
-                editor.setAttribute("aria-label", "Inline code markdown source");
-                editor.setAttribute("role", "textbox");
+                editorHost.dataset.inlineCodeFrom = String(range.from);
+                editorHost.dataset.inlineCodeTo = String(range.to);
+                editorHost.setAttribute("aria-label", "Inline code markdown source");
+                editorHost.setAttribute("role", "textbox");
 
                 function handlePointerDown(event: PointerEvent) {
                   if (
                     !(event.target instanceof Node) ||
-                    editor.contains(event.target)
+                    editorHost.contains(event.target)
                   ) {
                     pendingPointerSelection = null;
                     return;
@@ -963,10 +903,9 @@ const markdownSyntaxDecoration = $prose(
                     })?.pos ?? null;
                 }
 
-                document.addEventListener("pointerdown", handlePointerDown, true);
-
                 function finishInlineCodeEdit(
                   options: Parameters<typeof commitInlineCodeSource>[3] = {},
+                  nextSource = codeMirrorView?.state.doc.toString() ?? source,
                 ) {
                   if (hasCommitted) {
                     return;
@@ -974,98 +913,173 @@ const markdownSyntaxDecoration = $prose(
 
                   hasCommitted = true;
                   document.removeEventListener("pointerdown", handlePointerDown, true);
-                  commitInlineCodeSource(view, range, editor.textContent ?? "", options);
+                  codeMirrorView?.destroy();
+                  codeMirrorView = null;
+                  commitInlineCodeSource(view, range, nextSource, options);
                 }
 
-                editor.addEventListener("focus", () => {
+                function activateMarkdownSyntaxState() {
+                  if (markdownSyntaxPluginKey.getState(view.state)?.isFocused) {
+                    return;
+                  }
+
                   view.dispatch(
                     view.state.tr.setMeta(markdownSyntaxPluginKey, {
                       isFocused: true,
                     } satisfies Partial<MarkdownSyntaxPluginState>),
                   );
-                });
+                }
 
-                editor.addEventListener("blur", () => {
-                  finishInlineCodeEdit({
-                    documentSelection: pendingPointerSelection ?? undefined,
-                    focusEditor: pendingPointerSelection !== null,
-                    sourceCursor: getContentEditableCursorOffset(editor),
+                function commitFromBlur(cmView: CodeMirrorView) {
+                  window.requestAnimationFrame(() => {
+                    if (
+                      hasCommitted ||
+                      (document.activeElement instanceof Node &&
+                        editorHost.contains(document.activeElement))
+                    ) {
+                      return;
+                    }
+
+                    finishInlineCodeEdit({
+                      documentSelection: pendingPointerSelection ?? undefined,
+                      focusEditor: pendingPointerSelection !== null,
+                      sourceCursor: cmView.state.selection.main.head,
+                    });
                   });
-                });
+                }
 
-                editor.addEventListener("keydown", (event) => {
-                  event.stopPropagation();
+                const sourceCursor = getInlineCodeSourceCursorPosition(
+                  source,
+                  selection.from,
+                  range,
+                );
 
-                  const sourceText = editor.textContent ?? "";
-                  const selectionStart = getContentEditableCursorOffset(editor);
-                  const isCollapsed = isContentEditableSelectionCollapsed(editor);
+                codeMirrorView = new CodeMirrorView({
+                  parent: editorHost,
+                  state: CodeMirrorState.create({
+                    doc: source,
+                    selection: shouldAutofocus
+                      ? { anchor: sourceCursor, head: sourceCursor }
+                      : undefined,
+                    extensions: [
+                      CodeMirrorView.contentAttributes.of({
+                        autocapitalize: "off",
+                        autocomplete: "off",
+                        autocorrect: "off",
+                        spellcheck: "false",
+                      }),
+                      CodeMirrorView.domEventHandlers({
+                        blur(_event, cmView) {
+                          document.removeEventListener(
+                            "pointerdown",
+                            handlePointerDown,
+                            true,
+                          );
+                          commitFromBlur(cmView);
+                        },
+                        focus() {
+                          activateMarkdownSyntaxState();
+                          document.addEventListener(
+                            "pointerdown",
+                            handlePointerDown,
+                            true,
+                          );
+                        },
+                        keydown(event) {
+                          event.stopPropagation();
+                          return false;
+                        },
+                      }),
+                      Prec.highest(
+                        keymap.of([
+                          {
+                            key: "Escape",
+                            run() {
+                              finishInlineCodeEdit(
+                                {
+                                  focusEditor: true,
+                                  sourceCursor: getInlineCodeSourceCursorPosition(
+                                    source,
+                                    view.state.selection.from,
+                                    range,
+                                  ),
+                                },
+                                source,
+                              );
+                              return true;
+                            },
+                          },
+                          {
+                            key: "Enter",
+                            run() {
+                              finishInlineCodeEdit({
+                                focusEditor: true,
+                                selection: "end",
+                              });
+                              return true;
+                            },
+                          },
+                          {
+                            key: "ArrowLeft",
+                            run(cmView) {
+                              const selection = cmView.state.selection.main;
 
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    editor.textContent = source;
-                    finishInlineCodeEdit({
-                      focusEditor: true,
-                      sourceCursor: getInlineCodeSourceCursorPosition(
-                        source,
-                        view.state.selection.from,
-                        range,
+                              if (!selection.empty || selection.head !== 0) {
+                                return false;
+                              }
+
+                              finishInlineCodeEdit({
+                                focusEditor: true,
+                                selection: "start",
+                              });
+                              return true;
+                            },
+                          },
+                          {
+                            key: "ArrowRight",
+                            run(cmView) {
+                              const selection = cmView.state.selection.main;
+
+                              if (
+                                !selection.empty ||
+                                selection.head !== cmView.state.doc.length
+                              ) {
+                                return false;
+                              }
+
+                              finishInlineCodeEdit({
+                                focusEditor: true,
+                                selection: "end",
+                              });
+                              return true;
+                            },
+                          },
+                        ]),
                       ),
-                    });
-                    return;
-                  }
-
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    finishInlineCodeEdit({
-                      focusEditor: true,
-                      selection: "end",
-                    });
-                    return;
-                  }
-
-                  if (
-                    event.key === "ArrowLeft" &&
-                    isCollapsed &&
-                    selectionStart === 0
-                  ) {
-                    event.preventDefault();
-                    finishInlineCodeEdit({
-                      focusEditor: true,
-                      selection: "start",
-                    });
-                    return;
-                  }
-
-                  if (
-                    event.key === "ArrowRight" &&
-                    isCollapsed &&
-                    selectionStart === sourceText.length
-                  ) {
-                    event.preventDefault();
-                    finishInlineCodeEdit({
-                      focusEditor: true,
-                      selection: "end",
-                    });
-                  }
+                      keymap.of(defaultKeymap),
+                    ],
+                  }),
                 });
 
                 if (shouldAutofocus) {
                   requestAnimationFrame(() => {
-                    if (!editor.isConnected) {
+                    if (!editorHost.isConnected || hasCommitted) {
                       return;
                     }
 
-                    const cursor = getInlineCodeSourceCursorPosition(
-                      editor.textContent ?? "",
-                      selection.from,
-                      range,
-                    );
-                    editor.focus({ preventScroll: true });
-                    setContentEditableCursorOffset(editor, cursor);
+                    codeMirrorView?.focus();
                   });
                 }
 
-                return editor;
+                editorHost.addEventListener("mousedown", (event) => {
+                  event.stopPropagation();
+                });
+
+                editorHost.addEventListener("pointerdown", (event) => {
+                  event.stopPropagation();
+                });
+
+                return editorHost;
               };
             }
 
