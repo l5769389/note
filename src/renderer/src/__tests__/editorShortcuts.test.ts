@@ -79,6 +79,21 @@ describe("getEditorShortcutAction", () => {
     });
   });
 
+  it("maps find and replace shortcuts", () => {
+    expect(getEditorShortcutAction(shortcut({ ctrlKey: true, key: "f" }))).toEqual({
+      type: "find",
+    });
+    expect(getEditorShortcutAction(shortcut({ ctrlKey: true, key: "H" }))).toEqual({
+      replace: true,
+      type: "find",
+    });
+    expect(
+      getEditorShortcutAction(shortcut({ ctrlKey: true, key: "F", shiftKey: true })),
+    ).toEqual({
+      type: "find",
+    });
+  });
+
   it("ignores unrelated shortcuts", () => {
     expect(getEditorShortcutAction(shortcut({ key: "b" }))).toBeNull();
     expect(

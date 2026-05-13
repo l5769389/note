@@ -1125,21 +1125,52 @@ button {
 .typora-mdx-content pre code,
 .typora-code-block code {
   border: 0;
-  background: transparent;
+  border-radius: 0;
+  background: transparent !important;
+  box-decoration-break: slice;
+  box-shadow: none;
   color: inherit;
   padding: 0;
+  text-shadow: none;
   vertical-align: baseline;
   white-space: inherit;
+}
+
+.markdown-preview pre code *,
+.typora-mdx-content pre code *,
+.typora-code-block code *,
+.markdown-preview pre .token,
+.typora-mdx-content pre .token,
+.typora-code-block .token {
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
+  text-shadow: none;
 }
 
 .markdown-preview blockquote,
 .typora-mdx-content blockquote,
 .typora-quote-line {
-  margin-left: 0;
-  border-left: 4px solid #14b8a6;
-  background: #f0fdfa;
-  padding: 8px 16px;
-  color: #335155;
+  position: relative;
+  margin: 1.15em 0;
+  border: 1px solid #e3e8ef;
+  border-left: 4px solid #8b9bb4;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #f8fafc 0%, #ffffff 100%);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  color: #475569;
+  padding: 12px 18px 12px 20px;
+}
+
+.markdown-preview blockquote > :first-child,
+.typora-mdx-content blockquote > :first-child {
+  margin-top: 0;
+}
+
+.markdown-preview blockquote > :last-child,
+.typora-mdx-content blockquote > :last-child {
+  margin-bottom: 0;
 }
 
 .markdown-preview blockquote.markdown-alert,
@@ -1467,83 +1498,18 @@ button {
   vertical-align: 0.04em;
 }
 
+.typora-milkdown-content .ProseMirror .typora-search-active-highlight {
+  border-radius: 4px;
+  background: #fff2a8;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.22);
+}
+
 .typora-markdown-syntax-marker {
   color: #7b8794;
   font-family:
     "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
     monospace;
   font-size: 0.86em;
-}
-
-.typora-inline-code-source-hidden {
-  display: none;
-}
-
-.typora-inline-code-source-input {
-  display: inline-block;
-  border: 0;
-  background: transparent;
-  caret-color: currentcolor;
-  color: #111827;
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
-    monospace;
-  font-size: 0.92em;
-  line-height: inherit;
-  outline: none;
-  padding: 0;
-  vertical-align: baseline;
-  white-space: pre;
-}
-
-.typora-inline-code-source-input:focus,
-.typora-inline-code-source-input:focus-within {
-  background: transparent;
-  box-shadow: none;
-}
-
-.typora-inline-code-source-input .cm-editor {
-  display: inline-block;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  height: auto;
-  outline: none;
-}
-
-.typora-inline-code-source-input .cm-editor.cm-focused {
-  outline: none;
-}
-
-.typora-inline-code-source-input .cm-scroller {
-  overflow: visible;
-  font: inherit;
-  line-height: inherit;
-}
-
-.typora-inline-code-source-input .cm-content {
-  min-height: 0;
-  padding: 0;
-  caret-color: currentcolor;
-  font: inherit;
-  line-height: inherit;
-  white-space: pre;
-}
-
-.typora-inline-code-source-input .cm-line {
-  padding: 0;
-}
-
-.typora-inline-code-source-input .cm-cursor {
-  border-left-color: currentcolor;
-}
-
-.typora-inline-code-source-input .cm-selectionBackground {
-  background: rgba(59, 130, 246, 0.22) !important;
-}
-
-.typora-inline-code-source-input .cm-gutters {
-  display: none;
 }
 
 .typora-milkdown-content .ProseMirror pre {
@@ -1564,11 +1530,24 @@ button {
 
 .typora-milkdown-content .ProseMirror pre code {
   border: 0;
-  background: transparent;
+  border-radius: 0;
+  background: transparent !important;
+  box-decoration-break: slice;
+  box-shadow: none;
   color: inherit;
   padding: 0;
   font: inherit;
+  text-shadow: none;
   white-space: inherit;
+}
+
+.typora-milkdown-content .ProseMirror pre code *,
+.typora-milkdown-content .ProseMirror pre .token {
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
+  text-shadow: none;
 }
 
 .typora-milkdown-content .ProseMirror pre.typora-code-block-active {
@@ -1863,11 +1842,23 @@ button {
 }
 
 .typora-milkdown-content .ProseMirror blockquote {
-  margin-left: 0;
-  border-left: 4px solid #14b8a6;
-  background: #f0fdfa;
-  padding: 8px 16px;
-  color: #335155;
+  position: relative;
+  margin: 1.15em 0;
+  border: 1px solid #e3e8ef;
+  border-left: 4px solid #8b9bb4;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #f8fafc 0%, #ffffff 100%);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  color: #475569;
+  padding: 12px 18px 12px 20px;
+}
+
+.typora-milkdown-content .ProseMirror blockquote > :first-child {
+  margin-top: 0;
+}
+
+.typora-milkdown-content .ProseMirror blockquote > :last-child {
+  margin-bottom: 0;
 }
 
 .typora-milkdown-content .ProseMirror img {
@@ -2223,7 +2214,7 @@ button {
   height: 16px;
   border-right: 2px solid #635bff;
   border-bottom: 2px solid #635bff;
-  border-radius: 0 0 5px 0;
+  border-radius: 0 0 5px;
   background: rgba(99, 91, 255, 0.06);
   box-shadow: none;
   cursor: nwse-resize;
@@ -2476,9 +2467,157 @@ button {
   overflow: auto;
 }
 
-.create-file-form {
+.find-dialog {
+  position: fixed;
+  top: 82px;
+  right: 28px;
+  z-index: 100;
+  width: min(460px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid #dfe4ec;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 18px 54px rgba(15, 23, 42, 0.18);
+  outline: none;
+}
+
+.find-dialog-header,
+.create-file-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #e4e8ee;
+  background: #f8fafc;
+}
+
+.find-dialog-header {
+  padding: 14px 14px 12px 16px;
+}
+
+.find-dialog-title,
+.create-file-title {
+  margin: 0;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.find-dialog-subtitle,
+.create-file-heading p {
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 12px;
+}
+
+.find-dialog-body {
   display: grid;
   gap: 12px;
+  padding: 14px;
+}
+
+.find-field {
+  display: grid;
+  gap: 6px;
+}
+
+.find-field span {
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.find-field input {
+  height: 36px;
+  border: 1px solid #dce2ea;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 0 10px;
+  color: #111827;
+  outline: 0;
+}
+
+.find-field input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.find-dialog-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.find-results {
+  display: grid;
+  max-height: 236px;
+  overflow: auto;
+  gap: 6px;
+}
+
+.find-result {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #e3e8ef;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 8px 10px;
+  color: #1f2937;
+  text-align: left;
+}
+
+.find-result:hover,
+.find-result-active {
+  border-color: #9db9ff;
+  background: #f4f7ff;
+}
+
+.find-result span,
+.find-results-more {
+  color: #667085;
+  font-size: 12px;
+}
+
+.find-result strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.find-results-more {
+  padding: 4px 2px;
+}
+
+.create-file-dialog {
+  overflow: hidden;
+}
+
+.create-file-header {
+  padding: 18px;
+}
+
+.create-file-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.create-file-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.create-file-form {
+  display: grid;
+  gap: 14px;
   padding: 18px;
 }
 
@@ -2706,10 +2845,14 @@ button {
   border-radius: 7px;
   background: #ffffff;
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
-  color: #111827;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 18px;
-  font-weight: 700;
+  padding: 0;
+}
+
+.app-logo-image {
+  display: block;
+  width: 23px;
+  height: 23px;
+  pointer-events: none;
 }
 
 .menubar-menu {
@@ -2748,8 +2891,10 @@ button {
   z-index: 140;
   display: grid;
   min-width: 292px;
-  max-height: calc(100vh - 40px);
-  overflow: auto;
+  max-height: calc(100dvh - 44px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid rgba(229, 231, 235, 0.82);
   border-radius: 13px;
   background: #ffffff;
@@ -2858,7 +3003,6 @@ button {
 
 .menubar-dropdown-paragraph {
   min-width: 342px;
-  overflow: visible;
 }
 
 .menubar-submenu {
@@ -2890,7 +3034,6 @@ button {
 
 .menubar-dropdown-format {
   min-width: 278px;
-  overflow: visible;
 }
 
 .menubar-dropdown-view {
@@ -3025,6 +3168,10 @@ button {
   display: flex;
   align-items: center;
   gap: 5px;
+}
+
+.explorer-actions-primary {
+  margin-left: -2px;
 }
 
 .explorer-actions button {
@@ -3347,10 +3494,14 @@ button {
   border-radius: 12px;
   background: #ffffff;
   box-shadow: 0 16px 36px rgba(15, 23, 42, 0.11);
-  color: #111827;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 36px;
-  font-weight: 800;
+  padding: 0;
+}
+
+.welcome-logo img {
+  display: block;
+  width: 46px;
+  height: 46px;
+  pointer-events: none;
 }
 
 .welcome-hero h1 {
@@ -3888,8 +4039,11 @@ button {
 
 :root[data-theme="whitey"] .typora-milkdown-content .ProseMirror blockquote,
 :root[data-theme="whitey"] .markdown-preview blockquote {
+  border-color: transparent;
   border-left-color: #d7d7d7;
+  border-radius: 0;
   background: transparent;
+  box-shadow: none;
   color: #555555;
 }
 
@@ -3931,6 +4085,7 @@ button {
 :root[data-theme="night"] .menubar-dropdown,
 :root[data-theme="night"] .menubar-submenu-panel,
 :root[data-theme="night"] .settings-dialog,
+:root[data-theme="night"] .find-dialog,
 :root[data-theme="night"] .create-file-dialog {
   border-color: #26344f;
   background: #111c33;
@@ -3945,8 +4100,13 @@ button {
 :root[data-theme="night"] .workspace-actions,
 :root[data-theme="night"] .theme-select-button,
 :root[data-theme="night"] .settings-title,
+:root[data-theme="night"] .find-dialog-title,
+:root[data-theme="night"] .create-file-title,
 :root[data-theme="night"] .settings-mode-item,
 :root[data-theme="night"] .settings-field input,
+:root[data-theme="night"] .find-field input,
+:root[data-theme="night"] .create-file-input-row input,
+:root[data-theme="night"] .find-result strong,
 :root[data-theme="night"] .typora-milkdown-content .ProseMirror h1,
 :root[data-theme="night"] .typora-milkdown-content .ProseMirror h2,
 :root[data-theme="night"] .typora-milkdown-content .ProseMirror h3,
@@ -3958,9 +4118,27 @@ button {
 
 :root[data-theme="night"] .theme-select-button,
 :root[data-theme="night"] .settings-mode-item,
-:root[data-theme="night"] .settings-field input {
+:root[data-theme="night"] .settings-field input,
+:root[data-theme="night"] .find-field input,
+:root[data-theme="night"] .create-file-input-row,
+:root[data-theme="night"] .create-file-input-row input,
+:root[data-theme="night"] .find-result {
   border-color: #26344f;
   background: #0f172a;
+}
+
+:root[data-theme="night"] .find-dialog-header,
+:root[data-theme="night"] .create-file-header {
+  border-color: #26344f;
+  background: #0f172a;
+}
+
+:root[data-theme="night"] .find-dialog-subtitle,
+:root[data-theme="night"] .create-file-heading p,
+:root[data-theme="night"] .find-field span,
+:root[data-theme="night"] .find-result span,
+:root[data-theme="night"] .find-results-more {
+  color: #94a3b8;
 }
 
 :root[data-theme="night"] .typora-milkdown-content .ProseMirror p,
@@ -3983,6 +4161,20 @@ button {
   border-color: #26344f;
   background: #0b1220;
   color: #dbeafe;
+}
+
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror blockquote:not(.typora-alert-block),
+:root[data-theme="night"] .markdown-preview blockquote:not(.markdown-alert) {
+  border-color: #26344f;
+  border-left-color: #64748b;
+  background: linear-gradient(90deg, #111c33 0%, #0f172a 100%);
+  box-shadow: none;
+  color: #cbd5e1;
+}
+
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror .typora-search-active-highlight {
+  background: rgba(250, 204, 21, 0.3);
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.24);
 }
 
 :root[data-theme="dark"] .app-menubar,
@@ -4041,7 +4233,9 @@ button {
 }
 
 :root[data-theme="dark"] .menubar-dropdown,
-:root[data-theme="dark"] .menubar-submenu-panel {
+:root[data-theme="dark"] .menubar-submenu-panel,
+:root[data-theme="dark"] .find-dialog,
+:root[data-theme="dark"] .create-file-dialog {
   border-color: rgba(148, 163, 184, 0.22);
   background: #111827;
 }
@@ -4053,6 +4247,11 @@ button {
 :root[data-theme="dark"] .directory-tree-file,
 :root[data-theme="dark"] .workspace-actions,
 :root[data-theme="dark"] .theme-select-button,
+:root[data-theme="dark"] .find-dialog-title,
+:root[data-theme="dark"] .create-file-title,
+:root[data-theme="dark"] .find-field input,
+:root[data-theme="dark"] .create-file-input-row input,
+:root[data-theme="dark"] .find-result strong,
 :root[data-theme="dark"] .welcome-hero h1,
 :root[data-theme="dark"] .recent-header h2,
 :root[data-theme="dark"] .recent-row strong {
@@ -4064,6 +4263,10 @@ button {
 :root[data-theme="dark"] .app-logo-button,
 :root[data-theme="dark"] .welcome-logo,
 :root[data-theme="dark"] .welcome-sheet,
+:root[data-theme="dark"] .find-field input,
+:root[data-theme="dark"] .create-file-input-row,
+:root[data-theme="dark"] .create-file-input-row input,
+:root[data-theme="dark"] .find-result,
 :root[data-theme="dark"] .milkdown-image-toolbar {
   border-color: #303746;
   background-color: #1f242d;
@@ -4082,9 +4285,20 @@ button {
 :root[data-theme="dark"] .recent-row span,
 :root[data-theme="dark"] .recent-row time,
 :root[data-theme="dark"] .welcome-tip,
+:root[data-theme="dark"] .find-dialog-subtitle,
+:root[data-theme="dark"] .create-file-heading p,
+:root[data-theme="dark"] .find-field span,
+:root[data-theme="dark"] .find-result span,
+:root[data-theme="dark"] .find-results-more,
 :root[data-theme="dark"] .milkdown-image-size-control,
 :root[data-theme="dark"] .milkdown-image-toolbar-button {
   color: #a1a1aa;
+}
+
+:root[data-theme="dark"] .find-dialog-header,
+:root[data-theme="dark"] .create-file-header {
+  border-color: #303746;
+  background: #161b22;
 }
 
 :root[data-theme="dark"] .explorer-empty strong {
@@ -4132,6 +4346,21 @@ button {
   border-color: rgba(148, 163, 184, 0.2);
   background: #111827;
   color: #dbeafe;
+}
+
+:root[data-theme="dark"] .markdown-preview blockquote:not(.markdown-alert),
+:root[data-theme="dark"] .typora-mdx-content blockquote:not(.markdown-alert),
+:root[data-theme="dark"] .typora-milkdown-content .ProseMirror blockquote:not(.typora-alert-block) {
+  border-color: rgba(148, 163, 184, 0.22);
+  border-left-color: #64748b;
+  background: linear-gradient(90deg, #202631 0%, #181d25 100%);
+  box-shadow: none;
+  color: #d1d5db;
+}
+
+:root[data-theme="dark"] .typora-milkdown-content .ProseMirror .typora-search-active-highlight {
+  background: rgba(234, 179, 8, 0.28);
+  box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.24);
 }
 
 :root[data-theme="dark"] .typora-code-language-editor,

@@ -40,6 +40,7 @@ import {
   TyporaEditor,
   type TyporaEditorHandle,
 } from "./components/TyporaEditor";
+import appLogoUrl from "../../../resources/icon.png";
 import type {
   TyporaEditCommand,
   TyporaFormatCommand,
@@ -122,6 +123,23 @@ type AppSettings = {
   ossRegion: string;
   remoteServerToken: string;
   remoteServerUrl: string;
+};
+
+type FindPanelMode = "find" | "replace";
+
+type MarkdownSearchMatch = {
+  column: number;
+  end: number;
+  line: number;
+  lineIndex: number;
+  snippet: string;
+  start: number;
+};
+
+type RevealDocumentRangeOptions = {
+  content?: string;
+  occurrenceIndex?: number;
+  query?: string;
 };
 
 const appSettingsStorageKey = "typora-like-settings";
@@ -223,6 +241,104 @@ function createMarkdownTable({ columns, rows }: TableSize) {
     ...bodyRows,
     "",
   ].join("\n");
+}
+
+function getLineColumnAtOffset(content: string, offset: number) {
+  const safeOffset = Math.max(0, Math.min(offset, content.length));
+  const before = content.slice(0, safeOffset);
+  const lines = before.split("\n");
+
+  return {
+    column: lines.at(-1)?.length ?? 0,
+    lineIndex: lines.length - 1,
+  };
+}
+
+function createSearchSnippet(content: string, start: number, end: number) {
+  const lineStart = content.lastIndexOf("\n", Math.max(start - 1, 0)) + 1;
+  const nextLineBreak = content.indexOf("\n", end);
+  const lineEnd = nextLineBreak < 0 ? content.length : nextLineBreak;
+  const line = content.slice(lineStart, lineEnd).trim();
+
+  if (line.length <= 96) {
+    return line;
+  }
+
+  const localStart = Math.max(0, start - lineStart);
+  const snippetStart = Math.max(0, localStart - 36);
+  const snippetEnd = Math.min(line.length, snippetStart + 96);
+  const prefix = snippetStart > 0 ? "..." : "";
+  const suffix = snippetEnd < line.length ? "..." : "";
+
+  return `${prefix}${line.slice(snippetStart, snippetEnd)}${suffix}`;
+}
+
+function findMarkdownSearchMatches(
+  content: string,
+  query: string,
+): MarkdownSearchMatch[] {
+  if (!query) {
+    return [];
+  }
+
+  const normalizedContent = content.toLocaleLowerCase();
+  const normalizedQuery = query.toLocaleLowerCase();
+  const matches: MarkdownSearchMatch[] = [];
+  let searchFrom = 0;
+
+  while (searchFrom <= normalizedContent.length) {
+    const start = normalizedContent.indexOf(normalizedQuery, searchFrom);
+
+    if (start < 0) {
+      break;
+    }
+
+    const end = start + query.length;
+    const { column, lineIndex } = getLineColumnAtOffset(content, start);
+
+    matches.push({
+      column,
+      end,
+      line: lineIndex + 1,
+      lineIndex,
+      snippet: createSearchSnippet(content, start, end),
+      start,
+    });
+    searchFrom = end;
+  }
+
+  return matches;
+}
+
+function getTextareaLineHeight(textarea: HTMLTextAreaElement) {
+  const computedStyle = window.getComputedStyle(textarea);
+  const lineHeight = Number.parseFloat(computedStyle.lineHeight);
+
+  if (Number.isFinite(lineHeight)) {
+    return lineHeight;
+  }
+
+  const fontSize = Number.parseFloat(computedStyle.fontSize);
+
+  return Number.isFinite(fontSize) ? fontSize * 1.8 : 24;
+}
+
+function centerTextareaRangeInView(
+  textarea: HTMLTextAreaElement,
+  start: number,
+  content: string,
+) {
+  const { lineIndex } = getLineColumnAtOffset(content, start);
+  const computedStyle = window.getComputedStyle(textarea);
+  const paddingTop = Number.parseFloat(computedStyle.paddingTop) || 0;
+  const lineHeight = getTextareaLineHeight(textarea);
+  const targetCenter = paddingTop + lineIndex * lineHeight + lineHeight / 2;
+  const nextTop = targetCenter - textarea.clientHeight / 2;
+
+  textarea.scrollTo({
+    behavior: "smooth",
+    top: Math.max(0, nextTop),
+  });
 }
 
 function MenuSeparator() {
@@ -495,6 +611,11 @@ export function App() {
   const [isDrawingOpen, setIsDrawingOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
+  const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
+  const [findPanelMode, setFindPanelMode] = useState<FindPanelMode>("find");
+  const [findQuery, setFindQuery] = useState("");
+  const [replaceQuery, setReplaceQuery] = useState("");
+  const [findMatchIndex, setFindMatchIndex] = useState(0);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -549,6 +670,20 @@ export function App() {
     () => (activeDocument ? countMarkdownWords(activeDocument.content) : 0),
     [activeDocument],
   );
+  const findMatches = useMemo(
+    () =>
+      findMarkdownSearchMatches(activeDocument?.content ?? "", findQuery),
+    [activeDocument?.content, findQuery],
+  );
+  const activeFindMatch = findMatches[findMatchIndex] ?? null;
+  const visibleFindResultStart = Math.max(
+    0,
+    Math.min(Math.max(findMatchIndex - 3, 0), Math.max(findMatches.length - 8, 0)),
+  );
+  const visibleFindResults = findMatches.slice(
+    visibleFindResultStart,
+    visibleFindResultStart + 8,
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -562,6 +697,26 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem("typora-like-sidebar-width", String(sidebarWidth));
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    setFindMatchIndex((current) => {
+      if (!findMatches.length) {
+        return 0;
+      }
+
+      return Math.min(current, findMatches.length - 1);
+    });
+  }, [findMatches.length]);
+
+  useEffect(() => {
+    setFindMatchIndex(0);
+  }, [activeDocument?.id, findQuery]);
+
+  useEffect(() => {
+    if (!isFindReplaceOpen || !findQuery || !findMatches.length) {
+      clearFindHighlight();
+    }
+  }, [findMatches.length, findQuery, isFindReplaceOpen]);
 
   function updateSetting(key: keyof AppSettings, value: string) {
     setSettings((current) => ({
@@ -694,6 +849,9 @@ export function App() {
           break;
         case "edit":
           void runEditCommand(action.command);
+          break;
+        case "find":
+          openFindReplaceDialog(Boolean(action.replace));
           break;
         case "format":
           runFormatCommand(action.command);
@@ -946,6 +1104,169 @@ export function App() {
       content,
       title: renameFromMarkdown(content, activeDocument.title),
     });
+  }
+
+  function clearFindHighlight() {
+    typoraEditorRef.current?.clearSearchHighlight();
+
+    const editor = editorRef.current;
+
+    if (!editor || editor.selectionStart === editor.selectionEnd) {
+      return;
+    }
+
+    const cursor = editor.selectionEnd;
+    editor.setSelectionRange(cursor, cursor);
+  }
+
+  function setFindReplaceDialogOpen(open: boolean) {
+    if (!open) {
+      clearFindHighlight();
+    }
+
+    setIsFindReplaceOpen(open);
+  }
+
+  function getSelectedTextForFind() {
+    const editor = editorRef.current;
+
+    if (!editor || editor.selectionStart === editor.selectionEnd) {
+      return "";
+    }
+
+    const selectedText = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+
+    return selectedText.includes("\n") ? "" : selectedText;
+  }
+
+  function openFindReplaceDialog(replace = false) {
+    const selectedText = getSelectedTextForFind();
+
+    if (selectedText) {
+      setFindQuery(selectedText);
+    }
+
+    setFindPanelMode(replace ? "replace" : "find");
+    setFindMatchIndex(0);
+    setFindReplaceDialogOpen(true);
+    setTopMenu(null);
+  }
+
+  function revealDocumentRange(
+    start: number,
+    end: number,
+    options: RevealDocumentRangeOptions = {},
+  ) {
+    const content = options.content ?? activeDocument?.content ?? "";
+    const query = options.query ?? content.slice(start, end);
+    const occurrenceIndex = options.occurrenceIndex ?? findMatchIndex;
+    const { lineIndex } = getLineColumnAtOffset(content, start);
+    const didRevealInTypora =
+      mode === "typora" &&
+      typoraEditorRef.current?.revealSearchResult({
+        occurrenceIndex,
+        query,
+      });
+
+    if (didRevealInTypora) {
+      typoraEditorRef.current?.scrollToLine(lineIndex);
+      return;
+    }
+
+    const editor = editorRef.current;
+
+    if (!editor) {
+      typoraEditorRef.current?.scrollToLine(lineIndex);
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      editor.focus();
+      editor.setSelectionRange(start, end);
+      centerTextareaRangeInView(editor, start, content);
+    });
+  }
+
+  function goToFindMatch(nextIndex: number) {
+    const match = findMatches[nextIndex];
+
+    if (!match) {
+      return;
+    }
+
+    setFindMatchIndex(nextIndex);
+    revealDocumentRange(match.start, match.end, {
+      occurrenceIndex: nextIndex,
+      query: findQuery,
+    });
+  }
+
+  function moveFindMatch(direction: -1 | 1) {
+    if (!findMatches.length) {
+      return;
+    }
+
+    const nextIndex =
+      (findMatchIndex + direction + findMatches.length) % findMatches.length;
+
+    goToFindMatch(nextIndex);
+  }
+
+  function replaceCurrentFindMatch() {
+    if (!activeDocument || !activeFindMatch || !findQuery) {
+      return;
+    }
+
+    const nextContent =
+      activeDocument.content.slice(0, activeFindMatch.start) +
+      replaceQuery +
+      activeDocument.content.slice(activeFindMatch.end);
+    const replacementEnd = activeFindMatch.start + replaceQuery.length;
+
+    updateMarkdown(nextContent);
+    setFindMatchIndex((current) => Math.max(0, current));
+    requestAnimationFrame(() => {
+      revealDocumentRange(activeFindMatch.start, replacementEnd, {
+        content: nextContent,
+        occurrenceIndex: findMatchIndex,
+        query: replaceQuery,
+      });
+    });
+  }
+
+  function replaceAllFindMatches() {
+    if (!activeDocument || !findMatches.length || !findQuery) {
+      return;
+    }
+
+    let cursor = 0;
+    let nextContent = "";
+
+    findMatches.forEach((match) => {
+      nextContent += activeDocument.content.slice(cursor, match.start);
+      nextContent += replaceQuery;
+      cursor = match.end;
+    });
+
+    nextContent += activeDocument.content.slice(cursor);
+    updateMarkdown(nextContent);
+    setFindMatchIndex(0);
+
+    const firstMatch = findMatches[0];
+
+    if (firstMatch) {
+      requestAnimationFrame(() => {
+        revealDocumentRange(
+          firstMatch.start,
+          firstMatch.start + replaceQuery.length,
+          {
+            content: nextContent,
+            occurrenceIndex: 0,
+            query: replaceQuery,
+          },
+        );
+      });
+    }
   }
 
   async function openMarkdownFile() {
@@ -1479,6 +1800,8 @@ export function App() {
             <MenuItem label="拷贝图片" disabled />
             <MenuItem label="粘贴" shortcut="Ctrl+V" onSelect={() => runTopMenuAction(() => void runEditCommand("paste"))} />
             <MenuSeparator />
+            <MenuItem label="插入 Excalidraw 流程图..." onSelect={() => runTopMenuAction(() => setIsDrawingOpen(true))} />
+            <MenuSeparator />
             <MenuItem label="复制为纯文本" disabled />
             <MenuItem label="复制为 Markdown" shortcut="Ctrl+Shift+C" disabled />
             <MenuItem label="复制为 HTML 代码" disabled />
@@ -1500,7 +1823,10 @@ export function App() {
             <MenuItem label="空格与换行" submenu disabled />
             <MenuItem label="拼写检查..." disabled />
             <MenuSeparator />
-            <MenuItem label="查找和替换" submenu disabled />
+            <MenuSubmenu label="查找和替换">
+              <MenuItem label="查找..." shortcut="Ctrl+F" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(false))} />
+              <MenuItem label="替换..." shortcut="Ctrl+H" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(true))} />
+            </MenuSubmenu>
             <MenuSeparator />
             <MenuItem label="表情与符号" shortcut="Win 键+句号" disabled />
           </>
@@ -1594,7 +1920,7 @@ export function App() {
             <MenuItem label="大纲" shortcut="Ctrl+Shift+1" onSelect={() => runTopMenuAction(() => setSidebarTab("current"))} />
             <MenuItem label="文档列表" shortcut="Ctrl+Shift+2" onSelect={() => runTopMenuAction(() => setIsHomeOpen(true))} />
             <MenuItem label="文件树" shortcut="Ctrl+Shift+3" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
-            <MenuItem label="搜索" shortcut="Ctrl+Shift+F" disabled />
+            <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(false))} />
             <MenuSeparator />
             <MenuItem label="源代码模式" shortcut="Ctrl+/" checked={mode === "source"} onSelect={() => runTopMenuAction(() => setEditorMode("source"))} />
             <MenuSeparator />
@@ -1670,7 +1996,7 @@ export function App() {
               aria-label="返回首页"
               onClick={() => setIsHomeOpen(true)}
             >
-              T
+              <img className="app-logo-image" src={appLogoUrl} alt="" draggable={false} />
             </button>
             <nav className="menubar-menu" aria-label="应用菜单">
               {menubarItems.map((item) => (
@@ -1867,16 +2193,14 @@ export function App() {
           )}
 
           <div className="explorer-header explorer-footer-bar">
-            <div className="explorer-title">
-              <FolderOpen size={17} />
-              <span>文件</span>
+            <div className="explorer-actions explorer-actions-primary">
+              <button type="button" aria-label="新建文件" onClick={createNewDocument}>
+                <Plus size={17} />
+              </button>
             </div>
             <div className="explorer-actions">
               <button type="button" aria-label="搜索">
                 <Search size={17} />
-              </button>
-              <button type="button" aria-label="新建文件" onClick={createNewDocument}>
-                <Plus size={17} />
               </button>
               <button
                 type="button"
@@ -1924,7 +2248,9 @@ export function App() {
           {isHomeOpen || !activeDocument ? (
             <section className="welcome-home">
               <div className="welcome-hero">
-                <div className="welcome-logo">T</div>
+                <div className="welcome-logo">
+                  <img src={appLogoUrl} alt="" draggable={false} />
+                </div>
                 <h1>
                   欢迎使用 <span>Markdown</span> 编辑器
                 </h1>
@@ -2057,14 +2383,169 @@ export function App() {
           </Dialog.Portal>
         </Dialog.Root>
 
+        <Dialog.Root
+          modal={false}
+          open={isFindReplaceOpen}
+          onOpenChange={setFindReplaceDialogOpen}
+        >
+          <Dialog.Portal>
+            <Dialog.Content className="find-dialog">
+              <div className="find-dialog-header">
+                <div>
+                  <Dialog.Title className="find-dialog-title">
+                    {findPanelMode === "replace" ? "查找和替换" : "查找"}
+                  </Dialog.Title>
+                  <Dialog.Description className="sr-only">
+                    搜索当前文档中的对应内容
+                  </Dialog.Description>
+                  <div className="find-dialog-subtitle">
+                    {findQuery
+                      ? findMatches.length
+                        ? `第 ${Math.min(findMatchIndex + 1, findMatches.length)} / ${findMatches.length} 个结果`
+                        : "未找到匹配内容"
+                      : "搜索当前文档"}
+                  </div>
+                </div>
+                <Dialog.Close asChild>
+                  <button className="icon-button" type="button" aria-label="关闭查找">
+                    <X size={16} />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              <div className="find-dialog-body">
+                <label className="find-field">
+                  <span>查找</span>
+                  <input
+                    autoFocus
+                    value={findQuery}
+                    onChange={(event) => setFindQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        moveFindMatch(event.shiftKey ? -1 : 1);
+                      }
+                    }}
+                    placeholder="输入关键词"
+                  />
+                </label>
+
+                {findPanelMode === "replace" && (
+                  <label className="find-field">
+                    <span>替换为</span>
+                    <input
+                      value={replaceQuery}
+                      onChange={(event) => setReplaceQuery(event.target.value)}
+                      placeholder="替换文本"
+                    />
+                  </label>
+                )}
+
+                <div className="find-dialog-toolbar">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={!findMatches.length}
+                    onClick={() => moveFindMatch(-1)}
+                  >
+                    上一个
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={!findMatches.length}
+                    onClick={() => moveFindMatch(1)}
+                  >
+                    下一个
+                  </button>
+                  {findPanelMode === "find" ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => setFindPanelMode("replace")}
+                    >
+                      替换
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={!activeFindMatch}
+                        onClick={replaceCurrentFindMatch}
+                      >
+                        替换当前
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        disabled={!findMatches.length}
+                        onClick={replaceAllFindMatches}
+                      >
+                        全部替换
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                <div className="find-results" role="list">
+                  {visibleFindResultStart > 0 && (
+                    <div className="find-results-more">
+                      上方还有 {visibleFindResultStart} 个结果
+                    </div>
+                  )}
+                  {visibleFindResults.map((match, offset) => {
+                    const index = visibleFindResultStart + offset;
+
+                    return (
+                      <button
+                        key={`${match.start}-${match.end}`}
+                        className={
+                          index === findMatchIndex
+                            ? "find-result find-result-active"
+                            : "find-result"
+                        }
+                        type="button"
+                        onClick={() => goToFindMatch(index)}
+                      >
+                        <span>
+                          第 {index + 1} 个，位于第 {match.line} 行，第 {match.column + 1} 列
+                        </span>
+                        <strong>{match.snippet || findQuery}</strong>
+                      </button>
+                    );
+                  })}
+                  {visibleFindResultStart + visibleFindResults.length < findMatches.length && (
+                    <div className="find-results-more">
+                      下方还有{" "}
+                      {findMatches.length -
+                        visibleFindResultStart -
+                        visibleFindResults.length}{" "}
+                      个结果
+                    </div>
+                  )}
+                </div>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
         <Dialog.Root open={isCreateFileOpen} onOpenChange={setIsCreateFileOpen}>
           <Dialog.Portal>
             <Dialog.Overlay className="dialog-overlay" />
             <Dialog.Content className="create-file-dialog">
-              <div className="settings-header">
-                <Dialog.Title className="settings-title">
-                  新建 Markdown 文件
-                </Dialog.Title>
+              <div className="create-file-header">
+                <div className="create-file-heading">
+                  <span className="create-file-icon">
+                    <FilePlus2 size={18} />
+                  </span>
+                  <div>
+                    <Dialog.Title className="create-file-title">
+                      新建 Markdown 文件
+                    </Dialog.Title>
+                    <p>在当前工作区创建一个新的笔记文件</p>
+                  </div>
+                </div>
                 <Dialog.Close asChild>
                   <button className="icon-button" type="button" aria-label="关闭">
                     <X size={16} />

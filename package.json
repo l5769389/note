@@ -1,6 +1,7 @@
 {
   "name": "typora-like-editor",
   "version": "0.1.0",
+  "description": "A clean Typora-style Markdown writing app.",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -9,14 +10,50 @@
     "predev": "npm run ensure:electron",
     "dev": "electron-vite dev",
     "build": "tsc -b && electron-vite build",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "icons": "powershell -ExecutionPolicy Bypass -File scripts/generate-icons.ps1",
     "test": "vitest run",
     "prepreview": "npm run ensure:electron",
     "preview": "electron-vite preview"
   },
+  "build": {
+    "appId": "com.local.markdownstudio",
+    "productName": "Markdown Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Markdown Studio",
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeader": "resources/installer-header.bmp",
+      "installerSidebar": "resources/installer-sidebar.bmp",
+      "uninstallerSidebar": "resources/uninstaller-sidebar.bmp"
+    }
+  },
   "dependencies": {
-    "@codemirror/commands": "^6.10.3",
-    "@codemirror/state": "^6.6.0",
-    "@codemirror/view": "^6.42.1",
     "@excalidraw/excalidraw": "^0.18.0",
     "@milkdown/kit": "^7.20.0",
     "@milkdown/plugin-prism": "^7.20.0",
@@ -39,6 +76,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "electron": "^42.0.1",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
     "typescript": "^5.5.3",
     "vite": "^6.4.2",

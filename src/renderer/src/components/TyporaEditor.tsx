@@ -1,6 +1,3 @@
-import { defaultKeymap } from "@codemirror/commands";
-import { EditorState as CodeMirrorState, Prec } from "@codemirror/state";
-import { EditorView as CodeMirrorView, keymap } from "@codemirror/view";
 import { defaultValueCtx, editorViewCtx, Editor, rootCtx } from "@milkdown/kit/core";
 import { clipboard } from "@milkdown/kit/plugin/clipboard";
 import { history } from "@milkdown/kit/plugin/history";
@@ -30,9 +27,11 @@ import {
   PluginKey,
   Selection,
   TextSelection,
+  AllSelection,
+  type EditorState,
 } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
-import { commonmark } from "@milkdown/kit/preset/commonmark";
+import { commonmark, htmlSchema } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { $prose, insert, replaceAll } from "@milkdown/kit/utils";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
@@ -101,8 +100,15 @@ type TyporaEditorProps = {
   value: string;
 };
 
+type TyporaSearchRevealOptions = {
+  occurrenceIndex: number;
+  query: string;
+};
+
 export type TyporaEditorHandle = {
+  clearSearchHighlight: () => void;
   insertMarkdown: (markdown: string) => void;
+  revealSearchResult: (options: TyporaSearchRevealOptions) => boolean;
   runEditCommand: (command: TyporaEditCommand) => void;
   runFormatCommand: (command: TyporaFormatCommand) => void;
   runParagraphCommand: (command: TyporaParagraphCommand) => void;
@@ -161,8 +167,8 @@ function isMermaidLanguage(language: string) {
   return language.trim().toLowerCase() === "mermaid";
 }
 
-function getInlineCodeMarkType(view: EditorView) {
-  return Object.values(view.state.schema.marks).find(
+function getInlineCodeMarkTypeFromState(state: EditorState) {
+  return Object.values(state.schema.marks).find(
     (markType) => markType.name === "inlineCode" || markType.spec.code,
   );
 }
@@ -173,13 +179,96 @@ type InlineCodeRange = {
 };
 
 type MarkdownSyntaxPluginState = {
+  expandedInlineCode: InlineCodeRange | null;
   isFocused: boolean;
   suppressedInlineCodeAt: number | null;
+};
+
+type SearchHighlightPluginState = {
+  range: InlineCodeRange | null;
 };
 
 const markdownSyntaxPluginKey = new PluginKey<MarkdownSyntaxPluginState>(
   "typora-markdown-syntax",
 );
+const searchHighlightPluginKey = new PluginKey<SearchHighlightPluginState>(
+  "typora-search-highlight",
+);
+
+const rawHtmlImagePattern = /^\s*<img\b[\s\S]*\/?>\s*$/i;
+
+function getRawHtmlImageSource(node: ProseMirrorNode) {
+  if (node.type.name !== "html") {
+    return null;
+  }
+
+  const value = typeof node.attrs.value === "string" ? node.attrs.value : "";
+
+  return rawHtmlImagePattern.test(value) ? value : null;
+}
+
+const editableHtmlSchema = htmlSchema.extendSchema((previousSchema) => (ctx) => {
+  const schema = previousSchema(ctx);
+
+  return {
+    ...schema,
+    atom: false,
+    content: "text*",
+    selectable: false,
+    toDOM: (node) => {
+      const value =
+        node.textContent || (typeof node.attrs.value === "string" ? node.attrs.value : "");
+      const attrs: Record<string, string> = {
+        "data-type": "html",
+        "data-value": value,
+      };
+
+      if (getRawHtmlImageSource(node)) {
+        attrs.class = "typora-raw-html-image-source";
+      }
+
+      return ["span", attrs, 0];
+    },
+    parseDOM: [
+      {
+        tag: 'span[data-type="html"]',
+        getAttrs: (dom) => {
+          if (!(dom instanceof HTMLElement)) {
+            return false;
+          }
+
+          return {
+            value: dom.textContent ?? dom.dataset.value ?? "",
+          };
+        },
+      },
+    ],
+    parseMarkdown: {
+      match: ({ type }) => type === "html",
+      runner: (state, node, type) => {
+        const value = typeof node.value === "string" ? node.value : "";
+
+        state.openNode(type, { value });
+
+        if (value) {
+          state.addText(value);
+        }
+
+        state.closeNode();
+      },
+    },
+    toMarkdown: {
+      match: (node) => node.type.name === "html",
+      runner: (state, node) => {
+        const value =
+          node.textContent ||
+          (typeof node.attrs.value === "string" ? node.attrs.value : "");
+
+        state.addNode("html", undefined, value);
+      },
+    },
+  };
+});
 
 function getInlineCodeRanges(doc: ProseMirrorNode) {
   const ranges: InlineCodeRange[] = [];
@@ -208,14 +297,18 @@ function getInlineCodeRanges(doc: ProseMirrorNode) {
   return ranges;
 }
 
-function findInlineCodeRangeAt(doc: ProseMirrorNode, position: number) {
-  return getInlineCodeRanges(doc).find(
-    (range) => position >= range.from && position <= range.to,
-  );
-}
-
 function getInlineCodeText(doc: ProseMirrorNode, range: InlineCodeRange) {
   return doc.textBetween(range.from, range.to, "\n", "\n");
+}
+
+function isWellFormedInlineCodeSource(source: string) {
+  return (
+    source.length >= 2 &&
+    source.startsWith("`") &&
+    source.endsWith("`") &&
+    !source.slice(1, -1).includes("`") &&
+    source.slice(1, -1).length > 0
+  );
 }
 
 function getInlineCodeSourceCursorPosition(
@@ -228,23 +321,20 @@ function getInlineCodeSourceCursorPosition(
   }
 
   if (documentPosition >= range.to) {
-    return Math.max(1, source.length - 1);
+    return source.length;
   }
 
   return Math.max(1, Math.min(source.length - 1, documentPosition - range.from + 1));
 }
 
 function getInlineCodeCommit(
-  view: EditorView,
+  state: EditorState,
   source: string,
 ) {
-  const markType = getInlineCodeMarkType(view);
+  const markType = getInlineCodeMarkTypeFromState(state);
   const isWellFormedInlineCode =
     Boolean(markType) &&
-    source.length >= 2 &&
-    source.startsWith("`") &&
-    source.endsWith("`") &&
-    !source.slice(1, -1).includes("`");
+    isWellFormedInlineCodeSource(source);
 
   if (!isWellFormedInlineCode) {
     return {
@@ -271,95 +361,256 @@ function getInlineCodeCommit(
   };
 }
 
-function mapInlineCodeSourceCursorToDocument(
-  view: EditorView,
-  source: string,
-  sourceCursor: number,
+function selectionIsInsideInlineCodeSource(
+  selection: Selection,
   range: InlineCodeRange,
 ) {
-  const commit = getInlineCodeCommit(view, source);
-
-  if (!commit.isInlineCode) {
-    return range.from + Math.min(sourceCursor, commit.size);
-  }
-
-  if (sourceCursor <= 0) {
-    return range.from;
-  }
-
-  if (sourceCursor >= source.length) {
-    return range.from + commit.size;
-  }
-
-  return range.from + Math.max(0, Math.min(commit.size, sourceCursor - 1));
+  return selection.from >= range.from && selection.to <= range.to;
 }
 
-function commitInlineCodeSource(
-  view: EditorView,
+function shouldKeepInlineCodeSourceExpanded(
+  state: EditorState,
   range: InlineCodeRange,
-  source: string,
-  options: {
-    documentSelection?: number;
-    focusEditor?: boolean;
-    selection?: "end" | "preserve" | "start";
-    sourceCursor?: number;
-  } = {},
 ) {
-  const currentRange = findInlineCodeRangeAt(view.state.doc, range.from) ?? range;
-  const markType = getInlineCodeMarkType(view);
-  const commit = getInlineCodeCommit(view, source);
-  let transaction = view.state.tr;
+  const { selection } = state;
 
-  if (!commit.content) {
-    transaction = transaction.delete(currentRange.from, currentRange.to);
-  } else if (commit.isInlineCode && markType) {
-    transaction = transaction.replaceWith(
-      currentRange.from,
-      currentRange.to,
-      view.state.schema.text(commit.content, [markType.create()]),
-    );
-  } else {
-    transaction = transaction.replaceWith(
-      currentRange.from,
-      currentRange.to,
-      view.state.schema.text(commit.content),
-    );
+  if (!selectionIsInsideInlineCodeSource(selection, range)) {
+    return false;
   }
 
-  const selectionPosition =
-    typeof options.documentSelection === "number"
-      ? transaction.mapping.map(options.documentSelection, 1)
-      : options.selection === "start"
-        ? currentRange.from
-        : options.selection === "end"
-          ? currentRange.from + commit.size
-          : mapInlineCodeSourceCursorToDocument(
-              view,
-              source,
-              options.sourceCursor ?? source.length,
-              currentRange,
-            );
-  const safeSelectionPosition = Math.max(
-    0,
-    Math.min(selectionPosition, transaction.doc.content.size),
+  if (!selection.empty) {
+    return true;
+  }
+
+  const source = getInlineCodeText(state.doc, range);
+
+  if (selection.from === range.to) {
+    return true;
+  }
+
+  if (selection.from === range.from) {
+    return !isWellFormedInlineCodeSource(source);
+  }
+
+  return true;
+}
+
+function findInlineCodeRangeForSelection(
+  state: EditorState,
+  suppressedPosition: number | null,
+) {
+  const { selection } = state;
+
+  if (selection.empty && suppressedPosition === selection.from) {
+    return null;
+  }
+
+  return getInlineCodeRanges(state.doc).find((range) =>
+    selectionIsInsideInlineCodeSource(selection, range),
+  ) ?? null;
+}
+
+function expandInlineCodeSourceTransaction(
+  state: EditorState,
+  range: InlineCodeRange,
+) {
+  const source = `\`${getInlineCodeText(state.doc, range)}\``;
+  const selectionFrom = getInlineCodeSourceCursorPosition(
+    source,
+    state.selection.from,
+    range,
+  );
+  const selectionTo = state.selection.empty
+    ? selectionFrom
+    : getInlineCodeSourceCursorPosition(source, state.selection.to, range);
+  const sourceRange = {
+    from: range.from,
+    to: range.from + source.length,
+  };
+  const nextSelectionFrom = sourceRange.from + Math.min(selectionFrom, selectionTo);
+  const nextSelectionTo = sourceRange.from + Math.max(selectionFrom, selectionTo);
+  let transaction = state.tr.replaceWith(
+    range.from,
+    range.to,
+    state.schema.text(source),
   );
 
   transaction = transaction
-    .setSelection(TextSelection.create(transaction.doc, safeSelectionPosition))
+    .setSelection(
+      TextSelection.create(
+        transaction.doc,
+        nextSelectionFrom,
+        nextSelectionTo,
+      ),
+    )
     .setMeta(markdownSyntaxPluginKey, {
-      isFocused: Boolean(options.focusEditor),
-      suppressedInlineCodeAt:
-        options.focusEditor &&
-        (options.selection === "start" || options.selection === "end")
-          ? safeSelectionPosition
-          : null,
-    } satisfies Partial<MarkdownSyntaxPluginState>);
+      expandedInlineCode: sourceRange,
+      suppressedInlineCodeAt: null,
+    } satisfies Partial<MarkdownSyntaxPluginState>)
+    .setMeta("addToHistory", false);
 
-  view.dispatch(transaction.scrollIntoView());
+  return transaction;
+}
 
-  if (options.focusEditor) {
-    view.focus();
+function normalizeInlineCodeSourceRangeForCommit(
+  state: EditorState,
+  range: InlineCodeRange,
+) {
+  let from = Math.max(0, Math.min(range.from, state.doc.content.size));
+  let to = Math.max(from, Math.min(range.to, state.doc.content.size));
+  let source = getInlineCodeText(state.doc, { from, to });
+
+  if (
+    !source.startsWith("`") &&
+    from > 0 &&
+    state.doc.textBetween(from - 1, from, "\n", "\n") === "`"
+  ) {
+    from -= 1;
+    source = getInlineCodeText(state.doc, { from, to });
   }
+
+  if (
+    !source.endsWith("`") &&
+    to < state.doc.content.size &&
+    state.doc.textBetween(to, to + 1, "\n", "\n") === "`"
+  ) {
+    to += 1;
+  }
+
+  return { from, to };
+}
+
+function collapseInlineCodeSourceTransaction(
+  state: EditorState,
+  range: InlineCodeRange,
+) {
+  const commitRange = normalizeInlineCodeSourceRangeForCommit(state, range);
+  const source = state.doc.textBetween(commitRange.from, commitRange.to, "\n", "\n");
+  const markType = getInlineCodeMarkTypeFromState(state);
+  const commit = getInlineCodeCommit(state, source);
+  let transaction = state.tr;
+
+  if (!commit.content) {
+    transaction = transaction.delete(commitRange.from, commitRange.to);
+  } else if (commit.isInlineCode && markType) {
+    transaction = transaction.replaceWith(
+      commitRange.from,
+      commitRange.to,
+      state.schema.text(commit.content, [markType.create()]),
+    );
+  } else if (commit.content !== source) {
+    transaction = transaction.replaceWith(
+      commitRange.from,
+      commitRange.to,
+      state.schema.text(commit.content),
+    );
+  }
+
+  const suppressedInlineCodeAt = state.selection.empty
+    ? transaction.mapping.map(state.selection.from, 1)
+    : null;
+
+  return transaction
+    .setMeta(markdownSyntaxPluginKey, {
+      expandedInlineCode: null,
+      suppressedInlineCodeAt,
+    } satisfies Partial<MarkdownSyntaxPluginState>)
+    .setMeta("addToHistory", false);
+}
+
+function findPlainInlineCodeSourceForSelection(state: EditorState) {
+  const markType = getInlineCodeMarkTypeFromState(state);
+  const { selection } = state;
+
+  if (!markType || !selection.empty) {
+    return null;
+  }
+
+  const { $from } = selection;
+
+  if (!$from.parent.inlineContent || $from.parent.type.name === "code_block") {
+    return null;
+  }
+
+  const blockStart = $from.start();
+  const textBeforeCursor = state.doc.textBetween(
+    blockStart,
+    selection.from,
+    "\n",
+    "\n",
+  );
+
+  if (!textBeforeCursor.endsWith("`")) {
+    return null;
+  }
+
+  const openingMarkerIndex = textBeforeCursor.lastIndexOf(
+    "`",
+    textBeforeCursor.length - 2,
+  );
+
+  if (openingMarkerIndex < 0) {
+    return null;
+  }
+
+  const content = textBeforeCursor.slice(openingMarkerIndex + 1, -1);
+
+  if (!content || content.includes("`") || content.includes("\n")) {
+    return null;
+  }
+
+  const from = selection.from - (textBeforeCursor.length - openingMarkerIndex);
+  const to = selection.from;
+  const source = state.doc.textBetween(from, to, "\n", "\n");
+
+  if (!isWellFormedInlineCodeSource(source)) {
+    return null;
+  }
+
+  let hasInlineCodeMark = false;
+
+  state.doc.nodesBetween(from, to, (node) => {
+    if (
+      node.isText &&
+      node.marks.some(
+        (mark) => mark.type.name === "inlineCode" || mark.type.spec.code,
+      )
+    ) {
+      hasInlineCodeMark = true;
+    }
+  });
+
+  return hasInlineCodeMark ? null : { from, to };
+}
+
+function convertPlainInlineCodeSourceTransaction(
+  state: EditorState,
+  range: InlineCodeRange,
+) {
+  const markType = getInlineCodeMarkTypeFromState(state);
+  const commit = getInlineCodeCommit(
+    state,
+    state.doc.textBetween(range.from, range.to, "\n", "\n"),
+  );
+
+  if (!markType || !commit.isInlineCode) {
+    return null;
+  }
+
+  const selectionPosition = range.from + commit.size;
+
+  const transaction = state.tr.replaceWith(
+    range.from,
+    range.to,
+    state.schema.text(commit.content, [markType.create()]),
+  );
+
+  return transaction
+    .setSelection(TextSelection.create(transaction.doc, selectionPosition))
+    .setMeta(markdownSyntaxPluginKey, {
+      expandedInlineCode: null,
+      suppressedInlineCodeAt: selectionPosition,
+    } satisfies Partial<MarkdownSyntaxPluginState>);
 }
 
 function selectionTouchesNode(selection: Selection, pos: number, node: ProseMirrorNode) {
@@ -384,6 +635,168 @@ function selectionTouchesNode(selection: Selection, pos: number, node: ProseMirr
 
   return false;
 }
+
+function isSelectAllShortcut(event: KeyboardEvent) {
+  return (
+    event.key.toLowerCase() === "a" &&
+    (event.ctrlKey || event.metaKey) &&
+    !event.altKey &&
+    !event.shiftKey
+  );
+}
+
+function selectEntireDocument(view: EditorView) {
+  view.dispatch(
+    view.state.tr
+      .setSelection(new AllSelection(view.state.doc))
+      .scrollIntoView(),
+  );
+  view.focus();
+}
+
+function normalizeSearchText(value: string) {
+  return value.toLocaleLowerCase();
+}
+
+function findVisibleSearchRange(
+  doc: ProseMirrorNode,
+  query: string,
+  occurrenceIndex: number,
+): InlineCodeRange | null {
+  if (!query) {
+    return null;
+  }
+
+  let visibleText = "";
+  const positions: number[] = [];
+
+  doc.descendants((node: ProseMirrorNode, pos) => {
+    if (!node.isText || !node.text) {
+      return;
+    }
+
+    for (let index = 0; index < node.text.length; index += 1) {
+      visibleText += node.text[index];
+      positions.push(pos + index);
+    }
+  });
+
+  const normalizedText = normalizeSearchText(visibleText);
+  const normalizedQuery = normalizeSearchText(query);
+  const targetOccurrence = Math.max(0, occurrenceIndex);
+  let searchFrom = 0;
+  let seen = 0;
+
+  while (searchFrom <= normalizedText.length) {
+    const start = normalizedText.indexOf(normalizedQuery, searchFrom);
+
+    if (start < 0) {
+      return null;
+    }
+
+    const end = start + query.length;
+
+    if (seen === targetOccurrence) {
+      const from = positions[start];
+      const last = positions[end - 1];
+
+      if (from === undefined || last === undefined) {
+        return null;
+      }
+
+      return { from, to: last + 1 };
+    }
+
+    seen += 1;
+    searchFrom = end;
+  }
+
+  return null;
+}
+
+function centerEditorRangeInView(
+  view: EditorView,
+  scrollRoot: HTMLElement | null,
+  range: InlineCodeRange,
+) {
+  requestAnimationFrame(() => {
+    const root =
+      scrollRoot ?? (view.dom.closest(".typora-editor") as HTMLElement | null);
+
+    if (!root) {
+      return;
+    }
+
+    try {
+      const docSize = view.state.doc.content.size;
+      const from = Math.max(0, Math.min(range.from, docSize));
+      const to = Math.max(from, Math.min(range.to, docSize));
+      const fromCoords = view.coordsAtPos(from);
+      const toCoords = view.coordsAtPos(to);
+      const targetCenter = (fromCoords.top + toCoords.bottom) / 2;
+      const rootRect = root.getBoundingClientRect();
+      const viewportCenter = rootRect.top + root.clientHeight / 2;
+      const nextTop = root.scrollTop + targetCenter - viewportCenter;
+
+      root.scrollTo({
+        behavior: "smooth",
+        top: Math.max(0, nextTop),
+      });
+    } catch {
+      const highlighted = view.dom.querySelector(".typora-search-active-highlight");
+
+      highlighted?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  });
+}
+
+const searchHighlightDecoration = $prose(
+  () =>
+    new Plugin<SearchHighlightPluginState>({
+      key: searchHighlightPluginKey,
+      state: {
+        init: (): SearchHighlightPluginState => ({
+          range: null,
+        }),
+        apply(transaction, pluginState) {
+          const meta = transaction.getMeta(searchHighlightPluginKey) as
+            | Partial<SearchHighlightPluginState>
+            | undefined;
+          const mappedRange =
+            pluginState.range && transaction.docChanged
+              ? {
+                  from: transaction.mapping.map(pluginState.range.from, -1),
+                  to: transaction.mapping.map(pluginState.range.to, 1),
+                }
+              : pluginState.range;
+          const nextRange = meta ? meta.range ?? null : mappedRange;
+
+          return {
+            range:
+              nextRange && nextRange.from < nextRange.to ? nextRange : null,
+          };
+        },
+      },
+      props: {
+        decorations(state) {
+          const pluginState = searchHighlightPluginKey.getState(state);
+
+          if (!pluginState?.range) {
+            return DecorationSet.empty;
+          }
+
+          return DecorationSet.create(state.doc, [
+            Decoration.inline(pluginState.range.from, pluginState.range.to, {
+              class: "typora-search-active-highlight",
+            }),
+          ]);
+        },
+      },
+    }),
+);
 
 const codeBlockLanguageDecoration = $prose(
   () =>
@@ -714,28 +1127,98 @@ const markdownSyntaxDecoration = $prose(
       key: markdownSyntaxPluginKey,
       state: {
         init: (): MarkdownSyntaxPluginState => ({
+          expandedInlineCode: null,
           isFocused: false,
           suppressedInlineCodeAt: null,
         }),
         apply(transaction, pluginState, _oldState, newState) {
+          const mappedExpandedInlineCode =
+            pluginState.expandedInlineCode && transaction.docChanged
+              ? {
+                  from: transaction.mapping.map(pluginState.expandedInlineCode.from, -1),
+                  to: transaction.mapping.map(pluginState.expandedInlineCode.to, 1),
+                }
+              : pluginState.expandedInlineCode;
+          let nextPluginState: MarkdownSyntaxPluginState = {
+            ...pluginState,
+            expandedInlineCode:
+              mappedExpandedInlineCode &&
+              mappedExpandedInlineCode.from < mappedExpandedInlineCode.to
+                ? mappedExpandedInlineCode
+                : null,
+          };
           const meta = transaction.getMeta(markdownSyntaxPluginKey) as
             | Partial<MarkdownSyntaxPluginState>
             | undefined;
 
           if (meta) {
-            return { ...pluginState, ...meta };
+            nextPluginState = { ...nextPluginState, ...meta };
           }
 
           if (
-            pluginState.suppressedInlineCodeAt !== null &&
+            nextPluginState.suppressedInlineCodeAt !== null &&
             (transaction.docChanged || transaction.selectionSet) &&
-            newState.selection.from !== pluginState.suppressedInlineCodeAt
+            newState.selection.from !== nextPluginState.suppressedInlineCodeAt
           ) {
-            return { ...pluginState, suppressedInlineCodeAt: null };
+            return { ...nextPluginState, suppressedInlineCodeAt: null };
           }
 
-          return pluginState;
+          return nextPluginState;
         },
+      },
+      appendTransaction(transactions, _oldState, newState) {
+        if (
+          !transactions.some(
+            (transaction) =>
+              transaction.docChanged ||
+              transaction.selectionSet ||
+              transaction.getMeta(markdownSyntaxPluginKey),
+          )
+        ) {
+          return null;
+        }
+
+        const pluginState = markdownSyntaxPluginKey.getState(newState);
+
+        if (!pluginState) {
+          return null;
+        }
+
+        if (pluginState.expandedInlineCode) {
+          if (
+            pluginState.isFocused &&
+            shouldKeepInlineCodeSourceExpanded(newState, pluginState.expandedInlineCode)
+          ) {
+            return null;
+          }
+
+          return collapseInlineCodeSourceTransaction(
+            newState,
+            pluginState.expandedInlineCode,
+          );
+        }
+
+        if (!pluginState.isFocused) {
+          return null;
+        }
+
+        const plainInlineCodeRange = findPlainInlineCodeSourceForSelection(newState);
+
+        if (plainInlineCodeRange) {
+          return convertPlainInlineCodeSourceTransaction(
+            newState,
+            plainInlineCodeRange,
+          );
+        }
+
+        const inlineCodeRange = findInlineCodeRangeForSelection(
+          newState,
+          pluginState.suppressedInlineCodeAt,
+        );
+
+        return inlineCodeRange
+          ? expandInlineCodeSourceTransaction(newState, inlineCodeRange)
+          : null;
       },
       props: {
         handleDOMEvents: {
@@ -766,14 +1249,20 @@ const markdownSyntaxDecoration = $prose(
             return false;
           },
         },
+        handleKeyDown(view, event) {
+          if (!isSelectAllShortcut(event)) {
+            return false;
+          }
+
+          event.preventDefault();
+          selectEntireDocument(view);
+          return true;
+        },
         decorations(state) {
           const decorations: Decoration[] = [];
           const { from, to } = state.selection;
-          const codeRanges = getInlineCodeRanges(state.doc);
           const pluginState = markdownSyntaxPluginKey.getState(state);
           const shouldShowMarkdownSyntax = pluginState?.isFocused ?? false;
-          const suppressedInlineCodeAt = pluginState?.suppressedInlineCodeAt ?? null;
-
           state.doc.descendants((node: ProseMirrorNode, pos) => {
             if (/^heading$/i.test(node.type.name)) {
               const level =
@@ -823,6 +1312,12 @@ const markdownSyntaxDecoration = $prose(
 
                       marker.addEventListener("input", syncHeadingLevel);
                       marker.addEventListener("keydown", (event) => {
+                        if (isSelectAllShortcut(event)) {
+                          event.preventDefault();
+                          selectEntireDocument(view);
+                          return;
+                        }
+
                         if (event.key !== "Enter" && event.key !== "ArrowRight") {
                           return;
                         }
@@ -849,256 +1344,6 @@ const markdownSyntaxDecoration = $prose(
             }
 
           });
-
-          for (const range of codeRanges) {
-            if (
-              !shouldShowMarkdownSyntax ||
-              (state.selection.empty &&
-                suppressedInlineCodeAt === from &&
-                (from === range.from || from === range.to)) ||
-              !selectionTouchesRange(from, to, range.from, range.to)
-            ) {
-              continue;
-            }
-
-            function createInlineCodeSourceEditor() {
-              return (view: EditorView) => {
-                const editorHost = document.createElement("span");
-                const source = `\`${getInlineCodeText(view.state.doc, range)}\``;
-                const selection = view.state.selection;
-                let hasCommitted = false;
-                let pendingPointerSelection: number | null = null;
-                let codeMirrorView: CodeMirrorView | null = null;
-                const shouldAutofocus =
-                  selection.empty &&
-                  selection.from >= range.from &&
-                  selection.from <= range.to &&
-                  document.activeElement === view.dom;
-
-                editorHost.className =
-                  "typora-markdown-syntax-marker typora-inline-code-source-input";
-                editorHost.dataset.inlineCodeFrom = String(range.from);
-                editorHost.dataset.inlineCodeTo = String(range.to);
-                editorHost.setAttribute("aria-label", "Inline code markdown source");
-                editorHost.setAttribute("role", "textbox");
-
-                function handlePointerDown(event: PointerEvent) {
-                  if (
-                    !(event.target instanceof Node) ||
-                    editorHost.contains(event.target)
-                  ) {
-                    pendingPointerSelection = null;
-                    return;
-                  }
-
-                  if (!view.dom.contains(event.target)) {
-                    pendingPointerSelection = null;
-                    return;
-                  }
-
-                  pendingPointerSelection =
-                    view.posAtCoords({
-                      left: event.clientX,
-                      top: event.clientY,
-                    })?.pos ?? null;
-                }
-
-                function finishInlineCodeEdit(
-                  options: Parameters<typeof commitInlineCodeSource>[3] = {},
-                  nextSource = codeMirrorView?.state.doc.toString() ?? source,
-                ) {
-                  if (hasCommitted) {
-                    return;
-                  }
-
-                  hasCommitted = true;
-                  document.removeEventListener("pointerdown", handlePointerDown, true);
-                  codeMirrorView?.destroy();
-                  codeMirrorView = null;
-                  commitInlineCodeSource(view, range, nextSource, options);
-                }
-
-                function activateMarkdownSyntaxState() {
-                  if (markdownSyntaxPluginKey.getState(view.state)?.isFocused) {
-                    return;
-                  }
-
-                  view.dispatch(
-                    view.state.tr.setMeta(markdownSyntaxPluginKey, {
-                      isFocused: true,
-                    } satisfies Partial<MarkdownSyntaxPluginState>),
-                  );
-                }
-
-                function commitFromBlur(cmView: CodeMirrorView) {
-                  window.requestAnimationFrame(() => {
-                    if (
-                      hasCommitted ||
-                      (document.activeElement instanceof Node &&
-                        editorHost.contains(document.activeElement))
-                    ) {
-                      return;
-                    }
-
-                    finishInlineCodeEdit({
-                      documentSelection: pendingPointerSelection ?? undefined,
-                      focusEditor: pendingPointerSelection !== null,
-                      sourceCursor: cmView.state.selection.main.head,
-                    });
-                  });
-                }
-
-                const sourceCursor = getInlineCodeSourceCursorPosition(
-                  source,
-                  selection.from,
-                  range,
-                );
-
-                codeMirrorView = new CodeMirrorView({
-                  parent: editorHost,
-                  state: CodeMirrorState.create({
-                    doc: source,
-                    selection: shouldAutofocus
-                      ? { anchor: sourceCursor, head: sourceCursor }
-                      : undefined,
-                    extensions: [
-                      CodeMirrorView.contentAttributes.of({
-                        autocapitalize: "off",
-                        autocomplete: "off",
-                        autocorrect: "off",
-                        spellcheck: "false",
-                      }),
-                      CodeMirrorView.domEventHandlers({
-                        blur(_event, cmView) {
-                          document.removeEventListener(
-                            "pointerdown",
-                            handlePointerDown,
-                            true,
-                          );
-                          commitFromBlur(cmView);
-                        },
-                        focus() {
-                          activateMarkdownSyntaxState();
-                          document.addEventListener(
-                            "pointerdown",
-                            handlePointerDown,
-                            true,
-                          );
-                        },
-                        keydown(event) {
-                          event.stopPropagation();
-                          return false;
-                        },
-                      }),
-                      Prec.highest(
-                        keymap.of([
-                          {
-                            key: "Escape",
-                            run() {
-                              finishInlineCodeEdit(
-                                {
-                                  focusEditor: true,
-                                  sourceCursor: getInlineCodeSourceCursorPosition(
-                                    source,
-                                    view.state.selection.from,
-                                    range,
-                                  ),
-                                },
-                                source,
-                              );
-                              return true;
-                            },
-                          },
-                          {
-                            key: "Enter",
-                            run() {
-                              finishInlineCodeEdit({
-                                focusEditor: true,
-                                selection: "end",
-                              });
-                              return true;
-                            },
-                          },
-                          {
-                            key: "ArrowLeft",
-                            run(cmView) {
-                              const selection = cmView.state.selection.main;
-
-                              if (!selection.empty || selection.head !== 0) {
-                                return false;
-                              }
-
-                              finishInlineCodeEdit({
-                                focusEditor: true,
-                                selection: "start",
-                              });
-                              return true;
-                            },
-                          },
-                          {
-                            key: "ArrowRight",
-                            run(cmView) {
-                              const selection = cmView.state.selection.main;
-
-                              if (
-                                !selection.empty ||
-                                selection.head !== cmView.state.doc.length
-                              ) {
-                                return false;
-                              }
-
-                              finishInlineCodeEdit({
-                                focusEditor: true,
-                                selection: "end",
-                              });
-                              return true;
-                            },
-                          },
-                        ]),
-                      ),
-                      keymap.of(defaultKeymap),
-                    ],
-                  }),
-                });
-
-                if (shouldAutofocus) {
-                  requestAnimationFrame(() => {
-                    if (!editorHost.isConnected || hasCommitted) {
-                      return;
-                    }
-
-                    codeMirrorView?.focus();
-                  });
-                }
-
-                editorHost.addEventListener("mousedown", (event) => {
-                  event.stopPropagation();
-                });
-
-                editorHost.addEventListener("pointerdown", (event) => {
-                  event.stopPropagation();
-                });
-
-                return editorHost;
-              };
-            }
-
-            decorations.push(
-              Decoration.widget(range.from, createInlineCodeSourceEditor(), {
-                key: `inline-code-source-${range.from}-${range.to}-${getInlineCodeText(
-                  state.doc,
-                  range,
-                )}`,
-                side: -1,
-                stopEvent: (event) =>
-                  event.target instanceof Element &&
-                  Boolean(event.target.closest(".typora-inline-code-source-input")),
-              }),
-              Decoration.inline(range.from, range.to, {
-                class: "typora-inline-code-source-hidden",
-              }),
-            );
-          }
 
           return DecorationSet.create(state.doc, decorations);
         },
@@ -2236,8 +2481,8 @@ function ImageResizeHandle({
       className="milkdown-image-resize-handle"
       role="presentation"
       style={{
-        left: state.imageLeft + state.imageWidth - 16,
-        top: state.imageTop + state.imageHeight - 16,
+        left: state.imageLeft + state.imageWidth + 2,
+        top: state.imageTop + state.imageHeight + 2,
       }}
       onPointerDown={(event) => onResizeStart(event, state)}
     />
@@ -2604,6 +2849,7 @@ function MilkdownRuntime({
           });
       })
       .use(commonmark)
+      .use(editableHtmlSchema)
       .use(listener)
       .use(history)
       .use(trailing)
@@ -2615,6 +2861,7 @@ function MilkdownRuntime({
       .use(mermaidBlockDecoration)
       .use(markdownAlertDecoration)
       .use(markdownSyntaxDecoration)
+      .use(searchHighlightDecoration)
       .use(editableImageSelection)
       .use(editableImageDecoration);
   }, []);
@@ -2786,6 +3033,33 @@ function MilkdownRuntime({
 
   useEffect(() => {
     controllerRef.current = {
+      clearSearchHighlight() {
+        const editor = get();
+
+        if (!editor) {
+          return;
+        }
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const selection = view.state.selection;
+          const position = Math.max(
+            0,
+            Math.min(selection.to, view.state.doc.content.size),
+          );
+          let transaction = view.state.tr.setMeta(searchHighlightPluginKey, {
+            range: null,
+          } satisfies Partial<SearchHighlightPluginState>);
+
+          if (!selection.empty) {
+            transaction = transaction.setSelection(
+              Selection.near(transaction.doc.resolve(position), -1),
+            );
+          }
+
+          view.dispatch(transaction);
+        });
+      },
       insertMarkdown(markdown: string) {
         const editor = get();
 
@@ -2798,6 +3072,49 @@ function MilkdownRuntime({
           ctx.get(editorViewCtx).focus();
           insert(markdown)(ctx);
         });
+      },
+      revealSearchResult(options: TyporaSearchRevealOptions) {
+        const editor = get();
+        let didReveal = false;
+
+        if (!editor) {
+          return false;
+        }
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const range = findVisibleSearchRange(
+            view.state.doc,
+            options.query,
+            options.occurrenceIndex,
+          );
+
+          if (!range) {
+            view.dispatch(
+              view.state.tr.setMeta(searchHighlightPluginKey, {
+                range: null,
+              } satisfies Partial<SearchHighlightPluginState>),
+            );
+            return;
+          }
+
+          view.dispatch(
+            view.state.tr
+              .setSelection(TextSelection.create(view.state.doc, range.from, range.to))
+              .setMeta(searchHighlightPluginKey, {
+                range,
+              } satisfies Partial<SearchHighlightPluginState>)
+              .scrollIntoView(),
+          );
+          view.focus();
+
+          const currentRange =
+            searchHighlightPluginKey.getState(view.state)?.range ?? range;
+          centerEditorRangeInView(view, rootRef.current, currentRange);
+          didReveal = true;
+        });
+
+        return didReveal;
       },
       runEditCommand(command: TyporaEditCommand) {
         const editor = get();
@@ -3076,6 +3393,9 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
     useImperativeHandle(
       ref,
       () => ({
+        clearSearchHighlight() {
+          controllerRef.current?.clearSearchHighlight();
+        },
         insertMarkdown(markdown: string) {
           if (controllerRef.current) {
             controllerRef.current.insertMarkdown(markdown);
@@ -3083,6 +3403,9 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
           }
 
           onChangeRef.current(appendMarkdown(valueRef.current, markdown));
+        },
+        revealSearchResult(options: TyporaSearchRevealOptions) {
+          return controllerRef.current?.revealSearchResult(options) ?? false;
         },
         runEditCommand(command: TyporaEditCommand) {
           controllerRef.current?.runEditCommand(command);

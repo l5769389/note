@@ -5,6 +5,8 @@ import { access, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promi
 import { basename, extname, join } from "node:path";
 
 const devServerUrl = process.env.ELECTRON_RENDERER_URL;
+const appName = "Markdown Studio";
+const appUserModelId = "com.local.markdownstudio";
 
 let mainWindow: BrowserWindow | null = null;
 const ignoredDirectoryNames = new Set([
@@ -176,6 +178,12 @@ function isSafeNavigation(url: string): boolean {
   return url.startsWith(devServerUrl);
 }
 
+function getAppIconPath() {
+  return app.isPackaged
+    ? join(process.resourcesPath, "icon.ico")
+    : join(process.cwd(), "resources", "icon.ico");
+}
+
 function createMainWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -185,7 +193,8 @@ function createMainWindow(): void {
     backgroundColor: "#f5f6f8",
     autoHideMenuBar: true,
     frame: false,
-    title: "Markdown Studio",
+    icon: getAppIconPath(),
+    title: appName,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -219,6 +228,10 @@ function createMainWindow(): void {
   }
 
   void mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+}
+
+if (process.platform === "win32") {
+  app.setAppUserModelId(appUserModelId);
 }
 
 function registerFileIpc() {

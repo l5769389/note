@@ -6,6 +6,7 @@ import type {
 
 export type EditorShortcutAction =
   | { command: TyporaEditCommand; type: "edit" }
+  | { replace?: boolean; type: "find" }
   | { command: TyporaFormatCommand; type: "format" }
   | { command: TyporaParagraphCommand; type: "paragraph" }
   | { type: "createLink" };
@@ -51,6 +52,18 @@ export function getEditorShortcutAction(
 
   if (!event.ctrlKey || event.altKey || event.metaKey) {
     return null;
+  }
+
+  if (!event.shiftKey && event.key.toLowerCase() === "f") {
+    return { type: "find" };
+  }
+
+  if (!event.shiftKey && event.key.toLowerCase() === "h") {
+    return { replace: true, type: "find" };
+  }
+
+  if (event.shiftKey && event.key.toLowerCase() === "f") {
+    return { type: "find" };
   }
 
   if (!event.shiftKey && event.key.toLowerCase() === "b") {
