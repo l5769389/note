@@ -1899,6 +1899,144 @@ button {
   white-space: pre-wrap;
 }
 
+.mindmap-diagram {
+  position: relative;
+  width: 100%;
+  height: 420px;
+  margin: 1.35em auto;
+  overflow: hidden;
+  border: 1px solid #e4e8f0;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(255, 255, 255, 0.96)),
+    #ffffff;
+}
+
+.typora-mindmap-widget {
+  margin: 1.35em 0;
+  cursor: pointer;
+}
+
+.typora-mindmap-widget .mindmap-diagram {
+  margin: 0;
+}
+
+.mindmap-node {
+  position: relative;
+  display: flex;
+  width: 172px;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #b7c6d7;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  color: #172033;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 9px 13px;
+  text-align: center;
+}
+
+.mindmap-node span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mindmap-node small {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.mindmap-node-root {
+  width: 190px;
+  border-color: #2563eb;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: #ffffff;
+  font-size: 15px;
+  box-shadow: 0 16px 28px rgba(37, 99, 235, 0.22);
+}
+
+.mindmap-node-root small {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+.mindmap-node-selected {
+  border-color: #f59e0b;
+  box-shadow:
+    0 0 0 3px rgba(245, 158, 11, 0.24),
+    0 10px 22px rgba(15, 23, 42, 0.12);
+}
+
+.mindmap-handle {
+  width: 1px;
+  height: 1px;
+  min-width: 1px;
+  min-height: 1px;
+  border: 0;
+  opacity: 0;
+}
+
+.mindmap-edge {
+  stroke: #8aa0b8;
+  stroke-width: 2.2;
+}
+
+.mindmap-diagram-edit {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: #2563eb;
+  color: #ffffff;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mindmap-diagram-edit:hover {
+  background: #1d4ed8;
+}
+
+.mindmap-diagram-error {
+  display: grid;
+  height: auto;
+  min-height: 140px;
+  align-content: start;
+  border-color: #fecaca;
+  background: #fff7f7;
+  padding: 16px;
+  color: #991b1b;
+  text-align: left;
+}
+
+.mindmap-diagram-error figcaption {
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.mindmap-diagram-error pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 @keyframes mermaid-loading {
   from {
     background-position: -220px 0, 0 0;
@@ -3181,7 +3319,13 @@ button {
   max-height: min(760px, calc(100vh - 48px));
 }
 
-.react-flow-modal {
+.mindmap-dialog {
+  max-width: min(1160px, calc(100vw - 48px));
+  max-height: min(780px, calc(100vh - 48px));
+}
+
+.react-flow-modal,
+.mindmap-modal {
   display: grid;
   width: 100%;
   height: 100%;
@@ -3192,13 +3336,19 @@ button {
   box-shadow: 0 22px 70px rgba(15, 23, 42, 0.3);
 }
 
-.react-flow-editor-shell {
+.react-flow-editor-shell,
+.mindmap-editor-shell {
   display: grid;
   min-height: 0;
   grid-template-columns: 220px minmax(0, 1fr);
 }
 
-.react-flow-editor-panel {
+.mindmap-editor-shell {
+  grid-template-columns: 250px minmax(0, 1fr);
+}
+
+.react-flow-editor-panel,
+.mindmap-editor-panel {
   display: grid;
   align-content: start;
   gap: 10px;
@@ -3207,11 +3357,23 @@ button {
   padding: 12px;
 }
 
-.react-flow-editor-panel .secondary-button {
+.mindmap-editor-panel {
+  background: #fbfcfe;
+}
+
+.react-flow-editor-panel .secondary-button,
+.mindmap-editor-panel .secondary-button {
   justify-content: center;
 }
 
-.react-flow-editor-panel label {
+.mindmap-editor-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.react-flow-editor-panel label,
+.mindmap-editor-panel label {
   display: grid;
   gap: 6px;
   color: #475467;
@@ -3219,7 +3381,9 @@ button {
   font-weight: 700;
 }
 
-.react-flow-editor-panel input {
+.react-flow-editor-panel input,
+.mindmap-editor-panel input,
+.mindmap-editor-panel select {
   min-height: 34px;
   border: 1px solid #d0d5dd;
   border-radius: 7px;
@@ -3229,7 +3393,23 @@ button {
   font-size: 13px;
 }
 
-.react-flow-editor-canvas {
+.mindmap-editor-hint {
+  margin: 4px 0 0;
+  color: #7b8794;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.danger-button {
+  color: #b42318;
+}
+
+.danger-button:disabled {
+  color: #98a2b3;
+}
+
+.react-flow-editor-canvas,
+.mindmap-editor-canvas {
   min-width: 0;
   min-height: 0;
 }

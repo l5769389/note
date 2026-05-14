@@ -90,7 +90,9 @@ import {
 } from "./TableToolbar";
 import { registerMarkdownLanguages } from "../syntaxHighlighting";
 import { createMermaidRenderId, renderMermaidSvg } from "../mermaid";
+import { isMindMapLanguage } from "../mindMapDocument";
 import { isReactFlowLanguage } from "../reactFlowDocument";
+import { MindMapDiagram } from "./MindMapDiagram";
 import { ReactFlowDiagram } from "./ReactFlowDiagram";
 import type {
   ImageAlignment,
@@ -600,7 +602,11 @@ const mermaidBlockDecoration = $prose(
             const language =
               typeof node.attrs.language === "string" ? node.attrs.language : "";
 
-            if (!isMermaidLanguage(language) && !isReactFlowLanguage(language)) {
+            if (
+              !isMermaidLanguage(language) &&
+              !isReactFlowLanguage(language) &&
+              !isMindMapLanguage(language)
+            ) {
               return;
             }
 
@@ -635,6 +641,27 @@ const mermaidBlockDecoration = $prose(
                       view.focus();
                     });
                     root.render(<ReactFlowDiagram code={node.textContent} />);
+
+                    return container;
+                  }
+
+                  if (isMindMapLanguage(language)) {
+                    const container = document.createElement("div");
+                    const root = createRoot(container);
+
+                    container.className = "typora-mindmap-widget";
+                    container.setAttribute("aria-label", "Mind map diagram");
+                    container.title = "Click to edit mind map source";
+                    container.addEventListener("mousedown", (event) => {
+                      event.preventDefault();
+                      view.dispatch(
+                        view.state.tr.setSelection(
+                          Selection.near(view.state.doc.resolve(pos + 1), 1),
+                        ),
+                      );
+                      view.focus();
+                    });
+                    root.render(<MindMapDiagram code={node.textContent} />);
 
                     return container;
                   }

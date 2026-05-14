@@ -23,6 +23,7 @@ import remarkDeflist from "remark-deflist";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { MindMapDiagram } from "./MindMapDiagram";
 import { ReactFlowDiagram } from "./ReactFlowDiagram";
 import { registerMarkdownLanguages } from "../syntaxHighlighting";
 import {
@@ -31,12 +32,14 @@ import {
 } from "../markdownAlerts";
 import { parseImageMeta } from "../imageMeta";
 import { resolveDocumentResourceUrl } from "../localPreviewUrls";
+import { isMindMapLanguage } from "../mindMapDocument";
 import { isReactFlowLanguage } from "../reactFlowDocument";
 import type { TyporaAlertKind } from "../editorCommands";
 
 type MarkdownRendererProps = {
   children: string;
   filePath?: string;
+  onEditMindMap?: (code: string) => void;
   onEditReactFlow?: (code: string) => void;
 };
 
@@ -208,9 +211,11 @@ function stripAlertMarkerFromNode(node: ReactNode): ReactNode {
 
 function PreRenderer({
   children,
+  onEditMindMap,
   onEditReactFlow,
 }: {
   children?: ReactNode;
+  onEditMindMap?: (code: string) => void;
   onEditReactFlow?: (code: string) => void;
 }) {
   const child = Children.toArray(children)[0];
@@ -228,6 +233,11 @@ function PreRenderer({
     if (language && isReactFlowLanguage(language)) {
       const code = String(child.props.children ?? "").replace(/\n$/, "");
       return <ReactFlowDiagram code={code} onEdit={onEditReactFlow} />;
+    }
+
+    if (language && isMindMapLanguage(language)) {
+      const code = String(child.props.children ?? "").replace(/\n$/, "");
+      return <MindMapDiagram code={code} onEdit={onEditMindMap} />;
     }
   }
 
@@ -287,6 +297,7 @@ function BlockquoteRenderer({ children }: { children?: ReactNode }) {
 export function MarkdownRenderer({
   children,
   filePath,
+  onEditMindMap,
   onEditReactFlow,
 }: MarkdownRendererProps) {
   return (
@@ -301,7 +312,12 @@ export function MarkdownRenderer({
           <MarkdownImageRenderer {...props} filePath={filePath} src={src} />
         ),
         pre: ({ children: preChildren }: { children?: ReactNode }) => (
-          <PreRenderer onEditReactFlow={onEditReactFlow}>{preChildren}</PreRenderer>
+          <PreRenderer
+            onEditMindMap={onEditMindMap}
+            onEditReactFlow={onEditReactFlow}
+          >
+            {preChildren}
+          </PreRenderer>
         ),
       }}
       rehypePlugins={[rehypeRaw, rehypeKatex]}

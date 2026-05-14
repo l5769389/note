@@ -53,6 +53,7 @@ import {
 } from "./appSettings";
 import { HtmlDocumentViewer } from "./components/HtmlDocumentViewer";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
+import { MindMapModal } from "./components/MindMapModal";
 import { ReactFlowModal } from "./components/ReactFlowModal";
 import { XmindDocumentViewer } from "./components/XmindDocumentViewer";
 import {
@@ -90,6 +91,16 @@ import {
 } from "./documentModel";
 import { getDirectoryPath } from "./localPreviewUrls";
 import { markdownAlertOptions } from "./markdownAlerts";
+import {
+  createDefaultMindMapDiagram,
+  createMindMapHtmlEmbed,
+  createMindMapMarkdown,
+  parseMindMapDiagramData,
+  replaceMindMapHtmlEmbed,
+  replaceMindMapMarkdownBlock,
+  type MindMapDiagramData,
+  type MindMapEditTarget,
+} from "./mindMapDocument";
 import {
   createDefaultReactFlowDiagram,
   createReactFlowHtmlEmbed,
@@ -795,6 +806,10 @@ export function App() {
   const [reactFlowEditorState, setReactFlowEditorState] = useState<{
     initialData: ReactFlowDiagramData;
     target: ReactFlowEditTarget;
+  } | null>(null);
+  const [mindMapEditorState, setMindMapEditorState] = useState<{
+    initialData: MindMapDiagramData;
+    target: MindMapEditTarget;
   } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
@@ -1590,6 +1605,63 @@ export function App() {
 
       if (isMarkdownDocument(activeDocument)) {
         insertMarkdown(createReactFlowMarkdown(data));
+      }
+    }
+  }
+
+  function openMindMapEditor(target: MindMapEditTarget, code?: string) {
+    let initialData = createDefaultMindMapDiagram();
+
+    if (code) {
+      try {
+        initialData = parseMindMapDiagramData(code);
+      } catch {
+        initialData = createDefaultMindMapDiagram();
+      }
+    }
+
+    setMindMapEditorState({ initialData, target });
+  }
+
+  function openNewMindMapDiagram() {
+    if (!isWritableTextDocument(activeDocument)) {
+      return;
+    }
+
+    openMindMapEditor({ kind: "insert" });
+  }
+
+  function saveMindMapDiagram(data: MindMapDiagramData) {
+    if (!activeDocument || !mindMapEditorState) {
+      return;
+    }
+
+    const { target } = mindMapEditorState;
+
+    if (target.kind === "markdown" && isMarkdownDocument(activeDocument)) {
+      updateMarkdown(
+        replaceMindMapMarkdownBlock(activeDocument.content, target.code, data),
+      );
+      return;
+    }
+
+    if (target.kind === "html" && isHtmlDocument(activeDocument)) {
+      patchActiveDocument({
+        content: replaceMindMapHtmlEmbed(activeDocument.content, target.index, data),
+      });
+      return;
+    }
+
+    if (target.kind === "insert") {
+      if (isHtmlDocument(activeDocument)) {
+        patchActiveDocument({
+          content: `${activeDocument.content}\n${createMindMapHtmlEmbed(data)}\n`,
+        });
+        return;
+      }
+
+      if (isMarkdownDocument(activeDocument)) {
+        insertMarkdown(createMindMapMarkdown(data));
       }
     }
   }
@@ -2562,6 +2634,11 @@ export function App() {
               disabled={!isWritableTextDocument(activeDocument)}
               onSelect={() => runTopMenuAction(openNewReactFlowDiagram)}
             />
+            <MenuItem
+              label="插入思维导图..."
+              disabled={!isWritableTextDocument(activeDocument)}
+              onSelect={() => runTopMenuAction(openNewMindMapDiagram)}
+            />
             <MenuSeparator />
             <MenuItem label="复制为纯文本" disabled />
             <MenuItem label="复制为 Markdown" shortcut="Ctrl+Shift+C" disabled />
@@ -3104,6 +3181,9 @@ export function App() {
               {isHtmlDocument(activeDocument) ? (
                 <HtmlDocumentViewer
                   document={activeDocument}
+                  onEditMindMap={({ code, index }) =>
+                    openMindMapEditor({ index, kind: "html" }, code)
+                  }
                   onEditReactFlow={({ code, index }) =>
                     openReactFlowEditor({ index, kind: "html" }, code)
                   }
@@ -3140,6 +3220,9 @@ export function App() {
                     <article className="markdown-preview">
                       <MarkdownRenderer
                         filePath={activeDocument.filePath}
+                        onEditMindMap={(code) =>
+                          openMindMapEditor({ code, kind: "markdown" }, code)
+                        }
                         onEditReactFlow={(code) =>
                           openReactFlowEditor({ code, kind: "markdown" }, code)
                         }
@@ -3453,6 +3536,29 @@ export function App() {
                   initialData={reactFlowEditorState.initialData}
                   onClose={() => setReactFlowEditorState(null)}
                   onSave={saveReactFlowDiagram}
+                />
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root
+          open={Boolean(mindMapEditorState)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setMindMapEditorState(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Content className="drawing-dialog mindmap-dialog">
+              <Dialog.Title className="sr-only">思维导图</Dialog.Title>
+              {mindMapEditorState && (
+                <MindMapModal
+                  initialData={mindMapEditorState.initialData}
+                  onClose={() => setMindMapEditorState(null)}
+                  onSave={saveMindMapDiagram}
                 />
               )}
             </Dialog.Content>
