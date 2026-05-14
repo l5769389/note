@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("window:new"),
   openWorkspaceDirectory: () =>
     ipcRenderer.invoke("workspace:open-directory"),
+  openPath: (targetPath: string) =>
+    ipcRenderer.invoke("workspace:open-path", targetPath),
   pathExists: (filePath: string) =>
     ipcRenderer.invoke("workspace:path-exists", filePath),
   readDirectoryTree: (directoryPath: string) =>

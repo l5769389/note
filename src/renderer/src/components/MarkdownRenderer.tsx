@@ -23,6 +23,7 @@ import remarkDeflist from "remark-deflist";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { ReactFlowDiagram } from "./ReactFlowDiagram";
 import { registerMarkdownLanguages } from "../syntaxHighlighting";
 import {
   getMarkdownAlertByPrefix,
@@ -30,11 +31,13 @@ import {
 } from "../markdownAlerts";
 import { parseImageMeta } from "../imageMeta";
 import { resolveDocumentResourceUrl } from "../localPreviewUrls";
+import { isReactFlowLanguage } from "../reactFlowDocument";
 import type { TyporaAlertKind } from "../editorCommands";
 
 type MarkdownRendererProps = {
   children: string;
   filePath?: string;
+  onEditReactFlow?: (code: string) => void;
 };
 
 const safeEmbeddedImagePattern =
@@ -203,7 +206,13 @@ function stripAlertMarkerFromNode(node: ReactNode): ReactNode {
   return node;
 }
 
-function PreRenderer({ children }: { children?: ReactNode }) {
+function PreRenderer({
+  children,
+  onEditReactFlow,
+}: {
+  children?: ReactNode;
+  onEditReactFlow?: (code: string) => void;
+}) {
   const child = Children.toArray(children)[0];
 
   if (
@@ -214,6 +223,11 @@ function PreRenderer({ children }: { children?: ReactNode }) {
     if (language === "mermaid") {
       const code = String(child.props.children ?? "").replace(/\n$/, "");
       return <MermaidDiagram code={code} />;
+    }
+
+    if (language && isReactFlowLanguage(language)) {
+      const code = String(child.props.children ?? "").replace(/\n$/, "");
+      return <ReactFlowDiagram code={code} onEdit={onEditReactFlow} />;
     }
   }
 
@@ -270,7 +284,11 @@ function BlockquoteRenderer({ children }: { children?: ReactNode }) {
   );
 }
 
-export function MarkdownRenderer({ children, filePath }: MarkdownRendererProps) {
+export function MarkdownRenderer({
+  children,
+  filePath,
+  onEditReactFlow,
+}: MarkdownRendererProps) {
   return (
     <ReactMarkdown
       components={{
@@ -282,7 +300,9 @@ export function MarkdownRenderer({ children, filePath }: MarkdownRendererProps) 
         img: ({ src, ...props }: ComponentPropsWithoutRef<"img">) => (
           <MarkdownImageRenderer {...props} filePath={filePath} src={src} />
         ),
-        pre: PreRenderer,
+        pre: ({ children: preChildren }: { children?: ReactNode }) => (
+          <PreRenderer onEditReactFlow={onEditReactFlow}>{preChildren}</PreRenderer>
+        ),
       }}
       rehypePlugins={[rehypeRaw, rehypeKatex]}
       remarkPlugins={[remarkGfm, remarkDeflist, remarkMath]}

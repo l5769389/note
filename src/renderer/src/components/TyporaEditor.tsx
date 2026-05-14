@@ -1,4 +1,4 @@
-import { defaultValueCtx, editorViewCtx, Editor, rootCtx } from "@milkdown/kit/core";
+﻿import { defaultValueCtx, editorViewCtx, Editor, rootCtx } from "@milkdown/kit/core";
 import { math } from "@milkdown/plugin-math";
 import { clipboard } from "@milkdown/kit/plugin/clipboard";
 import { history } from "@milkdown/kit/plugin/history";
@@ -6,17 +6,8 @@ import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
 import { trailing } from "@milkdown/kit/plugin/trailing";
 import { prism, prismConfig } from "@milkdown/plugin-prism";
 import {
-  addColumnAfter,
-  addColumnBefore,
-  addRowAfter,
-  addRowBefore,
-  deleteColumn,
-  deleteRow,
-  deleteTable,
   findTable,
   isInTable,
-  setCellAttr,
-  TableMap,
 } from "@milkdown/kit/prose/tables";
 import type { Node as ProseMirrorNode } from "@milkdown/kit/prose/model";
 import { lift, setBlockType, toggleMark, wrapIn } from "@milkdown/kit/prose/commands";
@@ -25,11 +16,8 @@ import { liftListItem, sinkListItem, wrapInList } from "@milkdown/kit/prose/sche
 import {
   NodeSelection,
   Plugin,
-  PluginKey,
   Selection,
   TextSelection,
-  AllSelection,
-  type EditorState,
 } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { commonmark, htmlSchema } from "@milkdown/kit/preset/commonmark";
@@ -38,20 +26,10 @@ import { $prose, insert, replaceAll } from "@milkdown/kit/utils";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
 import "katex/dist/katex.min.css";
 import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
   CircleAlert,
-  Columns2,
-  EllipsisVertical,
-  Grid3x3,
   Info,
   Lightbulb,
-  Maximize2,
   OctagonAlert,
-  Pencil,
-  Rows2,
-  Trash2,
   TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
@@ -64,11 +42,56 @@ import {
   type ClipboardEvent,
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
+import {
+  formatCodeLanguageLabel,
+  isMermaidLanguage,
+  normalizeCodeLanguageInput,
+} from "../codeLanguage";
+import {
+  markdownSyntaxPluginKey,
+  searchHighlightPluginKey,
+  type MarkdownSyntaxPluginState,
+  type SearchHighlightPluginState,
+} from "../editorPluginState";
+import {
+  centerEditorRangeInView,
+  findVisibleSearchRange,
+} from "../editorSearch";
+import {
+  isSelectAllShortcut,
+  selectEntireDocument,
+  selectionTouchesNode,
+} from "../editorSelection";
+import {
+  collapseInlineCodeSourceTransaction,
+  convertPlainInlineCodeSourceTransaction,
+  expandInlineCodeSourceTransaction,
+  findInlineCodeRangeForSelection,
+  findPlainInlineCodeSourceForSelection,
+  shouldKeepInlineCodeSourceExpanded,
+} from "../inlineCodeSource";
+import {
+  getImageDisplayName,
+  ImageNameEditor,
+  ImageResizeHandle,
+  ImageToolbar,
+  type ImageToolbarState,
+} from "./ImageToolbar";
+import {
+  createResizedTableNode,
+  getTableSize,
+  TableToolbar,
+  type TableCommand,
+  type TableSize,
+  type TableToolbarState,
+} from "./TableToolbar";
 import { registerMarkdownLanguages } from "../syntaxHighlighting";
 import { createMermaidRenderId, renderMermaidSvg } from "../mermaid";
+import { isReactFlowLanguage } from "../reactFlowDocument";
+import { ReactFlowDiagram } from "./ReactFlowDiagram";
 import type {
   ImageAlignment,
   TyporaAlertKind,
@@ -79,7 +102,6 @@ import type {
 import {
   clampImageWidth,
   getExcalidrawDrawingId,
-  maxImageWidth,
   minImageWidth,
   parseImageMeta,
   patchImageMetaTitle,
@@ -159,86 +181,6 @@ function createTyporaAlertTitle(kind: TyporaAlertKind, title: string) {
 
   return element;
 }
-
-function formatCodeLanguageLabel(language: string) {
-  const normalizedLanguage = language.trim().toLowerCase();
-  const knownLabels: Record<string, string> = {
-    "plain text": "PlainText",
-    bash: "Bash",
-    csharp: "CSharp",
-    css: "CSS",
-    html: "HTML",
-    java: "Java",
-    javascript: "JavaScript",
-    js: "JavaScript",
-    json: "JSON",
-    jsx: "JSX",
-    markdown: "Markdown",
-    md: "Markdown",
-    py: "Python",
-    python: "Python",
-    shell: "Shell",
-    sql: "SQL",
-    ts: "TypeScript",
-    tsx: "TSX",
-    typescript: "TypeScript",
-    xml: "XML",
-    yaml: "YAML",
-    yml: "YAML",
-  };
-
-  if (knownLabels[normalizedLanguage]) {
-    return knownLabels[normalizedLanguage];
-  }
-
-  return normalizedLanguage
-    .split(/[\s_-]+/)
-    .filter(Boolean)
-    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join("");
-}
-
-function normalizeCodeLanguageInput(language: string) {
-  const normalizedLanguage = language.trim().toLowerCase();
-
-  return normalizedLanguage === "plaintext" ||
-    normalizedLanguage === "plain text" ||
-    normalizedLanguage === "text"
-    ? ""
-    : normalizedLanguage;
-}
-
-function isMermaidLanguage(language: string) {
-  return language.trim().toLowerCase() === "mermaid";
-}
-
-function getInlineCodeMarkTypeFromState(state: EditorState) {
-  return Object.values(state.schema.marks).find(
-    (markType) => markType.name === "inlineCode" || markType.spec.code,
-  );
-}
-
-type InlineCodeRange = {
-  from: number;
-  to: number;
-};
-
-type MarkdownSyntaxPluginState = {
-  expandedInlineCode: InlineCodeRange | null;
-  isFocused: boolean;
-  suppressedInlineCodeAt: number | null;
-};
-
-type SearchHighlightPluginState = {
-  range: InlineCodeRange | null;
-};
-
-const markdownSyntaxPluginKey = new PluginKey<MarkdownSyntaxPluginState>(
-  "typora-markdown-syntax",
-);
-const searchHighlightPluginKey = new PluginKey<SearchHighlightPluginState>(
-  "typora-search-highlight",
-);
 
 const rawHtmlImagePattern = /^\s*<img\b[\s\S]*\/?>\s*$/i;
 
@@ -405,489 +347,6 @@ const editableHtmlSchema = htmlSchema.extendSchema((previousSchema) => (ctx) => 
     },
   };
 });
-
-function getInlineCodeRanges(doc: ProseMirrorNode) {
-  const ranges: InlineCodeRange[] = [];
-
-  doc.descendants((node: ProseMirrorNode, pos) => {
-    if (
-      !node.isText ||
-      !node.marks.some(
-        (mark) => mark.type.name === "inlineCode" || mark.type.spec.code,
-      )
-    ) {
-      return;
-    }
-
-    const range = { from: pos, to: pos + node.nodeSize };
-    const previousRange = ranges.at(-1);
-
-    if (previousRange && previousRange.to === range.from) {
-      previousRange.to = range.to;
-      return;
-    }
-
-    ranges.push(range);
-  });
-
-  return ranges;
-}
-
-function getInlineCodeText(doc: ProseMirrorNode, range: InlineCodeRange) {
-  return doc.textBetween(range.from, range.to, "\n", "\n");
-}
-
-function isWellFormedInlineCodeSource(source: string) {
-  return (
-    source.length >= 2 &&
-    source.startsWith("`") &&
-    source.endsWith("`") &&
-    !source.slice(1, -1).includes("`") &&
-    source.slice(1, -1).length > 0
-  );
-}
-
-function getInlineCodeSourceCursorPosition(
-  source: string,
-  documentPosition: number,
-  range: InlineCodeRange,
-) {
-  if (documentPosition <= range.from) {
-    return 1;
-  }
-
-  if (documentPosition >= range.to) {
-    return source.length;
-  }
-
-  return Math.max(1, Math.min(source.length - 1, documentPosition - range.from + 1));
-}
-
-function getInlineCodeCommit(
-  state: EditorState,
-  source: string,
-) {
-  const markType = getInlineCodeMarkTypeFromState(state);
-  const isWellFormedInlineCode =
-    Boolean(markType) &&
-    isWellFormedInlineCodeSource(source);
-
-  if (!isWellFormedInlineCode) {
-    return {
-      content: source,
-      isInlineCode: false,
-      size: source.length,
-    };
-  }
-
-  const content = source.slice(1, -1);
-
-  if (!content) {
-    return {
-      content: source,
-      isInlineCode: false,
-      size: source.length,
-    };
-  }
-
-  return {
-    content,
-    isInlineCode: true,
-    size: content.length,
-  };
-}
-
-function selectionIsInsideInlineCodeSource(
-  selection: Selection,
-  range: InlineCodeRange,
-) {
-  return selection.from >= range.from && selection.to <= range.to;
-}
-
-function shouldKeepInlineCodeSourceExpanded(
-  state: EditorState,
-  range: InlineCodeRange,
-) {
-  const { selection } = state;
-
-  if (!selectionIsInsideInlineCodeSource(selection, range)) {
-    return false;
-  }
-
-  if (!selection.empty) {
-    return true;
-  }
-
-  const source = getInlineCodeText(state.doc, range);
-
-  if (selection.from === range.to) {
-    return true;
-  }
-
-  if (selection.from === range.from) {
-    return !isWellFormedInlineCodeSource(source);
-  }
-
-  return true;
-}
-
-function findInlineCodeRangeForSelection(
-  state: EditorState,
-  suppressedPosition: number | null,
-) {
-  const { selection } = state;
-
-  if (selection.empty && suppressedPosition === selection.from) {
-    return null;
-  }
-
-  return getInlineCodeRanges(state.doc).find((range) =>
-    selectionIsInsideInlineCodeSource(selection, range),
-  ) ?? null;
-}
-
-function expandInlineCodeSourceTransaction(
-  state: EditorState,
-  range: InlineCodeRange,
-) {
-  const source = `\`${getInlineCodeText(state.doc, range)}\``;
-  const selectionFrom = getInlineCodeSourceCursorPosition(
-    source,
-    state.selection.from,
-    range,
-  );
-  const selectionTo = state.selection.empty
-    ? selectionFrom
-    : getInlineCodeSourceCursorPosition(source, state.selection.to, range);
-  const sourceRange = {
-    from: range.from,
-    to: range.from + source.length,
-  };
-  const nextSelectionFrom = sourceRange.from + Math.min(selectionFrom, selectionTo);
-  const nextSelectionTo = sourceRange.from + Math.max(selectionFrom, selectionTo);
-  let transaction = state.tr.replaceWith(
-    range.from,
-    range.to,
-    state.schema.text(source),
-  );
-
-  transaction = transaction
-    .setSelection(
-      TextSelection.create(
-        transaction.doc,
-        nextSelectionFrom,
-        nextSelectionTo,
-      ),
-    )
-    .setMeta(markdownSyntaxPluginKey, {
-      expandedInlineCode: sourceRange,
-      suppressedInlineCodeAt: null,
-    } satisfies Partial<MarkdownSyntaxPluginState>)
-    .setMeta("addToHistory", false);
-
-  return transaction;
-}
-
-function normalizeInlineCodeSourceRangeForCommit(
-  state: EditorState,
-  range: InlineCodeRange,
-) {
-  let from = Math.max(0, Math.min(range.from, state.doc.content.size));
-  let to = Math.max(from, Math.min(range.to, state.doc.content.size));
-  let source = getInlineCodeText(state.doc, { from, to });
-
-  if (
-    !source.startsWith("`") &&
-    from > 0 &&
-    state.doc.textBetween(from - 1, from, "\n", "\n") === "`"
-  ) {
-    from -= 1;
-    source = getInlineCodeText(state.doc, { from, to });
-  }
-
-  if (
-    !source.endsWith("`") &&
-    to < state.doc.content.size &&
-    state.doc.textBetween(to, to + 1, "\n", "\n") === "`"
-  ) {
-    to += 1;
-  }
-
-  return { from, to };
-}
-
-function collapseInlineCodeSourceTransaction(
-  state: EditorState,
-  range: InlineCodeRange,
-) {
-  const commitRange = normalizeInlineCodeSourceRangeForCommit(state, range);
-  const source = state.doc.textBetween(commitRange.from, commitRange.to, "\n", "\n");
-  const markType = getInlineCodeMarkTypeFromState(state);
-  const commit = getInlineCodeCommit(state, source);
-  let transaction = state.tr;
-
-  if (!commit.content) {
-    transaction = transaction.delete(commitRange.from, commitRange.to);
-  } else if (commit.isInlineCode && markType) {
-    transaction = transaction.replaceWith(
-      commitRange.from,
-      commitRange.to,
-      state.schema.text(commit.content, [markType.create()]),
-    );
-  } else if (commit.content !== source) {
-    transaction = transaction.replaceWith(
-      commitRange.from,
-      commitRange.to,
-      state.schema.text(commit.content),
-    );
-  }
-
-  const suppressedInlineCodeAt = state.selection.empty
-    ? transaction.mapping.map(state.selection.from, 1)
-    : null;
-
-  return transaction
-    .setMeta(markdownSyntaxPluginKey, {
-      expandedInlineCode: null,
-      suppressedInlineCodeAt,
-    } satisfies Partial<MarkdownSyntaxPluginState>)
-    .setMeta("addToHistory", false);
-}
-
-function findPlainInlineCodeSourceForSelection(state: EditorState) {
-  const markType = getInlineCodeMarkTypeFromState(state);
-  const { selection } = state;
-
-  if (!markType || !selection.empty) {
-    return null;
-  }
-
-  const { $from } = selection;
-
-  if (!$from.parent.inlineContent || $from.parent.type.name === "code_block") {
-    return null;
-  }
-
-  const blockStart = $from.start();
-  const textBeforeCursor = state.doc.textBetween(
-    blockStart,
-    selection.from,
-    "\n",
-    "\n",
-  );
-
-  if (!textBeforeCursor.endsWith("`")) {
-    return null;
-  }
-
-  const openingMarkerIndex = textBeforeCursor.lastIndexOf(
-    "`",
-    textBeforeCursor.length - 2,
-  );
-
-  if (openingMarkerIndex < 0) {
-    return null;
-  }
-
-  const content = textBeforeCursor.slice(openingMarkerIndex + 1, -1);
-
-  if (!content || content.includes("`") || content.includes("\n")) {
-    return null;
-  }
-
-  const from = selection.from - (textBeforeCursor.length - openingMarkerIndex);
-  const to = selection.from;
-  const source = state.doc.textBetween(from, to, "\n", "\n");
-
-  if (!isWellFormedInlineCodeSource(source)) {
-    return null;
-  }
-
-  let hasInlineCodeMark = false;
-
-  state.doc.nodesBetween(from, to, (node) => {
-    if (
-      node.isText &&
-      node.marks.some(
-        (mark) => mark.type.name === "inlineCode" || mark.type.spec.code,
-      )
-    ) {
-      hasInlineCodeMark = true;
-    }
-  });
-
-  return hasInlineCodeMark ? null : { from, to };
-}
-
-function convertPlainInlineCodeSourceTransaction(
-  state: EditorState,
-  range: InlineCodeRange,
-) {
-  const markType = getInlineCodeMarkTypeFromState(state);
-  const commit = getInlineCodeCommit(
-    state,
-    state.doc.textBetween(range.from, range.to, "\n", "\n"),
-  );
-
-  if (!markType || !commit.isInlineCode) {
-    return null;
-  }
-
-  const selectionPosition = range.from + commit.size;
-
-  const transaction = state.tr.replaceWith(
-    range.from,
-    range.to,
-    state.schema.text(commit.content, [markType.create()]),
-  );
-
-  return transaction
-    .setSelection(TextSelection.create(transaction.doc, selectionPosition))
-    .setMeta(markdownSyntaxPluginKey, {
-      expandedInlineCode: null,
-      suppressedInlineCodeAt: selectionPosition,
-    } satisfies Partial<MarkdownSyntaxPluginState>);
-}
-
-function selectionTouchesNode(selection: Selection, pos: number, node: ProseMirrorNode) {
-  const from = pos;
-  const to = pos + node.nodeSize;
-
-  if (selectionTouchesRange(selection.from, selection.to, from, to)) {
-    return true;
-  }
-
-  for (let depth = selection.$from.depth; depth > 0; depth -= 1) {
-    if (selection.$from.before(depth) === pos) {
-      return true;
-    }
-  }
-
-  for (let depth = selection.$to.depth; depth > 0; depth -= 1) {
-    if (selection.$to.before(depth) === pos) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function isSelectAllShortcut(event: KeyboardEvent) {
-  return (
-    event.key.toLowerCase() === "a" &&
-    (event.ctrlKey || event.metaKey) &&
-    !event.altKey &&
-    !event.shiftKey
-  );
-}
-
-function selectEntireDocument(view: EditorView) {
-  view.dispatch(
-    view.state.tr
-      .setSelection(new AllSelection(view.state.doc))
-      .scrollIntoView(),
-  );
-  view.focus();
-}
-
-function normalizeSearchText(value: string) {
-  return value.toLocaleLowerCase();
-}
-
-function findVisibleSearchRange(
-  doc: ProseMirrorNode,
-  query: string,
-  occurrenceIndex: number,
-): InlineCodeRange | null {
-  if (!query) {
-    return null;
-  }
-
-  let visibleText = "";
-  const positions: number[] = [];
-
-  doc.descendants((node: ProseMirrorNode, pos) => {
-    if (!node.isText || !node.text) {
-      return;
-    }
-
-    for (let index = 0; index < node.text.length; index += 1) {
-      visibleText += node.text[index];
-      positions.push(pos + index);
-    }
-  });
-
-  const normalizedText = normalizeSearchText(visibleText);
-  const normalizedQuery = normalizeSearchText(query);
-  const targetOccurrence = Math.max(0, occurrenceIndex);
-  let searchFrom = 0;
-  let seen = 0;
-
-  while (searchFrom <= normalizedText.length) {
-    const start = normalizedText.indexOf(normalizedQuery, searchFrom);
-
-    if (start < 0) {
-      return null;
-    }
-
-    const end = start + query.length;
-
-    if (seen === targetOccurrence) {
-      const from = positions[start];
-      const last = positions[end - 1];
-
-      if (from === undefined || last === undefined) {
-        return null;
-      }
-
-      return { from, to: last + 1 };
-    }
-
-    seen += 1;
-    searchFrom = end;
-  }
-
-  return null;
-}
-
-function centerEditorRangeInView(
-  view: EditorView,
-  scrollRoot: HTMLElement | null,
-  range: InlineCodeRange,
-) {
-  requestAnimationFrame(() => {
-    const root =
-      scrollRoot ?? (view.dom.closest(".typora-editor") as HTMLElement | null);
-
-    if (!root) {
-      return;
-    }
-
-    try {
-      const docSize = view.state.doc.content.size;
-      const from = Math.max(0, Math.min(range.from, docSize));
-      const to = Math.max(from, Math.min(range.to, docSize));
-      const fromCoords = view.coordsAtPos(from);
-      const toCoords = view.coordsAtPos(to);
-      const targetCenter = (fromCoords.top + toCoords.bottom) / 2;
-      const rootRect = root.getBoundingClientRect();
-      const viewportCenter = rootRect.top + root.clientHeight / 2;
-      const nextTop = root.scrollTop + targetCenter - viewportCenter;
-
-      root.scrollTo({
-        behavior: "smooth",
-        top: Math.max(0, nextTop),
-      });
-    } catch {
-      const highlighted = view.dom.querySelector(".typora-search-active-highlight");
-
-      highlighted?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-    }
-  });
-}
 
 const searchHighlightDecoration = $prose(
   () =>
@@ -1141,7 +600,7 @@ const mermaidBlockDecoration = $prose(
             const language =
               typeof node.attrs.language === "string" ? node.attrs.language : "";
 
-            if (!isMermaidLanguage(language)) {
+            if (!isMermaidLanguage(language) && !isReactFlowLanguage(language)) {
               return;
             }
 
@@ -1159,6 +618,27 @@ const mermaidBlockDecoration = $prose(
               Decoration.widget(
                 pos + node.nodeSize,
                 (view) => {
+                  if (isReactFlowLanguage(language)) {
+                    const container = document.createElement("div");
+                    const root = createRoot(container);
+
+                    container.className = "typora-react-flow-widget";
+                    container.setAttribute("aria-label", "React Flow diagram");
+                    container.title = "Click to edit React Flow source";
+                    container.addEventListener("mousedown", (event) => {
+                      event.preventDefault();
+                      view.dispatch(
+                        view.state.tr.setSelection(
+                          Selection.near(view.state.doc.resolve(pos + 1), 1),
+                        ),
+                      );
+                      view.focus();
+                    });
+                    root.render(<ReactFlowDiagram code={node.textContent} />);
+
+                    return container;
+                  }
+
                   const container = document.createElement("div");
                   const renderId = createMermaidRenderId(
                     `milkdown-mermaid-${pos}`,
@@ -1205,11 +685,15 @@ const mermaidBlockDecoration = $prose(
                 },
                 {
                   ignoreSelection: true,
-                  key: createMermaidRenderId(`milkdown-mermaid-widget-${pos}`, node.textContent),
+                  key: `${language}-${pos}-${node.textContent}`,
                   side: 1,
                   stopEvent: (event) =>
                     event.target instanceof Element &&
-                    Boolean(event.target.closest(".typora-mermaid-diagram")),
+                    Boolean(
+                      event.target.closest(
+                        ".typora-mermaid-diagram, .typora-react-flow-widget",
+                      ),
+                    ),
                 },
               ),
             );
@@ -2174,615 +1658,6 @@ function deleteActiveBlockOrSelection(view: EditorView) {
 
   view.dispatch(view.state.tr.delete(block.start, block.end).scrollIntoView());
   return true;
-}
-
-type TableSize = {
-  columns: number;
-  rows: number;
-};
-
-type TableToolbarState =
-  | { visible: false }
-  | {
-      columns: number;
-      left: number;
-      rows: number;
-      top: number;
-      visible: true;
-      width: number;
-    };
-
-type TableCommand = (
-  state: EditorView["state"],
-  dispatch?: EditorView["dispatch"],
-  view?: EditorView,
-) => boolean;
-
-type TableToolbarAction = {
-  command: TableCommand;
-  icon: ReactNode;
-  label: string;
-  text?: string;
-};
-
-const minTableRows = 2;
-const maxTablePickerColumns = 8;
-const maxTablePickerRows = 10;
-const maxTableSize = 20;
-
-function clampTableSize(size: TableSize): TableSize {
-  return {
-    columns: Math.max(1, Math.min(maxTableSize, Math.round(size.columns) || 1)),
-    rows: Math.max(minTableRows, Math.min(maxTableSize, Math.round(size.rows) || minTableRows)),
-  };
-}
-
-function getTableSize(tableNode: ProseMirrorNode): TableSize {
-  const map = TableMap.get(tableNode);
-
-  return { columns: map.width, rows: map.height };
-}
-
-function normalizeTableCellAttrs(attrs: ProseMirrorNode["attrs"], alignment: string) {
-  return {
-    ...attrs,
-    alignment,
-    colspan: 1,
-    colwidth: null,
-    rowspan: 1,
-  };
-}
-
-function createResizedTableNode(
-  state: EditorView["state"],
-  tableNode: ProseMirrorNode,
-  size: TableSize,
-) {
-  const { columns, rows } = clampTableSize(size);
-  const tableType = state.schema.nodes.table;
-  const headerRowType = state.schema.nodes.table_header_row;
-  const rowType = state.schema.nodes.table_row;
-  const headerCellType = state.schema.nodes.table_header;
-  const cellType = state.schema.nodes.table_cell;
-
-  if (!tableType || !headerRowType || !rowType || !headerCellType || !cellType) {
-    return tableNode;
-  }
-
-  const headerRow = tableNode.maybeChild(0);
-  const nextRows = Array.from({ length: rows }, (_, rowIndex) => {
-    const sourceRow = tableNode.maybeChild(rowIndex);
-    const nextRowType = rowIndex === 0 ? headerRowType : rowType;
-    const nextCellType = rowIndex === 0 ? headerCellType : cellType;
-    const nextCells = Array.from({ length: columns }, (__, columnIndex) => {
-      const sourceCell = sourceRow?.maybeChild(columnIndex);
-      const headerCell = headerRow?.maybeChild(columnIndex);
-      const alignment = String(
-        sourceCell?.attrs.alignment ?? headerCell?.attrs.alignment ?? "left",
-      );
-      const attrs = normalizeTableCellAttrs(sourceCell?.attrs ?? {}, alignment);
-
-      if (sourceCell) {
-        return nextCellType.create(attrs, sourceCell.content, sourceCell.marks);
-      }
-
-      return nextCellType.createAndFill(attrs) ?? nextCellType.create(attrs);
-    });
-
-    return nextRowType.create(sourceRow?.attrs, nextCells);
-  });
-
-  return tableType.create(tableNode.attrs, nextRows);
-}
-
-type ImageToolbarState =
-  | { visible: false }
-  | {
-      align: ImageAlignment;
-      displayWidth: number;
-      name: string;
-      imageHeight: number;
-      imageLeft: number;
-      imageTop: number;
-      imageWidth: number;
-      left: number;
-      pos: number;
-      top: number;
-      visible: true;
-      drawingId?: string;
-      width?: number;
-    };
-
-function getImageDisplayName(node: ProseMirrorNode) {
-  const alt = typeof node.attrs.alt === "string" ? node.attrs.alt.trim() : "";
-
-  if (alt) {
-    return alt;
-  }
-
-  const source = typeof node.attrs.src === "string" ? node.attrs.src.trim() : "";
-
-  if (!source || source.startsWith("data:")) {
-    return getExcalidrawDrawingId(node.attrs.title) ? "Excalidraw" : "Image";
-  }
-
-  const cleanSource = source.split(/[?#]/)[0] ?? "";
-  const fileName = cleanSource.split(/[\\/]/).filter(Boolean).pop();
-
-  if (!fileName) {
-    return "Image";
-  }
-
-  try {
-    return decodeURIComponent(fileName);
-  } catch {
-    return fileName;
-  }
-}
-
-export function LegacyTableToolbar({
-  onRun,
-  state,
-}: {
-  onRun: (command: TableCommand) => void;
-  state: TableToolbarState;
-}) {
-  if (!state.visible) {
-    return null;
-  }
-
-  const actionGroups: TableToolbarAction[][] = [
-    [
-      { command: setCellAttr("alignment", "left"), icon: <AlignLeft size={15} />, label: "左对齐" },
-      {
-        command: setCellAttr("alignment", "center"),
-        icon: <AlignCenter size={15} />,
-        label: "居中对齐",
-      },
-      {
-        command: setCellAttr("alignment", "right"),
-        icon: <AlignRight size={15} />,
-        label: "右对齐",
-      },
-    ],
-    [
-      { command: addColumnBefore, icon: <Columns2 size={15} />, label: "左侧插入列", text: "+左" },
-      { command: addColumnAfter, icon: <Columns2 size={15} />, label: "右侧插入列", text: "+右" },
-      { command: addRowBefore, icon: <Rows2 size={15} />, label: "上方插入行", text: "+上" },
-      { command: addRowAfter, icon: <Rows2 size={15} />, label: "下方插入行", text: "+下" },
-    ],
-    [
-      { command: deleteColumn, icon: <Trash2 size={15} />, label: "删除当前列", text: "列" },
-      { command: deleteRow, icon: <Trash2 size={15} />, label: "删除当前行", text: "行" },
-      { command: deleteTable, icon: <Trash2 size={15} />, label: "删除表格", text: "表" },
-    ],
-  ];
-
-  return (
-    <div
-      className="milkdown-table-toolbar"
-      style={{ left: state.left, top: state.top }}
-      onMouseDown={(event) => event.preventDefault()}
-    >
-      {actionGroups.map((actions, index) => (
-        <div className="milkdown-table-toolbar-group" key={index}>
-          {actions.map((action) => (
-            <button
-              className="milkdown-table-toolbar-button"
-              key={action.label}
-              type="button"
-              title={action.label}
-              aria-label={action.label}
-              onClick={() => onRun(action.command)}
-            >
-              {action.icon}
-              {action.text && <span>{action.text}</span>}
-            </button>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TableSizePicker({
-  columns,
-  onApply,
-  rows,
-}: {
-  columns: number;
-  onApply: (size: TableSize) => void;
-  rows: number;
-}) {
-  const [draftSize, setDraftSize] = useState<TableSize>(() => clampTableSize({ columns, rows }));
-  const [previewSize, setPreviewSize] = useState<TableSize | null>(null);
-  const displaySize = previewSize ?? draftSize;
-
-  useEffect(() => {
-    setDraftSize(clampTableSize({ columns, rows }));
-    setPreviewSize(null);
-  }, [columns, rows]);
-
-  function applySize(size: TableSize) {
-    const nextSize = clampTableSize(size);
-
-    setDraftSize(nextSize);
-    setPreviewSize(null);
-    onApply(nextSize);
-  }
-
-  function updateDraft(partialSize: Partial<TableSize>) {
-    setPreviewSize(null);
-    setDraftSize((current) => clampTableSize({ ...current, ...partialSize }));
-  }
-
-  return (
-    <div
-      className="milkdown-table-size-picker"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) {
-          applySize(draftSize);
-        }
-      }}
-      onMouseLeave={() => setPreviewSize(null)}
-    >
-      <div className="milkdown-table-size-grid">
-        {Array.from({ length: maxTablePickerRows }).flatMap((_, rowIndex) =>
-          Array.from({ length: maxTablePickerColumns }).map((__, columnIndex) => {
-            const cellSize = { columns: columnIndex + 1, rows: rowIndex + 1 };
-            const isActive =
-              cellSize.columns <= displaySize.columns && cellSize.rows <= displaySize.rows;
-
-            return (
-              <button
-                aria-label={`${cellSize.rows} x ${cellSize.columns}`}
-                className={[
-                  "milkdown-table-size-cell",
-                  isActive ? "milkdown-table-size-cell-active" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                key={`${cellSize.rows}-${cellSize.columns}`}
-                onClick={() => applySize(cellSize)}
-                onMouseEnter={() => setPreviewSize(clampTableSize(cellSize))}
-                type="button"
-              />
-            );
-          }),
-        )}
-      </div>
-      <div className="milkdown-table-size-inputs">
-        <input
-          aria-label="Rows"
-          max={maxTableSize}
-          min={minTableRows}
-          onChange={(event) => updateDraft({ rows: Number(event.target.value) })}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              applySize(draftSize);
-            }
-          }}
-          type="number"
-          value={displaySize.rows}
-        />
-        <span>x</span>
-        <input
-          aria-label="Columns"
-          max={maxTableSize}
-          min={1}
-          onChange={(event) => updateDraft({ columns: Number(event.target.value) })}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              applySize(draftSize);
-            }
-          }}
-          type="number"
-          value={displaySize.columns}
-        />
-      </div>
-    </div>
-  );
-}
-
-function TableToolbar({
-  onResize,
-  onRun,
-  state,
-}: {
-  onResize: (size: TableSize) => void;
-  onRun: (command: TableCommand) => void;
-  state: TableToolbarState;
-}) {
-  const [isActionsOpen, setIsActionsOpen] = useState(false);
-  const [isSizePickerOpen, setIsSizePickerOpen] = useState(false);
-
-  useEffect(() => {
-    if (!state.visible) {
-      setIsActionsOpen(false);
-      setIsSizePickerOpen(false);
-    }
-  }, [state.visible]);
-
-  if (!state.visible) {
-    return null;
-  }
-
-  const alignActions: TableToolbarAction[] = [
-    { command: setCellAttr("alignment", "left"), icon: <AlignLeft size={15} />, label: "Left" },
-    {
-      command: setCellAttr("alignment", "center"),
-      icon: <AlignCenter size={15} />,
-      label: "Center",
-    },
-    { command: setCellAttr("alignment", "right"), icon: <AlignRight size={15} />, label: "Right" },
-  ];
-  const insertActions: TableToolbarAction[] = [
-    { command: addColumnBefore, icon: <Columns2 size={15} />, label: "Insert column before" },
-    { command: addColumnAfter, icon: <Columns2 size={15} />, label: "Insert column after" },
-    { command: addRowBefore, icon: <Rows2 size={15} />, label: "Insert row before" },
-    { command: addRowAfter, icon: <Rows2 size={15} />, label: "Insert row after" },
-  ];
-
-  return (
-    <div
-      className="milkdown-table-toolbar"
-      style={{ left: state.left, top: state.top, width: state.width }}
-      onMouseDown={(event) => {
-        if (!(event.target instanceof HTMLInputElement)) {
-          event.preventDefault();
-        }
-      }}
-    >
-      <div className="milkdown-table-toolbar-main">
-        <div className="milkdown-table-toolbar-side">
-          <button
-            aria-expanded={isSizePickerOpen}
-            aria-label="Table size"
-            className="milkdown-table-toolbar-button"
-            onClick={() => {
-              setIsActionsOpen(false);
-              setIsSizePickerOpen((current) => !current);
-            }}
-            title="Table size"
-            type="button"
-          >
-            <Grid3x3 size={16} />
-          </button>
-          {alignActions.map((action) => (
-            <button
-              aria-label={action.label}
-              className="milkdown-table-toolbar-button"
-              key={action.label}
-              onClick={() => onRun(action.command)}
-              title={action.label}
-              type="button"
-            >
-              {action.icon}
-            </button>
-          ))}
-        </div>
-        <div className="milkdown-table-toolbar-side">
-          {insertActions.map((action) => (
-            <button
-              aria-label={action.label}
-              className="milkdown-table-toolbar-button"
-              key={action.label}
-              onClick={() => onRun(action.command)}
-              title={action.label}
-              type="button"
-            >
-              {action.icon}
-            </button>
-          ))}
-          <button
-            aria-label="More table actions"
-            className="milkdown-table-toolbar-button"
-            onClick={() => {
-              setIsSizePickerOpen(false);
-              setIsActionsOpen((current) => !current);
-            }}
-            title="More table actions"
-            type="button"
-          >
-            <EllipsisVertical size={16} />
-          </button>
-          <button
-            aria-label="Delete table"
-            className="milkdown-table-toolbar-button"
-            onClick={() => onRun(deleteTable)}
-            title="Delete table"
-            type="button"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </div>
-      {isSizePickerOpen && (
-        <TableSizePicker
-          columns={state.columns}
-          rows={state.rows}
-          onApply={(size) => {
-            setIsSizePickerOpen(false);
-            onResize(size);
-          }}
-        />
-      )}
-      {isActionsOpen && (
-        <div className="milkdown-table-more-menu">
-          <button type="button" onClick={() => onRun(deleteRow)}>
-            Delete row
-          </button>
-          <button type="button" onClick={() => onRun(deleteColumn)}>
-            Delete column
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ImageToolbar({
-  onEditDrawing,
-  onResetWidth,
-  onSetAlign,
-  onSetWidth,
-  state,
-}: {
-  onEditDrawing?: (drawingId: string) => void;
-  onResetWidth: (pos: number) => void;
-  onSetAlign: (pos: number, align: ImageAlignment) => void;
-  onSetWidth: (pos: number, width: number) => void;
-  state: ImageToolbarState;
-}) {
-  if (!state.visible) {
-    return null;
-  }
-
-  const alignmentActions: Array<{
-    align: ImageAlignment;
-    icon: ReactNode;
-    label: string;
-  }> = [
-    { align: "left", icon: <AlignLeft size={15} />, label: "左对齐" },
-    { align: "center", icon: <AlignCenter size={15} />, label: "居中对齐" },
-    { align: "right", icon: <AlignRight size={15} />, label: "右对齐" },
-  ];
-  const sliderValue = state.width ?? state.displayWidth;
-
-  return (
-    <div
-      className="milkdown-image-toolbar"
-      style={{ left: state.left, top: state.top }}
-      onMouseDown={(event) => event.preventDefault()}
-    >
-      {state.drawingId && onEditDrawing && (
-        <button
-          className="milkdown-image-toolbar-button"
-          type="button"
-          title="Edit Excalidraw"
-          aria-label="Edit Excalidraw"
-          onClick={() => onEditDrawing(state.drawingId!)}
-        >
-          <Pencil size={15} />
-        </button>
-      )}
-      <div className="milkdown-image-toolbar-group">
-        {alignmentActions.map((action) => (
-          <button
-            className={
-              state.align === action.align
-                ? "milkdown-image-toolbar-button milkdown-image-toolbar-button-active"
-                : "milkdown-image-toolbar-button"
-            }
-            key={action.align}
-            type="button"
-            title={action.label}
-            aria-label={action.label}
-            onClick={() => onSetAlign(state.pos, action.align)}
-          >
-            {action.icon}
-          </button>
-        ))}
-      </div>
-      <label className="milkdown-image-size-control">
-        <span>{sliderValue}px</span>
-        <input
-          type="range"
-          min={minImageWidth}
-          max={maxImageWidth}
-          step={10}
-          value={sliderValue}
-          onChange={(event) => onSetWidth(state.pos, Number(event.target.value))}
-        />
-      </label>
-      <button
-        className="milkdown-image-toolbar-button"
-        type="button"
-        title="恢复自适应宽度"
-        aria-label="恢复自适应宽度"
-        onClick={() => onResetWidth(state.pos)}
-      >
-        <Maximize2 size={15} />
-      </button>
-    </div>
-  );
-}
-
-function ImageNameEditor({
-  onRename,
-  state,
-}: {
-  onRename: (pos: number, name: string) => void;
-  state: ImageToolbarState;
-}) {
-  const [draft, setDraft] = useState("");
-  const visiblePos = state.visible ? state.pos : -1;
-  const visibleName = state.visible ? state.name : "";
-
-  useEffect(() => {
-    setDraft(visibleName);
-  }, [visibleName, visiblePos]);
-
-  if (!state.visible) {
-    return null;
-  }
-
-  const commit = () => {
-    const nextName = draft.trim() || (state.drawingId ? "Excalidraw" : "Image");
-
-    if (nextName !== state.name) {
-      onRename(state.pos, nextName);
-    }
-  };
-
-  return (
-    <input
-      className="milkdown-image-name-editor"
-      aria-label="Image name"
-      value={draft}
-      style={{
-        left: state.imageLeft + state.imageWidth / 2,
-        top: state.imageTop + state.imageHeight + 7,
-        width: Math.max(148, Math.min(state.imageWidth, 360)),
-      }}
-      onBlur={commit}
-      onChange={(event) => setDraft(event.target.value)}
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-
-        if (event.key === "Enter") {
-          event.preventDefault();
-          event.currentTarget.blur();
-        }
-      }}
-      onMouseDown={(event) => event.stopPropagation()}
-    />
-  );
-}
-
-function ImageResizeHandle({
-  onResizeStart,
-  state,
-}: {
-  onResizeStart: (event: ReactPointerEvent<HTMLDivElement>, state: Extract<ImageToolbarState, { visible: true }>) => void;
-  state: ImageToolbarState;
-}) {
-  if (!state.visible) {
-    return null;
-  }
-
-  return (
-    <div
-      className="milkdown-image-resize-handle"
-      role="presentation"
-      style={{
-        left: state.imageLeft + state.imageWidth + 2,
-        top: state.imageTop + state.imageHeight + 2,
-      }}
-      onPointerDown={(event) => onResizeStart(event, state)}
-    />
-  );
 }
 
 type MilkdownRuntimeProps = TyporaEditorProps & {

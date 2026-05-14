@@ -24,6 +24,7 @@ type DesktopApi = {
   getDefaultWorkspaceDirectory: () => Promise<string>;
   listMarkdownFiles: (directoryPath: string) => Promise<LocalMarkdownFile[]>;
   newWindow: () => Promise<void>;
+  openPath: (targetPath: string) => Promise<string>;
   openWorkspaceDirectory: () => Promise<LocalWorkspaceDirectory | null>;
   pathExists: (filePath: string) => Promise<boolean>;
   platform: string;

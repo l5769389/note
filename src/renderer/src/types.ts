@@ -1,5 +1,5 @@
 export type EditorMode = "typora" | "source" | "split" | "preview";
-export type DocumentType = "markdown" | "html";
+export type DocumentType = "markdown" | "html" | "xmind";
 
 export type DrawingAsset = {
   id: string;
@@ -30,11 +30,6 @@ export type WorkspaceSnapshot = {
 };
 
 export type SaveState = "idle" | "saving" | "saved" | "failed";
-
-export type UploadResult = {
-  url: string;
-  storage: "remote" | "embedded";
-};
 
 export type DirectoryTreeItem = {
   children?: DirectoryTreeItem[];

@@ -34,9 +34,10 @@ const ignoredDirectoryNames = new Set([
 ]);
 const markdownExtensions = new Set([".md", ".markdown", ".mdown"]);
 const htmlExtensions = new Set([".html", ".htm"]);
+const xmindExtensions = new Set([".xmind"]);
 const maxDirectoryTreeDepth = 8;
 
-type DocumentFileType = "markdown" | "html";
+type DocumentFileType = "markdown" | "html" | "xmind";
 
 type DirectoryTreeItem = {
   children?: DirectoryTreeItem[];
@@ -104,6 +105,10 @@ function getDocumentFileType(filePath: string): DocumentFileType | null {
     return "html";
   }
 
+  if (xmindExtensions.has(extension)) {
+    return "xmind";
+  }
+
   return null;
 }
 
@@ -149,7 +154,10 @@ async function readMarkdownFile(filePath: string) {
   }
 
   return {
-    content: await readFile(filePath, "utf-8"),
+    content:
+      documentType === "xmind"
+        ? await readFile(filePath, "base64")
+        : await readFile(filePath, "utf-8"),
     createdAt: fileStat.birthtime.toISOString(),
     documentType,
     filePath,
@@ -377,7 +385,12 @@ function registerFileIpc() {
 
   ipcMain.handle("workspace:select-markdown-file", async () => {
     const options: OpenDialogOptions = {
-      filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdown"] }],
+      filters: [
+        { name: "Documents", extensions: ["md", "markdown", "mdown", "html", "htm", "xmind"] },
+        { name: "Markdown", extensions: ["md", "markdown", "mdown"] },
+        { name: "HTML", extensions: ["html", "htm"] },
+        { name: "XMind", extensions: ["xmind"] },
+      ],
       properties: ["openFile"],
       title: "选择 Markdown 文件",
     };
@@ -457,6 +470,10 @@ function registerFileIpc() {
     }
 
     shell.showItemInFolder(targetPath);
+  });
+
+  ipcMain.handle("workspace:open-path", async (_, targetPath: string) => {
+    return shell.openPath(targetPath);
   });
 
   ipcMain.handle("export:html", async (event, payload: ExportDocumentPayload) => {

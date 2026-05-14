@@ -1,6 +1,15 @@
 :root {
   color: #18202f;
   background: #f6f7f9;
+  --editor-code-font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
+    monospace;
+  --editor-content-width: 860px;
+  --editor-font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --editor-font-size: 15px;
+  --editor-line-height: 1.78;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -29,6 +38,7 @@ body,
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -185,6 +195,14 @@ button {
   background: #f5f0df;
 }
 
+.theme-dot-pixyll {
+  background: linear-gradient(135deg, #ffffff 0 58%, #0f4c81 58% 100%);
+}
+
+.theme-dot-whitey {
+  background: linear-gradient(135deg, #ffffff 0 58%, #d7d7d7 58% 100%);
+}
+
 .theme-dot-night {
   border-color: #334155;
   background: #0f172a;
@@ -201,7 +219,12 @@ button {
 }
 
 :root[data-theme="paper"] .app-shell,
-:root[data-theme="paper"] .workspace {
+:root[data-theme="paper"] .workspace,
+:root[data-theme="paper"] .editor-workspace,
+:root[data-theme="paper"] .welcome-home,
+:root[data-theme="paper"] .typora-editor,
+:root[data-theme="paper"] .markdown-preview,
+:root[data-theme="paper"] .markdown-input {
   background: #f1eadf;
 }
 
@@ -212,9 +235,40 @@ button {
 :root[data-theme="paper"] .sidebar-footer,
 :root[data-theme="paper"] .sidebar-actions-popover,
 :root[data-theme="paper"] .sidebar-tree-popover,
-:root[data-theme="paper"] .app-dropdown {
+:root[data-theme="paper"] .app-dropdown,
+:root[data-theme="paper"] .settings-dialog,
+:root[data-theme="paper"] .find-dialog,
+:root[data-theme="paper"] .create-file-dialog {
   border-color: #d9d0c4;
   background: #f7f2e9;
+}
+
+:root[data-theme="paper"] .typora-milkdown-content .ProseMirror,
+:root[data-theme="paper"] .markdown-preview {
+  color: #2f2621;
+}
+
+:root[data-theme="paper"] .typora-milkdown-content .ProseMirror code,
+:root[data-theme="paper"] .markdown-preview code {
+  border-color: #dfd4c4;
+  background: #f8f0e4;
+  color: #6f4527;
+}
+
+:root[data-theme="paper"] .typora-milkdown-content .ProseMirror pre,
+:root[data-theme="paper"] .markdown-preview pre {
+  border-color: #dfd4c4;
+  background: #f4eadc;
+  color: #2f2621;
+}
+
+:root[data-theme="paper"] .typora-milkdown-content .ProseMirror blockquote:not(.typora-alert-block),
+:root[data-theme="paper"] .markdown-preview blockquote:not(.markdown-alert) {
+  border-color: #e1d4c2;
+  border-left-color: #a47b5d;
+  background: linear-gradient(90deg, #f8efe2 0%, #f1eadf 100%);
+  box-shadow: none;
+  color: #4b3b31;
 }
 
 :root[data-theme="paper"] .file-card:hover,
@@ -865,11 +919,16 @@ button {
 .settings-mode-item:focus-visible,
 .sidebar-tab:focus-visible,
 .file-card:focus-visible,
+.explorer-footer-icon-button:focus-visible,
+.explorer-footer-folder:focus-visible,
 .sidebar-footer-button:focus-visible,
 .sidebar-popover-close:focus-visible,
 .sidebar-actions-popover button:focus-visible,
+.directory-file-list-item:focus-visible,
 .directory-tree-file:focus-visible,
 .tree-file:focus-visible,
+.xmind-viewer-actions button:focus-visible,
+.xmind-sheet-tabs button:focus-visible,
 .workspace-status-button:focus-visible,
 .outline-item:focus-visible,
 .table-picker-cell:focus-visible {
@@ -1030,11 +1089,9 @@ button {
   background: #ffffff;
   padding: 34px min(7vw, 72px);
   color: #1f2937;
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
-    monospace;
-  font-size: 15px;
-  line-height: 1.8;
+  font-family: var(--editor-code-font-family);
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
 }
 
 .editor-layout-source .markdown-input {
@@ -1045,7 +1102,15 @@ button {
 .typora-editor {
   background: #ffffff;
   padding: 32px min(7vw, 78px);
-  line-height: 1.78;
+  font-family: var(--editor-font-family);
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
+}
+
+.markdown-preview > * {
+  max-width: min(var(--editor-content-width), 100%);
+  margin-right: auto;
+  margin-left: auto;
 }
 
 .markdown-preview > *:first-child,
@@ -1103,9 +1168,7 @@ button {
   background: #f1f4f8;
   box-decoration-break: clone;
   color: #15305b;
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
-    monospace;
+  font-family: var(--editor-code-font-family);
   font-size: 0.86em;
   line-height: 1;
   padding: 0.12em 0.34em;
@@ -1320,7 +1383,7 @@ button {
 }
 
 .typora-raw-html-preview {
-  width: min(860px, 100%);
+  width: min(var(--editor-content-width), 100%);
   margin: 1em auto;
   color: #111827;
   font-size: 1rem;
@@ -1443,7 +1506,7 @@ button {
 .typora-code-block,
 .typora-table-block,
 .typora-blank-line {
-  width: min(860px, 100%);
+  width: min(var(--editor-content-width), 100%);
   margin-right: auto;
   margin-left: auto;
 }
@@ -1512,9 +1575,7 @@ button {
 
 .typora-line-input-code {
   color: #eef2ff;
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
-    monospace;
+  font-family: var(--editor-code-font-family);
 }
 
 .typora-code-line {
@@ -1535,7 +1596,7 @@ button {
 }
 
 .typora-rich-editor {
-  line-height: 1.78;
+  line-height: var(--editor-line-height);
 }
 
 .typora-milkdown-content,
@@ -1547,7 +1608,7 @@ button {
 }
 
 .typora-milkdown-content .ProseMirror {
-  width: min(860px, 100%);
+  width: min(var(--editor-content-width), 100%);
   min-height: 100%;
   margin: 0 auto;
   outline: 0;
@@ -1637,9 +1698,7 @@ button {
   background: #f1f4f8;
   box-decoration-break: clone;
   color: #15305b;
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
-    monospace;
+  font-family: var(--editor-code-font-family);
   font-size: 0.86em;
   line-height: 1;
   padding: 0.12em 0.34em;
@@ -1652,9 +1711,7 @@ button {
   background: #f1f4f8;
   box-decoration-break: clone;
   color: #15305b;
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
-    monospace;
+  font-family: var(--editor-code-font-family);
   font-size: 0.86em;
   letter-spacing: 0;
   line-height: 1;
@@ -1670,9 +1727,7 @@ button {
 
 .typora-markdown-syntax-marker {
   color: #7b8794;
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
-    monospace;
+  font-family: var(--editor-code-font-family);
   font-size: 0.86em;
 }
 
@@ -1685,7 +1740,7 @@ button {
   margin: 1.25em 0;
   padding: 15px 18px 34px;
   color: #24292f;
-  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: var(--editor-code-font-family);
   font-size: 0.95em;
   line-height: 1.55;
   tab-size: 2;
@@ -1768,6 +1823,79 @@ button {
 .mermaid-diagram-error pre {
   margin: 0;
   overflow: auto;
+  white-space: pre-wrap;
+}
+
+.react-flow-diagram {
+  position: relative;
+  width: 100%;
+  height: 360px;
+  margin: 1.35em auto;
+  overflow: hidden;
+  border: 1px solid #e4e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.typora-react-flow-widget {
+  margin: 1.35em 0;
+  cursor: pointer;
+}
+
+.typora-react-flow-widget .react-flow-diagram {
+  margin: 0;
+}
+
+.react-flow-diagram .react-flow__node {
+  border: 1px solid #9ca3af;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+  color: #172033;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.react-flow-diagram-edit {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: #2563eb;
+  color: #ffffff;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.react-flow-diagram-edit:hover {
+  background: #1d4ed8;
+}
+
+.react-flow-diagram-error {
+  display: grid;
+  height: auto;
+  min-height: 140px;
+  align-content: start;
+  border-color: #fecaca;
+  background: #fff7f7;
+  padding: 16px;
+  color: #991b1b;
+  text-align: left;
+}
+
+.react-flow-diagram-error figcaption {
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.react-flow-diagram-error pre {
+  margin: 0;
   white-space: pre-wrap;
 }
 
@@ -2435,7 +2563,7 @@ button {
 }
 
 .typora-mdx-content {
-  width: min(860px, 100%);
+  width: min(var(--editor-content-width), 100%);
   margin: 0 auto;
   padding: 0 !important;
   color: #2d3748;
@@ -2943,7 +3071,8 @@ button {
   font-weight: 600;
 }
 
-.settings-field input {
+.settings-field input,
+.settings-field select {
   min-width: 0;
   height: 36px;
   border: 1px solid #dce2ea;
@@ -2954,7 +3083,12 @@ button {
   outline: 0;
 }
 
-.settings-field input:focus {
+.settings-field select {
+  cursor: pointer;
+}
+
+.settings-field input:focus,
+.settings-field select:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
@@ -3040,6 +3174,64 @@ button {
 .drawing-loading {
   place-items: center;
   color: #667085;
+}
+
+.react-flow-dialog {
+  max-width: min(1120px, calc(100vw - 48px));
+  max-height: min(760px, calc(100vh - 48px));
+}
+
+.react-flow-modal {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 22px 70px rgba(15, 23, 42, 0.3);
+}
+
+.react-flow-editor-shell {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.react-flow-editor-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border-right: 1px solid #dde1e7;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.react-flow-editor-panel .secondary-button {
+  justify-content: center;
+}
+
+.react-flow-editor-panel label {
+  display: grid;
+  gap: 6px;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.react-flow-editor-panel input {
+  min-height: 34px;
+  border: 1px solid #d0d5dd;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 0 10px;
+  color: #111827;
+  font-size: 13px;
+}
+
+.react-flow-editor-canvas {
+  min-width: 0;
+  min-height: 0;
 }
 
 .app-shell {
@@ -3463,10 +3655,75 @@ button {
 }
 
 .explorer-footer-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 14;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 36px;
+  gap: 8px;
   border-top: 1px solid #edf0f4;
   border-bottom: 0;
   background: rgba(255, 255, 255, 0.74);
+  padding: 4px 10px;
   box-shadow: 0 -10px 22px rgba(15, 23, 42, 0.04);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(100%);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.explorer-sidebar:hover .explorer-footer-bar,
+.explorer-sidebar:focus-within .explorer-footer-bar {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.explorer-footer-icon-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  justify-self: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #344054;
+}
+
+.explorer-footer-icon-button:hover {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.explorer-footer-folder {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: min(210px, 100%);
+  justify-self: center;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 7px 12px;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-footer-folder:hover,
+.explorer-footer-folder[aria-expanded="true"] {
+  background: #eef2ff;
+  color: #4f46e5;
 }
 
 .explorer-title {
@@ -3476,37 +3733,6 @@ button {
   color: #111827;
   font-size: 15px;
   font-weight: 700;
-}
-
-.explorer-actions {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.explorer-actions-primary {
-  margin-left: -2px;
-}
-
-.explorer-actions button {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #374151;
-}
-
-.explorer-actions button:hover {
-  background: #eef2ff;
-  color: #4f46e5;
-}
-
-.explorer-actions .explorer-action-active {
-  background: #eef2ff;
-  color: #4f46e5;
 }
 
 .explorer-tree {
@@ -3600,6 +3826,73 @@ button {
 .explorer-tree .directory-tree-folder-active {
   color: #111827;
   font-weight: 700;
+}
+
+.directory-file-list {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.directory-file-list-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 5px 10px;
+  color: #1f2937;
+  text-align: left;
+}
+
+.directory-file-list-item svg {
+  flex: 0 0 auto;
+  color: #6b7280;
+}
+
+.directory-file-list-text {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.directory-file-list-text span,
+.directory-file-list-text small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-file-list-text span {
+  font-size: 14px;
+}
+
+.directory-file-list-text small {
+  color: #8a93a3;
+  font-size: 11px;
+}
+
+.directory-file-list-item:hover {
+  background: #f3f4f8;
+}
+
+.directory-file-list-item-active {
+  background: #f0edff;
+  color: #5b4ce6;
+  font-weight: 700;
+}
+
+.directory-file-list-item-active svg {
+  color: #5b4ce6;
+}
+
+.directory-file-list-item-active small {
+  color: #7c73e6;
 }
 
 .explorer-tree .outline-tree {
@@ -4258,12 +4551,19 @@ button {
 }
 
 :root[data-theme="paper"] .workspace,
-:root[data-theme="paper"] .welcome-home {
+:root[data-theme="paper"] .welcome-home,
+:root[data-theme="paper"] .editor-workspace,
+:root[data-theme="paper"] .typora-editor,
+:root[data-theme="paper"] .markdown-preview,
+:root[data-theme="paper"] .markdown-input {
   background: #fbf8f1;
 }
 
 :root[data-theme="paper"] .menubar-dropdown,
-:root[data-theme="paper"] .menubar-submenu-panel {
+:root[data-theme="paper"] .menubar-submenu-panel,
+:root[data-theme="paper"] .settings-dialog,
+:root[data-theme="paper"] .find-dialog,
+:root[data-theme="paper"] .create-file-dialog {
   border-color: #ded4c7;
   background: #fbf8f1;
 }
@@ -4655,6 +4955,7 @@ button {
 :root[data-theme="night"] .menubar-menu button,
 :root[data-theme="night"] .explorer-title,
 :root[data-theme="night"] .explorer-section-row,
+:root[data-theme="night"] .directory-file-list-item,
 :root[data-theme="night"] .directory-tree-folder,
 :root[data-theme="night"] .directory-tree-file,
 :root[data-theme="night"] .workspace-actions,
@@ -4664,6 +4965,7 @@ button {
 :root[data-theme="night"] .create-file-title,
 :root[data-theme="night"] .settings-mode-item,
 :root[data-theme="night"] .settings-field input,
+:root[data-theme="night"] .settings-field select,
 :root[data-theme="night"] .find-field input,
 :root[data-theme="night"] .create-file-input-row input,
 :root[data-theme="night"] .find-result strong,
@@ -4679,6 +4981,7 @@ button {
 :root[data-theme="night"] .theme-select-button,
 :root[data-theme="night"] .settings-mode-item,
 :root[data-theme="night"] .settings-field input,
+:root[data-theme="night"] .settings-field select,
 :root[data-theme="night"] .find-field input,
 :root[data-theme="night"] .create-file-input-row,
 :root[data-theme="night"] .create-file-input-row input,
@@ -4697,8 +5000,33 @@ button {
 :root[data-theme="night"] .create-file-heading p,
 :root[data-theme="night"] .find-field span,
 :root[data-theme="night"] .find-result span,
+:root[data-theme="night"] .directory-file-list-text small,
+:root[data-theme="night"] .explorer-footer-icon-button,
+:root[data-theme="night"] .explorer-footer-folder,
 :root[data-theme="night"] .find-results-more {
   color: #94a3b8;
+}
+
+:root[data-theme="night"] .explorer-footer-bar {
+  border-top-color: #26344f;
+  background: rgba(17, 28, 51, 0.9);
+}
+
+:root[data-theme="night"] .directory-file-list-item svg {
+  color: #94a3b8;
+}
+
+:root[data-theme="night"] .directory-file-list-item-active,
+:root[data-theme="night"] .explorer-footer-folder:hover,
+:root[data-theme="night"] .explorer-footer-icon-button:hover,
+:root[data-theme="night"] .directory-file-list-item:hover,
+:root[data-theme="night"] .explorer-footer-folder[aria-expanded="true"] {
+  background: #18243a;
+  color: #e2e8f0;
+}
+
+:root[data-theme="night"] .directory-file-list-item-active svg {
+  color: #e2e8f0;
 }
 
 :root[data-theme="night"] .typora-milkdown-content .ProseMirror p,
@@ -4803,6 +5131,7 @@ button {
 :root[data-theme="dark"] .menubar-menu button,
 :root[data-theme="dark"] .explorer-title,
 :root[data-theme="dark"] .explorer-section-row,
+:root[data-theme="dark"] .directory-file-list-item,
 :root[data-theme="dark"] .directory-tree-folder,
 :root[data-theme="dark"] .directory-tree-file,
 :root[data-theme="dark"] .workspace-actions,
@@ -4838,7 +5167,6 @@ button {
   color: #e5e7eb;
 }
 
-:root[data-theme="dark"] .explorer-actions button,
 :root[data-theme="dark"] .explorer-empty,
 :root[data-theme="dark"] .explorer-empty svg,
 :root[data-theme="dark"] .welcome-hero p,
@@ -4849,6 +5177,9 @@ button {
 :root[data-theme="dark"] .create-file-heading p,
 :root[data-theme="dark"] .find-field span,
 :root[data-theme="dark"] .find-result span,
+:root[data-theme="dark"] .directory-file-list-text small,
+:root[data-theme="dark"] .explorer-footer-icon-button,
+:root[data-theme="dark"] .explorer-footer-folder,
 :root[data-theme="dark"] .find-results-more,
 :root[data-theme="dark"] .milkdown-image-size-control,
 :root[data-theme="dark"] .milkdown-image-toolbar-button {
@@ -4865,17 +5196,34 @@ button {
   color: #f4f4f5;
 }
 
+:root[data-theme="dark"] .explorer-footer-bar {
+  border-top-color: #303746;
+  background: rgba(27, 31, 38, 0.9);
+}
+
+:root[data-theme="dark"] .directory-file-list-item svg {
+  color: #a1a1aa;
+}
+
+:root[data-theme="dark"] .directory-file-list-item-active,
 :root[data-theme="dark"] .menubar-menu button:hover,
 :root[data-theme="dark"] .menubar-trigger-active,
 :root[data-theme="dark"] .menubar-dropdown button:hover,
-:root[data-theme="dark"] .explorer-actions button:hover,
+:root[data-theme="dark"] .explorer-footer-folder:hover,
+:root[data-theme="dark"] .explorer-footer-icon-button:hover,
+:root[data-theme="dark"] .explorer-footer-folder[aria-expanded="true"],
 :root[data-theme="dark"] .explorer-empty button:hover,
 :root[data-theme="dark"] .recent-row:hover,
+:root[data-theme="dark"] .directory-file-list-item:hover,
 :root[data-theme="dark"] .explorer-tree .directory-tree-file:hover,
 :root[data-theme="dark"] .explorer-tree .directory-tree-folder:hover,
 :root[data-theme="dark"] .milkdown-image-toolbar-button:hover,
 :root[data-theme="dark"] .milkdown-image-toolbar-button-active {
   background: #252b34;
+}
+
+:root[data-theme="dark"] .directory-file-list-item-active svg {
+  color: #f4f4f5;
 }
 
 :root[data-theme="dark"] .milkdown-image-size-control {
@@ -5078,6 +5426,51 @@ button {
   pre
   .token.punctuation {
   color: #c9d1d9;
+}
+
+:root .markdown-input {
+  font-family: var(--editor-code-font-family);
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
+}
+
+:root .markdown-preview,
+:root .typora-editor,
+:root .typora-mdx-editor,
+:root .typora-mdx-content,
+:root .typora-milkdown-content,
+:root .typora-milkdown-content .ProseMirror {
+  font-family: var(--editor-font-family);
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
+}
+
+:root .markdown-preview code,
+:root .markdown-preview pre,
+:root .typora-mdx-content code,
+:root .typora-mdx-content pre,
+:root .typora-editor code,
+:root .typora-editor pre,
+:root .typora-line-input-code,
+:root .typora-markdown-syntax-marker,
+:root .typora-milkdown-content .ProseMirror code,
+:root .typora-milkdown-content .ProseMirror pre,
+:root .typora-milkdown-content .ProseMirror .typora-inline-code-source {
+  font-family: var(--editor-code-font-family);
+}
+
+:root .markdown-preview > *,
+:root .typora-raw-html-preview,
+:root .typora-heading-line,
+:root .typora-paragraph-line,
+:root .typora-list,
+:root .typora-quote-line,
+:root .typora-code-block,
+:root .typora-table-block,
+:root .typora-blank-line,
+:root .typora-milkdown-content .ProseMirror,
+:root .typora-mdx-content {
+  max-width: min(var(--editor-content-width), 100%);
 }
 
 @media (max-width: 860px) {

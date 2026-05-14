@@ -12,13 +12,13 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  ListTree,
   Minus,
-  MoreVertical,
   PanelRight,
   Plus,
   RefreshCw,
+  Rows3,
   Search,
-  Settings,
   SplitSquareHorizontal,
   Square,
   X,
@@ -36,7 +36,25 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
+import {
+  appSettingsStorageKey,
+  editorCodeFontOptions,
+  editorContentWidthOptions,
+  editorFontOptions,
+  editorFontSizeOptions,
+  editorLineHeightOptions,
+  getEditorCodeFontFamily,
+  getEditorFontFamily,
+  getInitialTheme,
+  loadAppSettings,
+  themeOptions,
+  type AppSettings,
+  type AppTheme,
+} from "./appSettings";
+import { HtmlDocumentViewer } from "./components/HtmlDocumentViewer";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
+import { ReactFlowModal } from "./components/ReactFlowModal";
+import { XmindDocumentViewer } from "./components/XmindDocumentViewer";
 import {
   TyporaEditor,
   type TyporaEditorHandle,
@@ -57,14 +75,36 @@ import {
   createWrappedSelectionEdit,
   findMarkdownLinkInRange,
 } from "./markdownEditing";
-import { getExcalidrawDrawingId } from "./imageMeta";
-import { getDirectoryPath, getLocalPreviewUrl } from "./localPreviewUrls";
+import {
+  createDocumentFromLocalFile,
+  getDocumentDisplayName,
+  getDocumentPathPreview,
+  getDocumentType,
+  isHtmlDocument,
+  isMarkdownDocument,
+  isXmindDocument,
+  mergeDocumentByFilePath,
+  normalizeMarkdownTitle,
+  replaceExcalidrawImagePreview,
+  updateDocument,
+} from "./documentModel";
+import { getDirectoryPath } from "./localPreviewUrls";
 import { markdownAlertOptions } from "./markdownAlerts";
+import {
+  createDefaultReactFlowDiagram,
+  createReactFlowHtmlEmbed,
+  createReactFlowMarkdown,
+  parseReactFlowDiagramData,
+  replaceReactFlowHtmlEmbed,
+  replaceReactFlowMarkdownBlock,
+  type ReactFlowDiagramData,
+  type ReactFlowEditTarget,
+} from "./reactFlowDocument";
 import {
   countMarkdownWords,
   getMarkdownOutline,
 } from "./markdownStructure";
-import { uploadImage } from "./services/imageUpload";
+import { fileToDataUrl } from "./services/imageUpload";
 import {
   createDocument,
   loadWorkspace,
@@ -73,14 +113,20 @@ import {
 } from "./storage";
 import type {
   DirectoryTreeItem,
-  DocumentType,
   DrawingAsset,
   EditorMode,
-  LocalMarkdownFile,
   MarkdownDocument,
   SaveState,
-  WorkspaceSnapshot,
 } from "./types";
+import {
+  findMarkdownSearchMatches,
+  getMatchOccurrenceIndex,
+  getWorkspaceSearchGroups,
+  getWorkspaceSearchMatchCount,
+  isDocumentInsideWorkspace,
+  type MarkdownSearchMatch,
+  type WorkspaceSearchGroup,
+} from "./workspaceSearch";
 
 const DrawingModal = lazy(() =>
   import("./components/DrawingModal").then((module) => ({
@@ -101,51 +147,15 @@ const editorModeOptions: Array<{
 
 type MenubarMenu = "file" | "edit" | "paragraph" | "format" | "view" | "theme" | "help";
 type TopMenu = MenubarMenu | null;
-const appThemeValues = [
-  "light",
-  "paper",
-  "github",
-  "newsprint",
-  "night",
-  "pixyll",
-  "whitey",
-  "dark",
-] as const;
-type AppTheme = (typeof appThemeValues)[number];
 type SidebarTab = "files" | "current" | "search";
+type FileExplorerView = "tree" | "list";
 
 const defaultSidebarWidth = 334;
 const minSidebarWidth = 236;
 const maxSidebarWidth = 560;
 const homeRecentDocumentLimit = 3;
 
-type AppSettings = {
-  imageUploadEndpoint: string;
-  ossAccessKeyId: string;
-  ossAccessKeySecret: string;
-  ossBaseUrl: string;
-  ossBucket: string;
-  ossEndpoint: string;
-  ossRegion: string;
-  remoteServerToken: string;
-  remoteServerUrl: string;
-};
-
 type FindPanelMode = "find" | "replace";
-
-type MarkdownSearchMatch = {
-  column: number;
-  end: number;
-  line: number;
-  lineIndex: number;
-  snippet: string;
-  start: number;
-};
-
-type WorkspaceSearchGroup = {
-  document: MarkdownDocument;
-  matches: MarkdownSearchMatch[];
-};
 
 type WorkspaceSearchReveal = {
   filePath: string;
@@ -160,33 +170,6 @@ type RevealDocumentRangeOptions = {
   query?: string;
 };
 
-type SearchIndexLine = {
-  lineIndex: number;
-  positions: number[];
-  text: string;
-};
-
-const appSettingsStorageKey = "typora-like-settings";
-const defaultAppSettings: AppSettings = {
-  imageUploadEndpoint: "",
-  ossAccessKeyId: "",
-  ossAccessKeySecret: "",
-  ossBaseUrl: "",
-  ossBucket: "",
-  ossEndpoint: "",
-  ossRegion: "",
-  remoteServerToken: "",
-  remoteServerUrl: "",
-};
-
-const themeOptions: Array<{ label: string; value: AppTheme }> = [
-  { label: "Github", value: "github" },
-  { label: "Newsprint", value: "newsprint" },
-  { label: "Night", value: "night" },
-  { label: "Pixyll", value: "pixyll" },
-  { label: "Whitey", value: "whitey" },
-];
-
 const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
   { key: "file", label: "文件(F)" },
   { key: "edit", label: "编辑(E)" },
@@ -196,31 +179,6 @@ const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
   { key: "theme", label: "主题(T)" },
   { key: "help", label: "帮助(H)" },
 ];
-
-function getInitialTheme(): AppTheme {
-  const storedTheme = window.localStorage.getItem("typora-like-theme");
-
-  return themeOptions.some((option) => option.value === storedTheme)
-    ? (storedTheme as AppTheme)
-    : "github";
-}
-
-function loadAppSettings(): AppSettings {
-  try {
-    const storedSettings = window.localStorage.getItem(appSettingsStorageKey);
-
-    if (!storedSettings) {
-      return defaultAppSettings;
-    }
-
-    return {
-      ...defaultAppSettings,
-      ...(JSON.parse(storedSettings) as Partial<AppSettings>),
-    };
-  } catch {
-    return defaultAppSettings;
-  }
-}
 
 const now = () => new Date().toISOString();
 
@@ -233,34 +191,8 @@ type TableSize = {
   rows: number;
 };
 
-function updateDocument(
-  snapshot: WorkspaceSnapshot,
-  document: MarkdownDocument,
-): WorkspaceSnapshot {
-  return {
-    ...snapshot,
-    documents: snapshot.documents.map((item) =>
-      item.id === document.id ? document : item,
-    ),
-  };
-}
-
 function readFileInput(fileInput: HTMLInputElement | null) {
   fileInput?.click();
-}
-
-function replaceExcalidrawImagePreview(content: string, asset: DrawingAsset) {
-  const imagePattern = /!\[([^\]]*)]\((\S+?)(?:\s+"([^"]*)")?\)/g;
-
-  return content.replace(imagePattern, (match, alt: string, _src: string, title?: string) => {
-    if (getExcalidrawDrawingId(title) !== asset.id) {
-      return match;
-    }
-
-    const nextTitle = title?.trim() || `excalidraw:${asset.id} align=left`;
-
-    return `![${alt || asset.name}](${asset.dataUrl} "${nextTitle}")`;
-  });
 }
 
 function createMarkdownTable({ columns, rows }: TableSize) {
@@ -290,402 +222,6 @@ function getLineColumnAtOffset(content: string, offset: number) {
     column: lines.at(-1)?.length ?? 0,
     lineIndex: lines.length - 1,
   };
-}
-
-function pushSearchText(
-  text: string,
-  sourceStart: number,
-  target: string[],
-  positions: number[],
-) {
-  for (let index = 0; index < text.length; index += 1) {
-    target.push(text[index]);
-    positions.push(sourceStart + index);
-  }
-}
-
-function pushPlainMarkdownSearchText(
-  text: string,
-  sourceStart: number,
-  target: string[],
-  positions: number[],
-) {
-  const markerCharacters = new Set(["`", "*", "~", "$"]);
-
-  for (let index = 0; index < text.length; index += 1) {
-    if (markerCharacters.has(text[index])) {
-      continue;
-    }
-
-    target.push(text[index]);
-    positions.push(sourceStart + index);
-  }
-}
-
-function getVisibleMarkdownLineStart(line: string) {
-  let cursor = 0;
-
-  while (cursor < line.length) {
-    const rest = line.slice(cursor);
-    const marker = rest.match(
-      /^(?:\s{0,3}>\s?|\s{0,3}(?:[-+*]|\d+[.)])\s+|\s{0,3}#{1,6}\s+|\s{0,3}\[[ xX]\]\s+)/,
-    );
-
-    if (!marker) {
-      break;
-    }
-
-    cursor += marker[0].length;
-  }
-
-  const alertMarker = line
-    .slice(cursor)
-    .match(/^\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i);
-
-  if (alertMarker) {
-    cursor += alertMarker[0].length;
-  }
-
-  return cursor;
-}
-
-function getHtmlAttributeValue(source: string, attributeName: string) {
-  const pattern = new RegExp(
-    `${attributeName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
-    "i",
-  );
-  const match = source.match(pattern);
-
-  return match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
-}
-
-function createMarkdownSearchLine(line: string, lineStartOffset: number) {
-  const visible: string[] = [];
-  const positions: number[] = [];
-  const contentStart = getVisibleMarkdownLineStart(line);
-  const content = line.slice(contentStart);
-  const contentOffset = lineStartOffset + contentStart;
-  const inlinePattern =
-    /!\[([^\]]*)\]\(([^)]*)\)|\[([^\]]+)\]\(([^)]*)\)|<img\b[^>]*>|<[^>]+>/gi;
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = inlinePattern.exec(content))) {
-    if (match.index > cursor) {
-      pushPlainMarkdownSearchText(
-        content.slice(cursor, match.index),
-        contentOffset + cursor,
-        visible,
-        positions,
-      );
-    }
-
-    const token = match[0];
-
-    if (token.startsWith("![")) {
-      const altText = match[1] ?? "";
-      const altStart = token.indexOf(altText);
-      pushSearchText(
-        altText,
-        contentOffset + match.index + Math.max(0, altStart),
-        visible,
-        positions,
-      );
-    } else if (token.startsWith("[")) {
-      const label = match[3] ?? "";
-      const labelStart = token.indexOf(label);
-      pushSearchText(
-        label,
-        contentOffset + match.index + Math.max(0, labelStart),
-        visible,
-        positions,
-      );
-    } else if (/^<img\b/i.test(token)) {
-      const altText = getHtmlAttributeValue(token, "alt");
-      const altStart = altText ? token.indexOf(altText) : -1;
-
-      if (altText && altStart >= 0) {
-        pushSearchText(
-          altText,
-          contentOffset + match.index + altStart,
-          visible,
-          positions,
-        );
-      }
-    }
-
-    cursor = match.index + token.length;
-  }
-
-  if (cursor < content.length) {
-    pushPlainMarkdownSearchText(
-      content.slice(cursor),
-      contentOffset + cursor,
-      visible,
-      positions,
-    );
-  }
-
-  return { positions, text: visible.join("") };
-}
-
-function createHtmlSearchLines(content: string): SearchIndexLine[] {
-  const lines: SearchIndexLine[] = [];
-  const visible: string[] = [];
-  const positions: number[] = [];
-  let cursor = 0;
-  const tokenPattern = /<script\b[\s\S]*?<\/script>|<style\b[\s\S]*?<\/style>|<[^>]+>/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = tokenPattern.exec(content))) {
-    if (match.index > cursor) {
-      pushSearchText(content.slice(cursor, match.index), cursor, visible, positions);
-    }
-
-    const token = match[0];
-
-    if (/^<img\b/i.test(token)) {
-      const altText = getHtmlAttributeValue(token, "alt");
-      const altStart = altText ? token.indexOf(altText) : -1;
-
-      if (altText && altStart >= 0) {
-        pushSearchText(altText, match.index + altStart, visible, positions);
-      }
-    }
-
-    cursor = match.index + token.length;
-  }
-
-  if (cursor < content.length) {
-    pushSearchText(content.slice(cursor), cursor, visible, positions);
-  }
-
-  let lineText: string[] = [];
-  let linePositions: number[] = [];
-  let lineIndex = 0;
-
-  visible.forEach((character, index) => {
-    if (character === "\n") {
-      if (lineText.join("").trim()) {
-        lines.push({
-          lineIndex,
-          positions: linePositions,
-          text: lineText.join(""),
-        });
-      }
-
-      lineIndex += 1;
-      lineText = [];
-      linePositions = [];
-      return;
-    }
-
-    lineText.push(character);
-    linePositions.push(positions[index]);
-  });
-
-  if (lineText.join("").trim()) {
-    lines.push({
-      lineIndex,
-      positions: linePositions,
-      text: lineText.join(""),
-    });
-  }
-
-  return lines;
-}
-
-function createMarkdownSearchLines(content: string): SearchIndexLine[] {
-  const lines = content.split("\n");
-  const searchLines: SearchIndexLine[] = [];
-  let lineStartOffset = 0;
-  let isFencedCode = false;
-
-  lines.forEach((rawLine, lineIndex) => {
-    const line = rawLine.replace(/\r$/, "");
-    const fenceMatch = line.match(/^\s*(```|~~~)/);
-
-    if (fenceMatch) {
-      isFencedCode = !isFencedCode;
-      lineStartOffset += rawLine.length + (lineIndex < lines.length - 1 ? 1 : 0);
-      return;
-    }
-
-    const searchLine = isFencedCode
-      ? {
-          positions: Array.from({ length: line.length }, (_, index) => lineStartOffset + index),
-          text: line,
-        }
-      : createMarkdownSearchLine(line, lineStartOffset);
-
-    if (searchLine.text.trim()) {
-      searchLines.push({
-        lineIndex,
-        positions: searchLine.positions,
-        text: searchLine.text,
-      });
-    }
-
-    lineStartOffset += rawLine.length + (lineIndex < lines.length - 1 ? 1 : 0);
-  });
-
-  return searchLines;
-}
-
-function createDocumentSearchLines(
-  content: string,
-  documentType: DocumentType = "markdown",
-) {
-  return documentType === "html"
-    ? createHtmlSearchLines(content)
-    : createMarkdownSearchLines(content);
-}
-
-function createVisibleSearchSnippet(text: string, start: number) {
-  if (text.length <= 96) {
-    return text.trim();
-  }
-
-  const snippetStart = Math.max(0, start - 36);
-  const snippetEnd = Math.min(text.length, snippetStart + 96);
-  const prefix = snippetStart > 0 ? "..." : "";
-  const suffix = snippetEnd < text.length ? "..." : "";
-
-  return `${prefix}${text.slice(snippetStart, snippetEnd).trim()}${suffix}`;
-}
-
-function findMarkdownSearchMatches(
-  content: string,
-  query: string,
-  documentType: DocumentType = "markdown",
-): MarkdownSearchMatch[] {
-  const normalizedNeedle = query.trim();
-
-  if (!normalizedNeedle) {
-    return [];
-  }
-
-  const normalizedQuery = normalizedNeedle.toLocaleLowerCase();
-  const matches: MarkdownSearchMatch[] = [];
-  const searchLines = createDocumentSearchLines(content, documentType);
-
-  searchLines.forEach((line) => {
-    const normalizedLine = line.text.toLocaleLowerCase();
-    let searchFrom = 0;
-
-    while (searchFrom <= normalizedLine.length) {
-      const visibleStart = normalizedLine.indexOf(normalizedQuery, searchFrom);
-
-      if (visibleStart < 0) {
-        break;
-      }
-
-      const visibleEnd = visibleStart + normalizedNeedle.length;
-      const start = line.positions[visibleStart];
-      const last = line.positions[visibleEnd - 1];
-
-      if (start !== undefined && last !== undefined) {
-        matches.push({
-          column: visibleStart,
-          end: last + 1,
-          line: line.lineIndex + 1,
-          lineIndex: line.lineIndex,
-          snippet: createVisibleSearchSnippet(line.text, visibleStart),
-          start,
-        });
-      }
-
-      searchFrom = visibleEnd;
-    }
-  });
-
-  return matches;
-}
-
-function normalizeSearchPath(path?: string) {
-  return path?.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase() ?? "";
-}
-
-function isDocumentInsideWorkspace(
-  document: MarkdownDocument,
-  workspacePath?: string,
-) {
-  if (!document.filePath) {
-    return false;
-  }
-
-  if (!workspacePath) {
-    return true;
-  }
-
-  const rootPath = normalizeSearchPath(workspacePath);
-  const filePath = normalizeSearchPath(document.filePath);
-
-  return filePath === rootPath || filePath.startsWith(`${rootPath}/`);
-}
-
-function getWorkspaceSearchGroups(
-  documents: MarkdownDocument[],
-  query: string,
-  workspacePath?: string,
-): WorkspaceSearchGroup[] {
-  const normalizedQuery = query.trim();
-
-  if (!normalizedQuery) {
-    return [];
-  }
-
-  return documents
-    .filter((document) => isDocumentInsideWorkspace(document, workspacePath))
-    .map((document) => ({
-      document,
-      matches: findMarkdownSearchMatches(
-        document.content,
-        normalizedQuery,
-        getDocumentType(document),
-      ),
-    }))
-    .filter((group) => group.matches.length > 0)
-    .sort((first, second) => {
-      const firstUpdatedAt = new Date(first.document.updatedAt).getTime();
-      const secondUpdatedAt = new Date(second.document.updatedAt).getTime();
-
-      if (firstUpdatedAt !== secondUpdatedAt) {
-        return secondUpdatedAt - firstUpdatedAt;
-      }
-
-      return getDocumentDisplayName(first.document).localeCompare(
-        getDocumentDisplayName(second.document),
-        "zh-Hans-CN",
-      );
-    });
-}
-
-function getWorkspaceSearchMatchCount(groups: WorkspaceSearchGroup[]) {
-  return groups.reduce((total, group) => total + group.matches.length, 0);
-}
-
-function getMatchOccurrenceIndex(
-  document: MarkdownDocument,
-  query: string,
-  match: MarkdownSearchMatch,
-) {
-  const matches = findMarkdownSearchMatches(
-    document.content,
-    query,
-    getDocumentType(document),
-  );
-  const exactIndex = matches.findIndex((item) => item.start === match.start);
-
-  if (exactIndex >= 0) {
-    return exactIndex;
-  }
-
-  const lineIndex = matches.findIndex(
-    (item) => item.lineIndex === match.lineIndex && item.column === match.column,
-  );
-
-  return Math.max(0, lineIndex);
 }
 
 function HighlightedSearchSnippet({
@@ -897,158 +433,6 @@ function getPathLabel(path?: string) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
 }
 
-function getDocumentPathPreview(document: MarkdownDocument, workspacePath?: string) {
-  const directoryPath = getDirectoryPath(document.filePath) || workspacePath || "D:";
-  const normalizedPath = directoryPath.replace(/\\/g, "/");
-
-  return normalizedPath.endsWith("/") ? normalizedPath : `${normalizedPath}/`;
-}
-
-function getFileExtension(filePath?: string) {
-  return filePath?.match(/\.([^.\\/]+)$/)?.[0]?.toLowerCase();
-}
-
-function getDocumentTypeFromPath(filePath?: string): DocumentType {
-  return filePath && /\.html?$/i.test(filePath) ? "html" : "markdown";
-}
-
-function getDocumentType(document?: MarkdownDocument | null): DocumentType {
-  return document?.documentType ?? getDocumentTypeFromPath(document?.filePath);
-}
-
-function isMarkdownDocument(document?: MarkdownDocument | null) {
-  return Boolean(document) && getDocumentType(document) === "markdown";
-}
-
-function isHtmlDocument(document?: MarkdownDocument | null) {
-  return Boolean(document) && getDocumentType(document) === "html";
-}
-
-function getDocumentFileExtension(document: MarkdownDocument) {
-  return (
-    document.fileExtension ??
-    getFileExtension(document.filePath) ??
-    (isHtmlDocument(document) ? ".html" : ".md")
-  );
-}
-
-function getDocumentDisplayName(document: MarkdownDocument) {
-  const extension = getDocumentFileExtension(document);
-  const title = document.title || "Untitled";
-
-  return title.toLowerCase().endsWith(extension.toLowerCase())
-    ? title
-    : `${title}${extension}`;
-}
-
-function normalizeMarkdownTitle(value: string) {
-  return value.trim().replace(/\.md$/i, "") || "Untitled";
-}
-
-function createDocumentFromLocalFile(file: LocalMarkdownFile): MarkdownDocument {
-  return {
-    ...createDocument(
-      file.title,
-      file.content,
-      file.filePath,
-      file.documentType ?? getDocumentTypeFromPath(file.filePath),
-      file.fileExtension ?? getFileExtension(file.filePath),
-    ),
-    createdAt: file.createdAt,
-    updatedAt: file.updatedAt,
-  };
-}
-
-function mergeDocumentByFilePath(
-  documents: MarkdownDocument[],
-  document: MarkdownDocument,
-) {
-  const existingIndex = document.filePath
-    ? documents.findIndex((item) => item.filePath === document.filePath)
-    : -1;
-
-  if (existingIndex < 0) {
-    return [document, ...documents];
-  }
-
-  return documents.map((item, index) =>
-    index === existingIndex ? { ...item, ...document, id: item.id } : item,
-  );
-}
-
-function escapeHtmlAttribute(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function getFileBaseHref(filePath?: string) {
-  const directoryPath = getDirectoryPath(filePath);
-
-  if (!directoryPath) {
-    return undefined;
-  }
-
-  const normalizedPath = directoryPath.replace(/\\/g, "/");
-  const pathWithLeadingSlash =
-    normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`;
-  const pathWithTrailingSlash = pathWithLeadingSlash.endsWith("/")
-    ? pathWithLeadingSlash
-    : `${pathWithLeadingSlash}/`;
-
-  return encodeURI(`file://${pathWithTrailingSlash}`);
-}
-
-function createHtmlPreviewDocument(content: string, filePath?: string) {
-  const baseHref = getFileBaseHref(filePath);
-
-  if (!baseHref || /<base\s/i.test(content)) {
-    return content;
-  }
-
-  const baseTag = `<base href="${escapeHtmlAttribute(baseHref)}">`;
-
-  if (/<head\b[^>]*>/i.test(content)) {
-    return content.replace(/<head\b([^>]*)>/i, `<head$1>${baseTag}`);
-  }
-
-  if (/<html\b[^>]*>/i.test(content)) {
-    return content.replace(
-      /<html\b([^>]*)>/i,
-      `<html$1><head>${baseTag}</head>`,
-    );
-  }
-
-  return `<!doctype html><html><head>${baseTag}</head><body>${content}</body></html>`;
-}
-
-function HtmlDocumentViewer({ document }: { document: MarkdownDocument }) {
-  const previewUrl = useMemo(
-    () => getLocalPreviewUrl(document.filePath),
-    [document.filePath],
-  );
-  const srcDoc = useMemo(
-    () =>
-      previewUrl
-        ? undefined
-        : createHtmlPreviewDocument(document.content, document.filePath),
-    [document.content, document.filePath, previewUrl],
-  );
-
-  return (
-    <div className="html-document-viewer">
-      <iframe
-        title={getDocumentDisplayName(document)}
-        sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads"
-        src={previewUrl}
-        srcDoc={srcDoc}
-      />
-    </div>
-  );
-}
-
 function collectDirectoryPaths(item: DirectoryTreeItem): string[] {
   if (item.type !== "directory") {
     return [];
@@ -1106,7 +490,41 @@ function DirectoryTree({
         {isRoot ? <FolderOpen size={18} /> : <Folder size={18} />}
         <span>{item.name}</span>
       </button>
-      {isExpanded && item.children?.map((child) =>
+      {isExpanded ? (
+        <DirectoryTreeItems
+          activeDirectoryPath={activeDirectoryPath}
+          activeFilePath={activeFilePath}
+          expandedPaths={expandedPaths}
+          items={item.children ?? []}
+          level={level + 1}
+          onOpenFile={onOpenFile}
+          onToggleDirectory={onToggleDirectory}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DirectoryTreeItems({
+  activeDirectoryPath,
+  activeFilePath,
+  expandedPaths,
+  items,
+  level,
+  onOpenFile,
+  onToggleDirectory,
+}: {
+  activeDirectoryPath?: string;
+  activeFilePath?: string;
+  expandedPaths: Set<string>;
+  items: DirectoryTreeItem[];
+  level: number;
+  onOpenFile: (filePath: string) => void;
+  onToggleDirectory: (directoryPath: string) => void;
+}) {
+  return (
+    <>
+      {items.map((child) =>
         child.type === "directory" ? (
           <DirectoryTree
             activeDirectoryPath={activeDirectoryPath}
@@ -1114,7 +532,7 @@ function DirectoryTree({
             expandedPaths={expandedPaths}
             item={child}
             key={child.path}
-            level={level + 1}
+            level={level}
             onOpenFile={onOpenFile}
             onToggleDirectory={onToggleDirectory}
           />
@@ -1126,7 +544,7 @@ function DirectoryTree({
                 : "directory-tree-file"
             }
             key={child.path}
-            style={{ "--tree-depth": `${(level + 1) * 18}px` } as CSSProperties}
+            style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
             type="button"
             onClick={() => onOpenFile(child.path)}
           >
@@ -1136,6 +554,109 @@ function DirectoryTree({
           </button>
         ),
       )}
+    </>
+  );
+}
+
+type DirectoryFileListItem = {
+  directoryLabel: string;
+  name: string;
+  path: string;
+};
+
+function getDirectoryDisplayPath(filePath: string, workspacePath?: string) {
+  const directoryPath = getDirectoryPath(filePath);
+
+  if (!directoryPath) {
+    return "";
+  }
+
+  const normalizedDirectoryPath = directoryPath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedWorkspacePath = workspacePath?.replace(/\\/g, "/").replace(/\/+$/, "");
+
+  if (!normalizedWorkspacePath) {
+    return normalizedDirectoryPath;
+  }
+
+  const lowerDirectoryPath = normalizedDirectoryPath.toLowerCase();
+  const lowerWorkspacePath = normalizedWorkspacePath.toLowerCase();
+
+  if (lowerDirectoryPath === lowerWorkspacePath) {
+    return "";
+  }
+
+  if (lowerDirectoryPath.startsWith(`${lowerWorkspacePath}/`)) {
+    return normalizedDirectoryPath.slice(normalizedWorkspacePath.length + 1);
+  }
+
+  return normalizedDirectoryPath;
+}
+
+function collectDirectoryFiles(
+  items: DirectoryTreeItem[],
+  workspacePath?: string,
+): DirectoryFileListItem[] {
+  return items
+    .flatMap((item): DirectoryFileListItem[] =>
+      item.type === "directory"
+        ? collectDirectoryFiles(item.children ?? [], workspacePath)
+        : [
+            {
+              directoryLabel: getDirectoryDisplayPath(item.path, workspacePath),
+              name: item.name,
+              path: item.path,
+            },
+          ],
+    )
+    .sort((left, right) =>
+      `${left.directoryLabel}/${left.name}`.localeCompare(
+        `${right.directoryLabel}/${right.name}`,
+        "zh-CN",
+        { numeric: true },
+      ),
+    );
+}
+
+function DirectoryFileList({
+  activeFilePath,
+  items,
+  onOpenFile,
+  workspacePath,
+}: {
+  activeFilePath?: string;
+  items: DirectoryTreeItem[];
+  onOpenFile: (filePath: string) => void;
+  workspacePath?: string;
+}) {
+  const files = useMemo(
+    () => collectDirectoryFiles(items, workspacePath),
+    [items, workspacePath],
+  );
+
+  if (!files.length) {
+    return <div className="directory-tree-empty">当前目录中没有文件</div>;
+  }
+
+  return (
+    <div className="directory-file-list">
+      {files.map((file) => (
+        <button
+          className={
+            file.path === activeFilePath
+              ? "directory-file-list-item directory-file-list-item-active"
+              : "directory-file-list-item"
+          }
+          key={file.path}
+          type="button"
+          onClick={() => onOpenFile(file.path)}
+        >
+          <FileText size={17} />
+          <span className="directory-file-list-text">
+            <span>{file.name}</span>
+            {file.directoryLabel ? <small>{file.directoryLabel}</small> : null}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -1271,6 +792,10 @@ export function App() {
   const [, setBackupMessage] = useState("本地自动保存已启用");
   const [isDrawingOpen, setIsDrawingOpen] = useState(false);
   const [editingDrawingId, setEditingDrawingId] = useState<string | null>(null);
+  const [reactFlowEditorState, setReactFlowEditorState] = useState<{
+    initialData: ReactFlowDiagramData;
+    target: ReactFlowEditTarget;
+  } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
@@ -1284,6 +809,8 @@ export function App() {
   >([]);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
+  const [fileExplorerView, setFileExplorerView] =
+    useState<FileExplorerView>("tree");
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const storedWidth = Number(window.localStorage.getItem("typora-like-sidebar-width"));
 
@@ -1445,6 +972,21 @@ export function App() {
 
   useEffect(() => {
     window.localStorage.setItem(appSettingsStorageKey, JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    const style = document.documentElement.style;
+    style.setProperty(
+      "--editor-font-family",
+      getEditorFontFamily(settings.editorFontFamily),
+    );
+    style.setProperty(
+      "--editor-code-font-family",
+      getEditorCodeFontFamily(settings.editorCodeFontFamily),
+    );
+    style.setProperty("--editor-font-size", settings.editorFontSize);
+    style.setProperty("--editor-line-height", settings.editorLineHeight);
+    style.setProperty("--editor-content-width", settings.editorContentWidth);
   }, [settings]);
 
   useEffect(() => {
@@ -1688,7 +1230,7 @@ export function App() {
         saveWorkspace(workspace);
         const writableDocuments = workspace.documents.filter(
           (document) =>
-            isMarkdownDocument(document) &&
+            isWritableTextDocument(document) &&
             document.filePath &&
             savedFileContentByPathRef.current.get(document.filePath) !== document.content,
         );
@@ -1989,6 +1531,67 @@ export function App() {
 
     setEditingDrawingId(drawingId);
     setIsDrawingOpen(true);
+  }
+
+  function isWritableTextDocument(document?: MarkdownDocument | null) {
+    return isMarkdownDocument(document) || isHtmlDocument(document);
+  }
+
+  function openReactFlowEditor(target: ReactFlowEditTarget, code?: string) {
+    let initialData = createDefaultReactFlowDiagram();
+
+    if (code) {
+      try {
+        initialData = parseReactFlowDiagramData(code);
+      } catch {
+        initialData = createDefaultReactFlowDiagram();
+      }
+    }
+
+    setReactFlowEditorState({ initialData, target });
+  }
+
+  function openNewReactFlowDiagram() {
+    if (!isWritableTextDocument(activeDocument)) {
+      return;
+    }
+
+    openReactFlowEditor({ kind: "insert" });
+  }
+
+  function saveReactFlowDiagram(data: ReactFlowDiagramData) {
+    if (!activeDocument || !reactFlowEditorState) {
+      return;
+    }
+
+    const { target } = reactFlowEditorState;
+
+    if (target.kind === "markdown" && isMarkdownDocument(activeDocument)) {
+      updateMarkdown(
+        replaceReactFlowMarkdownBlock(activeDocument.content, target.code, data),
+      );
+      return;
+    }
+
+    if (target.kind === "html" && isHtmlDocument(activeDocument)) {
+      patchActiveDocument({
+        content: replaceReactFlowHtmlEmbed(activeDocument.content, target.index, data),
+      });
+      return;
+    }
+
+    if (target.kind === "insert") {
+      if (isHtmlDocument(activeDocument)) {
+        patchActiveDocument({
+          content: `${activeDocument.content}\n${createReactFlowHtmlEmbed(data)}\n`,
+        });
+        return;
+      }
+
+      if (isMarkdownDocument(activeDocument)) {
+        insertMarkdown(createReactFlowMarkdown(data));
+      }
+    }
   }
 
   function clearFindHighlight() {
@@ -2537,10 +2140,8 @@ export function App() {
     }
 
     try {
-      const result = await uploadImage(file, {
-        endpoint: settings.imageUploadEndpoint.trim() || undefined,
-      });
-      insertMarkdown(`![${file.name}](${result.url} "align=left") `);
+      const dataUrl = await fileToDataUrl(file);
+      insertMarkdown(`![${file.name}](${dataUrl} "align=left") `);
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
     }
@@ -2564,7 +2165,7 @@ export function App() {
       saveWorkspace(workspace);
 
       if (
-        isMarkdownDocument(activeDocument) &&
+        isWritableTextDocument(activeDocument) &&
         activeDocument?.filePath &&
         window.desktop?.writeMarkdownFile
       ) {
@@ -2590,7 +2191,7 @@ export function App() {
     }
 
     if (!isMarkdownDocument(activeDocument)) {
-      window.alert("HTML files are preview-only.");
+      window.alert("This file type is preview-only.");
       return;
     }
 
@@ -2638,7 +2239,7 @@ export function App() {
     }
 
     if (!isMarkdownDocument(activeDocument)) {
-      window.alert("HTML files are preview-only and cannot be exported from Markdown mode.");
+      window.alert("This file type is preview-only and cannot be exported from Markdown mode.");
       return;
     }
 
@@ -2678,7 +2279,7 @@ export function App() {
       saveWorkspace(workspace);
 
       const writableDocuments = workspace.documents.filter(
-        (document) => isMarkdownDocument(document) && document.filePath,
+        (document) => isWritableTextDocument(document) && document.filePath,
       );
 
       if (window.desktop?.writeMarkdownFile) {
@@ -2956,6 +2557,11 @@ export function App() {
             <MenuItem label="粘贴" shortcut="Ctrl+V" onSelect={() => runTopMenuAction(() => void runEditCommand("paste"))} />
             <MenuSeparator />
             <MenuItem label="插入 Excalidraw 流程图..." onSelect={() => runTopMenuAction(openNewDrawing)} />
+            <MenuItem
+              label="插入 React Flow 图..."
+              disabled={!isWritableTextDocument(activeDocument)}
+              onSelect={() => runTopMenuAction(openNewReactFlowDiagram)}
+            />
             <MenuSeparator />
             <MenuItem label="复制为纯文本" disabled />
             <MenuItem label="复制为 Markdown" shortcut="Ctrl+Shift+C" disabled />
@@ -3238,16 +2844,30 @@ export function App() {
             {sidebarTab === "files" ? (
               directoryTree ? (
                 directoryTree.children?.length ? (
-                  <DirectoryTree
-                    activeDirectoryPath={getDirectoryPath(activeDocument?.filePath)}
-                    activeFilePath={activeDocument?.filePath}
-                    expandedPaths={expandedDirectoryPaths}
-                    item={directoryTree}
-                    onOpenFile={(filePath) => {
-                      void openFileFromTree(filePath);
-                    }}
-                    onToggleDirectory={toggleDirectoryPath}
-                  />
+                  fileExplorerView === "tree" ? (
+                    <div className="directory-tree-root">
+                      <DirectoryTreeItems
+                        activeDirectoryPath={getDirectoryPath(activeDocument?.filePath)}
+                        activeFilePath={activeDocument?.filePath}
+                        expandedPaths={expandedDirectoryPaths}
+                        items={directoryTree.children ?? []}
+                        level={0}
+                        onOpenFile={(filePath) => {
+                          void openFileFromTree(filePath);
+                        }}
+                        onToggleDirectory={toggleDirectoryPath}
+                      />
+                    </div>
+                  ) : (
+                    <DirectoryFileList
+                      activeFilePath={activeDocument?.filePath}
+                      items={directoryTree.children ?? []}
+                      workspacePath={workspace.workspacePath}
+                      onOpenFile={(filePath) => {
+                        void openFileFromTree(filePath);
+                      }}
+                    />
+                  )
                 ) : (
                   <div className="explorer-empty">
                     <FolderOpen size={24} />
@@ -3262,7 +2882,7 @@ export function App() {
                 <div className="explorer-empty">
                   <FolderOpen size={24} />
                   <strong>选择本地文件夹</strong>
-                  <span>打开目录后，会递归读取并显示其中的 .md、.html 文件</span>
+                  <span>打开目录后，会递归读取并显示其中的 .md、.html、.xmind 文件</span>
                   <button type="button" onClick={() => void openWorkspaceFolder()}>
                     打开文件夹
                   </button>
@@ -3338,6 +2958,16 @@ export function App() {
               <button
                 type="button"
                 onClick={() => {
+                  setIsActionsOpen(false);
+                  void loadDirectoryTree();
+                }}
+              >
+                <RefreshCw size={16} />
+                刷新
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   void showWorkspaceInFolder();
                 }}
               >
@@ -3357,46 +2987,37 @@ export function App() {
           )}
 
           <div className="explorer-header explorer-footer-bar">
-            <div className="explorer-actions explorer-actions-primary">
-              <button type="button" aria-label="新建文件" onClick={createNewDocument}>
-                <Plus size={17} />
-              </button>
-            </div>
-            <div className="explorer-actions">
-              <button
-                className={sidebarTab === "search" ? "explorer-action-active" : undefined}
-                type="button"
-                aria-label="搜索"
-                onClick={openWorkspaceSearch}
-              >
-                <Search size={17} />
-              </button>
-              <button
-                type="button"
-                aria-label="刷新"
-                onClick={() => {
-                  void loadDirectoryTree();
-                }}
-              >
-                <RefreshCw size={16} />
-              </button>
-              <button
-                type="button"
-                aria-label="Settings"
-                onClick={() => setIsSettingsOpen(true)}
-              >
-                <Settings size={16} />
-              </button>
-              <button
-                type="button"
-                aria-label="更多"
-                aria-expanded={isActionsOpen}
-                data-sidebar-actions-trigger
-                onClick={() => setIsActionsOpen((current) => !current)}
-              >
-                <MoreVertical size={17} />
-              </button>
-            </div>
+            <button
+              className="explorer-footer-icon-button"
+              type="button"
+              aria-label="新建文件"
+              title="新建文件"
+              onClick={createNewDocument}
+            >
+              <Plus size={17} />
+            </button>
+            <button
+              className="explorer-footer-folder"
+              title={workspace.workspacePath || workspaceLabel}
+              type="button"
+              aria-expanded={isActionsOpen}
+              data-sidebar-actions-trigger
+              onClick={() => setIsActionsOpen((current) => !current)}
+            >
+              {workspaceLabel}
+            </button>
+            <button
+              className="explorer-footer-icon-button"
+              type="button"
+              aria-label={fileExplorerView === "tree" ? "切换到文件列表" : "切换到树状图"}
+              title={fileExplorerView === "tree" ? "切换到文件列表" : "切换到树状图"}
+              onClick={() => {
+                setSidebarTab("files");
+                setFileExplorerView((current) => (current === "tree" ? "list" : "tree"));
+              }}
+            >
+              {fileExplorerView === "tree" ? <Rows3 size={17} /> : <ListTree size={17} />}
+            </button>
           </div>
         </aside>
 
@@ -3462,7 +3083,7 @@ export function App() {
                       className="recent-row"
                       key={document.id}
                       type="button"
-                      onClick={() => setActiveDocument(document.id)}
+                      onClick={() => void openRecentDocument(document)}
                     >
                       <FileText size={16} />
                       <strong>{getDocumentDisplayName(document)}</strong>
@@ -3481,7 +3102,14 @@ export function App() {
           ) : (
             <section className="editor-workspace">
               {isHtmlDocument(activeDocument) ? (
-                <HtmlDocumentViewer document={activeDocument} />
+                <HtmlDocumentViewer
+                  document={activeDocument}
+                  onEditReactFlow={({ code, index }) =>
+                    openReactFlowEditor({ index, kind: "html" }, code)
+                  }
+                />
+              ) : isXmindDocument(activeDocument) ? (
+                <XmindDocumentViewer document={activeDocument} />
               ) : (
                 <div className={`editor-layout editor-layout-${mode}`}>
                   {mode === "typora" && (
@@ -3510,7 +3138,12 @@ export function App() {
 
                   {(mode === "split" || mode === "preview") && (
                     <article className="markdown-preview">
-                      <MarkdownRenderer filePath={activeDocument.filePath}>
+                      <MarkdownRenderer
+                        filePath={activeDocument.filePath}
+                        onEditReactFlow={(code) =>
+                          openReactFlowEditor({ code, kind: "markdown" }, code)
+                        }
+                      >
                         {activeDocument.content}
                       </MarkdownRenderer>
                     </article>
@@ -3532,7 +3165,9 @@ export function App() {
             <span className="workspace-word-count">
               {isHtmlDocument(activeDocument)
                 ? "HTML preview"
-                : `${activeDocument ? activeDocumentWordCount : 0} 词`}
+                : isXmindDocument(activeDocument)
+                  ? "XMind preview"
+                  : `${activeDocument ? activeDocumentWordCount : 0} 词`}
             </span>
           </footer>
         </section>
@@ -3801,6 +3436,29 @@ export function App() {
           </Dialog.Portal>
         </Dialog.Root>
 
+        <Dialog.Root
+          open={Boolean(reactFlowEditorState)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setReactFlowEditorState(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Content className="drawing-dialog react-flow-dialog">
+              <Dialog.Title className="sr-only">React Flow 图</Dialog.Title>
+              {reactFlowEditorState && (
+                <ReactFlowModal
+                  initialData={reactFlowEditorState.initialData}
+                  onClose={() => setReactFlowEditorState(null)}
+                  onSave={saveReactFlowDiagram}
+                />
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
         <Dialog.Root open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
           <Dialog.Portal>
             <Dialog.Overlay className="dialog-overlay" />
@@ -3841,104 +3499,86 @@ export function App() {
                 </ToggleGroup.Root>
               </section>
               <section className="settings-section settings-form-section">
-                <div className="settings-section-title">Remote Sync</div>
-                <label className="settings-field">
-                  <span>Server URL</span>
-                  <input
-                    placeholder="https://example.com/backup"
-                    value={settings.remoteServerUrl}
-                    onChange={(event) =>
-                      updateSetting("remoteServerUrl", event.target.value)
-                    }
-                  />
-                </label>
-                <label className="settings-field">
-                  <span>Token</span>
-                  <input
-                    type="password"
-                    value={settings.remoteServerToken}
-                    onChange={(event) =>
-                      updateSetting("remoteServerToken", event.target.value)
-                    }
-                  />
-                </label>
-              </section>
-              <section className="settings-section settings-form-section">
-                <div className="settings-section-title">Image Upload / OSS</div>
-                <label className="settings-field">
-                  <span>Upload API</span>
-                  <input
-                    placeholder="https://example.com/upload"
-                    value={settings.imageUploadEndpoint}
-                    onChange={(event) =>
-                      updateSetting("imageUploadEndpoint", event.target.value)
-                    }
-                  />
-                </label>
+                <div className="settings-section-title">字体与排版</div>
                 <div className="settings-field-grid">
                   <label className="settings-field">
-                    <span>OSS Endpoint</span>
-                    <input
-                      placeholder="oss-cn-shanghai.aliyuncs.com"
-                      value={settings.ossEndpoint}
+                    <span>正文字体</span>
+                    <select
+                      value={settings.editorFontFamily}
                       onChange={(event) =>
-                        updateSetting("ossEndpoint", event.target.value)
+                        updateSetting("editorFontFamily", event.target.value)
                       }
-                    />
+                    >
+                      {editorFontOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <label className="settings-field">
-                    <span>Region</span>
-                    <input
-                      placeholder="oss-cn-shanghai"
-                      value={settings.ossRegion}
+                    <span>代码字体</span>
+                    <select
+                      value={settings.editorCodeFontFamily}
                       onChange={(event) =>
-                        updateSetting("ossRegion", event.target.value)
+                        updateSetting("editorCodeFontFamily", event.target.value)
                       }
-                    />
+                    >
+                      {editorCodeFontOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
                 <div className="settings-field-grid">
                   <label className="settings-field">
-                    <span>Bucket</span>
-                    <input
-                      value={settings.ossBucket}
+                    <span>字号</span>
+                    <select
+                      value={settings.editorFontSize}
                       onChange={(event) =>
-                        updateSetting("ossBucket", event.target.value)
+                        updateSetting("editorFontSize", event.target.value)
                       }
-                    />
+                    >
+                      {editorFontSizeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <label className="settings-field">
-                    <span>Base URL</span>
-                    <input
-                      placeholder="https://bucket.oss-cn-shanghai.aliyuncs.com"
-                      value={settings.ossBaseUrl}
+                    <span>行高</span>
+                    <select
+                      value={settings.editorLineHeight}
                       onChange={(event) =>
-                        updateSetting("ossBaseUrl", event.target.value)
+                        updateSetting("editorLineHeight", event.target.value)
                       }
-                    />
+                    >
+                      {editorLineHeightOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
-                <div className="settings-field-grid">
-                  <label className="settings-field">
-                    <span>Access Key ID</span>
-                    <input
-                      value={settings.ossAccessKeyId}
-                      onChange={(event) =>
-                        updateSetting("ossAccessKeyId", event.target.value)
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Access Key Secret</span>
-                    <input
-                      type="password"
-                      value={settings.ossAccessKeySecret}
-                      onChange={(event) =>
-                        updateSetting("ossAccessKeySecret", event.target.value)
-                      }
-                    />
-                  </label>
-                </div>
+                <label className="settings-field">
+                  <span>内容宽度</span>
+                  <select
+                    value={settings.editorContentWidth}
+                    onChange={(event) =>
+                      updateSetting("editorContentWidth", event.target.value)
+                    }
+                  >
+                    {editorContentWidthOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </section>
             </Dialog.Content>
           </Dialog.Portal>

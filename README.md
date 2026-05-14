@@ -1,6 +1,6 @@
 # Typora Like Editor
 
-一个本地优先的 Markdown 编辑器原型，提供 Markdown 编辑/预览、文档本地存储、Excalidraw 流程图插入、图片自动插入，以及云备份和图片上传的 HTTP 适配接口。
+一个本地优先的 Markdown 编辑器原型，提供 Markdown 编辑/预览、文档本地存储、Excalidraw 流程图插入、图片自动插入、XMind 预览和 React Flow 图表嵌入。
 
 ## 项目结构
 
@@ -36,14 +36,8 @@ npm run build
 npm run preview
 ```
 
-## 环境变量
-
-- `VITE_IMAGE_UPLOAD_ENDPOINT`：图片上传接口，未配置时会把图片以内嵌 Data URL 写入文档。
-- `VITE_CLOUD_BACKUP_ENDPOINT`：云备份接口，未配置时只保留本地保存。
-- `VITE_CLOUD_BACKUP_TOKEN`：云备份接口鉴权令牌。
-
 ## 后续建议
 
 - 用 SQLite 或 IndexedDB 替代 localStorage 存储大文档和图片资源。
-- 为 Excalidraw asset 增加重新编辑入口。
-- 增加云端版本历史、端到端加密、断网队列和同步冲突 UI。
+- 为大型内嵌资源增加本地附件目录和引用迁移能力。
+- 增加文档版本历史、自动快照和冲突恢复 UI。

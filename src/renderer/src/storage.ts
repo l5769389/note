@@ -10,11 +10,11 @@ const defaultMarkdown = `# 项目方案
 
 ## 当前能力
 
-- 左侧管理文档
-- 中间编写 Markdown
-- 右侧即时预览
-- 点击工具栏的画板按钮插入 Excalidraw 流程图
-- 粘贴或选择图片后自动插入 Markdown 图片语法
+- 左侧管理文档。
+- 中间编写 Markdown。
+- 右侧即时预览。
+- 点击工具栏的画板按钮插入 Excalidraw 流程图。
+- 粘贴或选择图片后自动插入 Markdown 图片语法。
 
 ## 示例表格
 
@@ -22,7 +22,7 @@ const defaultMarkdown = `# 项目方案
 | --- | --- |
 | 编辑器 | 已启动 |
 | Excalidraw | 已集成 |
-| 云备份 | 接口预留 |
+| 本地存储 | 已启用 |
 
 `;
 
@@ -60,7 +60,15 @@ export function createInitialWorkspace(): WorkspaceSnapshot {
 }
 
 function getStoredDocumentType(filePath?: string): DocumentType {
-  return filePath && /\.html?$/i.test(filePath) ? "html" : "markdown";
+  if (filePath && /\.html?$/i.test(filePath)) {
+    return "html";
+  }
+
+  if (filePath && /\.xmind$/i.test(filePath)) {
+    return "xmind";
+  }
+
+  return "markdown";
 }
 
 function getStoredFileExtension(filePath?: string) {
@@ -68,13 +76,22 @@ function getStoredFileExtension(filePath?: string) {
 }
 
 function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
+  const documentType = document.documentType ?? getStoredDocumentType(document.filePath);
+
   return {
     ...document,
-    documentType: document.documentType ?? getStoredDocumentType(document.filePath),
+    content: documentType === "xmind" ? "" : document.content,
+    documentType,
     drawings: document.drawings ?? {},
     fileExtension:
-      document.fileExtension ?? getStoredFileExtension(document.filePath) ?? ".md",
+      document.fileExtension ??
+      getStoredFileExtension(document.filePath) ??
+      (documentType === "xmind" ? ".xmind" : ".md"),
   };
+}
+
+function serializeDocument(document: MarkdownDocument): MarkdownDocument {
+  return document.documentType === "xmind" ? { ...document, content: "" } : document;
 }
 
 export function loadWorkspace(): WorkspaceSnapshot {
@@ -106,6 +123,7 @@ export function saveWorkspace(snapshot: WorkspaceSnapshot) {
     STORAGE_KEY,
     JSON.stringify({
       ...snapshot,
+      documents: snapshot.documents.map(serializeDocument),
       updatedAt: now(),
     }),
   );
