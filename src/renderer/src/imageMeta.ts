@@ -9,6 +9,8 @@ export type ImageMeta = {
   width?: number;
 };
 
+const excalidrawTitlePattern = /(?:^|\s)excalidraw:([^\s"]+)(?=\s|$)/i;
+
 export function clampImageWidth(width: number) {
   return Math.max(minImageWidth, Math.min(maxImageWidth, Math.round(width)));
 }
@@ -37,6 +39,10 @@ export function serializeImageMeta(meta: ImageMeta) {
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+export function getExcalidrawDrawingId(title?: string) {
+  return parseImageMeta(title).titleText.match(excalidrawTitlePattern)?.[1] ?? null;
 }
 
 export function patchImageMetaTitle(

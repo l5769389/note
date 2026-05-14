@@ -33,6 +33,7 @@ import {
   type ClipboardEvent,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
   type ReactNode,
 } from "react";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
@@ -47,6 +48,7 @@ import type {
   TyporaParagraphCommand,
 } from "./editorCommands";
 import { getEditorShortcutAction } from "./editorShortcuts";
+import { createMarkdownExportHtml } from "./exportDocument";
 import { createParagraphCommandMarkdown } from "./markdownCommands";
 import {
   createClearInlineStyleEdit,
@@ -55,6 +57,8 @@ import {
   createWrappedSelectionEdit,
   findMarkdownLinkInRange,
 } from "./markdownEditing";
+import { getExcalidrawDrawingId } from "./imageMeta";
+import { getDirectoryPath, getLocalPreviewUrl } from "./localPreviewUrls";
 import { markdownAlertOptions } from "./markdownAlerts";
 import {
   countMarkdownWords,
@@ -69,6 +73,7 @@ import {
 } from "./storage";
 import type {
   DirectoryTreeItem,
+  DocumentType,
   DrawingAsset,
   EditorMode,
   LocalMarkdownFile,
@@ -107,11 +112,12 @@ const appThemeValues = [
   "dark",
 ] as const;
 type AppTheme = (typeof appThemeValues)[number];
-type SidebarTab = "files" | "current";
+type SidebarTab = "files" | "current" | "search";
 
 const defaultSidebarWidth = 334;
 const minSidebarWidth = 236;
 const maxSidebarWidth = 560;
+const homeRecentDocumentLimit = 3;
 
 type AppSettings = {
   imageUploadEndpoint: string;
@@ -136,10 +142,28 @@ type MarkdownSearchMatch = {
   start: number;
 };
 
+type WorkspaceSearchGroup = {
+  document: MarkdownDocument;
+  matches: MarkdownSearchMatch[];
+};
+
+type WorkspaceSearchReveal = {
+  filePath: string;
+  match: MarkdownSearchMatch;
+  query: string;
+};
+
 type RevealDocumentRangeOptions = {
   content?: string;
   occurrenceIndex?: number;
+  preserveRendered?: boolean;
   query?: string;
+};
+
+type SearchIndexLine = {
+  lineIndex: number;
+  positions: number[];
+  text: string;
 };
 
 const appSettingsStorageKey = "typora-like-settings";
@@ -225,6 +249,20 @@ function readFileInput(fileInput: HTMLInputElement | null) {
   fileInput?.click();
 }
 
+function replaceExcalidrawImagePreview(content: string, asset: DrawingAsset) {
+  const imagePattern = /!\[([^\]]*)]\((\S+?)(?:\s+"([^"]*)")?\)/g;
+
+  return content.replace(imagePattern, (match, alt: string, _src: string, title?: string) => {
+    if (getExcalidrawDrawingId(title) !== asset.id) {
+      return match;
+    }
+
+    const nextTitle = title?.trim() || `excalidraw:${asset.id} align=left`;
+
+    return `![${alt || asset.name}](${asset.dataUrl} "${nextTitle}")`;
+  });
+}
+
 function createMarkdownTable({ columns, rows }: TableSize) {
   const safeColumns = Math.max(1, columns);
   const safeRows = Math.max(1, rows);
@@ -254,60 +292,437 @@ function getLineColumnAtOffset(content: string, offset: number) {
   };
 }
 
-function createSearchSnippet(content: string, start: number, end: number) {
-  const lineStart = content.lastIndexOf("\n", Math.max(start - 1, 0)) + 1;
-  const nextLineBreak = content.indexOf("\n", end);
-  const lineEnd = nextLineBreak < 0 ? content.length : nextLineBreak;
-  const line = content.slice(lineStart, lineEnd).trim();
+function pushSearchText(
+  text: string,
+  sourceStart: number,
+  target: string[],
+  positions: number[],
+) {
+  for (let index = 0; index < text.length; index += 1) {
+    target.push(text[index]);
+    positions.push(sourceStart + index);
+  }
+}
 
-  if (line.length <= 96) {
-    return line;
+function pushPlainMarkdownSearchText(
+  text: string,
+  sourceStart: number,
+  target: string[],
+  positions: number[],
+) {
+  const markerCharacters = new Set(["`", "*", "~", "$"]);
+
+  for (let index = 0; index < text.length; index += 1) {
+    if (markerCharacters.has(text[index])) {
+      continue;
+    }
+
+    target.push(text[index]);
+    positions.push(sourceStart + index);
+  }
+}
+
+function getVisibleMarkdownLineStart(line: string) {
+  let cursor = 0;
+
+  while (cursor < line.length) {
+    const rest = line.slice(cursor);
+    const marker = rest.match(
+      /^(?:\s{0,3}>\s?|\s{0,3}(?:[-+*]|\d+[.)])\s+|\s{0,3}#{1,6}\s+|\s{0,3}\[[ xX]\]\s+)/,
+    );
+
+    if (!marker) {
+      break;
+    }
+
+    cursor += marker[0].length;
   }
 
-  const localStart = Math.max(0, start - lineStart);
-  const snippetStart = Math.max(0, localStart - 36);
-  const snippetEnd = Math.min(line.length, snippetStart + 96);
-  const prefix = snippetStart > 0 ? "..." : "";
-  const suffix = snippetEnd < line.length ? "..." : "";
+  const alertMarker = line
+    .slice(cursor)
+    .match(/^\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i);
 
-  return `${prefix}${line.slice(snippetStart, snippetEnd)}${suffix}`;
+  if (alertMarker) {
+    cursor += alertMarker[0].length;
+  }
+
+  return cursor;
+}
+
+function getHtmlAttributeValue(source: string, attributeName: string) {
+  const pattern = new RegExp(
+    `${attributeName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
+    "i",
+  );
+  const match = source.match(pattern);
+
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
+}
+
+function createMarkdownSearchLine(line: string, lineStartOffset: number) {
+  const visible: string[] = [];
+  const positions: number[] = [];
+  const contentStart = getVisibleMarkdownLineStart(line);
+  const content = line.slice(contentStart);
+  const contentOffset = lineStartOffset + contentStart;
+  const inlinePattern =
+    /!\[([^\]]*)\]\(([^)]*)\)|\[([^\]]+)\]\(([^)]*)\)|<img\b[^>]*>|<[^>]+>/gi;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = inlinePattern.exec(content))) {
+    if (match.index > cursor) {
+      pushPlainMarkdownSearchText(
+        content.slice(cursor, match.index),
+        contentOffset + cursor,
+        visible,
+        positions,
+      );
+    }
+
+    const token = match[0];
+
+    if (token.startsWith("![")) {
+      const altText = match[1] ?? "";
+      const altStart = token.indexOf(altText);
+      pushSearchText(
+        altText,
+        contentOffset + match.index + Math.max(0, altStart),
+        visible,
+        positions,
+      );
+    } else if (token.startsWith("[")) {
+      const label = match[3] ?? "";
+      const labelStart = token.indexOf(label);
+      pushSearchText(
+        label,
+        contentOffset + match.index + Math.max(0, labelStart),
+        visible,
+        positions,
+      );
+    } else if (/^<img\b/i.test(token)) {
+      const altText = getHtmlAttributeValue(token, "alt");
+      const altStart = altText ? token.indexOf(altText) : -1;
+
+      if (altText && altStart >= 0) {
+        pushSearchText(
+          altText,
+          contentOffset + match.index + altStart,
+          visible,
+          positions,
+        );
+      }
+    }
+
+    cursor = match.index + token.length;
+  }
+
+  if (cursor < content.length) {
+    pushPlainMarkdownSearchText(
+      content.slice(cursor),
+      contentOffset + cursor,
+      visible,
+      positions,
+    );
+  }
+
+  return { positions, text: visible.join("") };
+}
+
+function createHtmlSearchLines(content: string): SearchIndexLine[] {
+  const lines: SearchIndexLine[] = [];
+  const visible: string[] = [];
+  const positions: number[] = [];
+  let cursor = 0;
+  const tokenPattern = /<script\b[\s\S]*?<\/script>|<style\b[\s\S]*?<\/style>|<[^>]+>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenPattern.exec(content))) {
+    if (match.index > cursor) {
+      pushSearchText(content.slice(cursor, match.index), cursor, visible, positions);
+    }
+
+    const token = match[0];
+
+    if (/^<img\b/i.test(token)) {
+      const altText = getHtmlAttributeValue(token, "alt");
+      const altStart = altText ? token.indexOf(altText) : -1;
+
+      if (altText && altStart >= 0) {
+        pushSearchText(altText, match.index + altStart, visible, positions);
+      }
+    }
+
+    cursor = match.index + token.length;
+  }
+
+  if (cursor < content.length) {
+    pushSearchText(content.slice(cursor), cursor, visible, positions);
+  }
+
+  let lineText: string[] = [];
+  let linePositions: number[] = [];
+  let lineIndex = 0;
+
+  visible.forEach((character, index) => {
+    if (character === "\n") {
+      if (lineText.join("").trim()) {
+        lines.push({
+          lineIndex,
+          positions: linePositions,
+          text: lineText.join(""),
+        });
+      }
+
+      lineIndex += 1;
+      lineText = [];
+      linePositions = [];
+      return;
+    }
+
+    lineText.push(character);
+    linePositions.push(positions[index]);
+  });
+
+  if (lineText.join("").trim()) {
+    lines.push({
+      lineIndex,
+      positions: linePositions,
+      text: lineText.join(""),
+    });
+  }
+
+  return lines;
+}
+
+function createMarkdownSearchLines(content: string): SearchIndexLine[] {
+  const lines = content.split("\n");
+  const searchLines: SearchIndexLine[] = [];
+  let lineStartOffset = 0;
+  let isFencedCode = false;
+
+  lines.forEach((rawLine, lineIndex) => {
+    const line = rawLine.replace(/\r$/, "");
+    const fenceMatch = line.match(/^\s*(```|~~~)/);
+
+    if (fenceMatch) {
+      isFencedCode = !isFencedCode;
+      lineStartOffset += rawLine.length + (lineIndex < lines.length - 1 ? 1 : 0);
+      return;
+    }
+
+    const searchLine = isFencedCode
+      ? {
+          positions: Array.from({ length: line.length }, (_, index) => lineStartOffset + index),
+          text: line,
+        }
+      : createMarkdownSearchLine(line, lineStartOffset);
+
+    if (searchLine.text.trim()) {
+      searchLines.push({
+        lineIndex,
+        positions: searchLine.positions,
+        text: searchLine.text,
+      });
+    }
+
+    lineStartOffset += rawLine.length + (lineIndex < lines.length - 1 ? 1 : 0);
+  });
+
+  return searchLines;
+}
+
+function createDocumentSearchLines(
+  content: string,
+  documentType: DocumentType = "markdown",
+) {
+  return documentType === "html"
+    ? createHtmlSearchLines(content)
+    : createMarkdownSearchLines(content);
+}
+
+function createVisibleSearchSnippet(text: string, start: number) {
+  if (text.length <= 96) {
+    return text.trim();
+  }
+
+  const snippetStart = Math.max(0, start - 36);
+  const snippetEnd = Math.min(text.length, snippetStart + 96);
+  const prefix = snippetStart > 0 ? "..." : "";
+  const suffix = snippetEnd < text.length ? "..." : "";
+
+  return `${prefix}${text.slice(snippetStart, snippetEnd).trim()}${suffix}`;
 }
 
 function findMarkdownSearchMatches(
   content: string,
   query: string,
+  documentType: DocumentType = "markdown",
 ): MarkdownSearchMatch[] {
-  if (!query) {
+  const normalizedNeedle = query.trim();
+
+  if (!normalizedNeedle) {
     return [];
   }
 
-  const normalizedContent = content.toLocaleLowerCase();
-  const normalizedQuery = query.toLocaleLowerCase();
+  const normalizedQuery = normalizedNeedle.toLocaleLowerCase();
   const matches: MarkdownSearchMatch[] = [];
-  let searchFrom = 0;
+  const searchLines = createDocumentSearchLines(content, documentType);
 
-  while (searchFrom <= normalizedContent.length) {
-    const start = normalizedContent.indexOf(normalizedQuery, searchFrom);
+  searchLines.forEach((line) => {
+    const normalizedLine = line.text.toLocaleLowerCase();
+    let searchFrom = 0;
 
-    if (start < 0) {
+    while (searchFrom <= normalizedLine.length) {
+      const visibleStart = normalizedLine.indexOf(normalizedQuery, searchFrom);
+
+      if (visibleStart < 0) {
+        break;
+      }
+
+      const visibleEnd = visibleStart + normalizedNeedle.length;
+      const start = line.positions[visibleStart];
+      const last = line.positions[visibleEnd - 1];
+
+      if (start !== undefined && last !== undefined) {
+        matches.push({
+          column: visibleStart,
+          end: last + 1,
+          line: line.lineIndex + 1,
+          lineIndex: line.lineIndex,
+          snippet: createVisibleSearchSnippet(line.text, visibleStart),
+          start,
+        });
+      }
+
+      searchFrom = visibleEnd;
+    }
+  });
+
+  return matches;
+}
+
+function normalizeSearchPath(path?: string) {
+  return path?.replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase() ?? "";
+}
+
+function isDocumentInsideWorkspace(
+  document: MarkdownDocument,
+  workspacePath?: string,
+) {
+  if (!document.filePath) {
+    return false;
+  }
+
+  if (!workspacePath) {
+    return true;
+  }
+
+  const rootPath = normalizeSearchPath(workspacePath);
+  const filePath = normalizeSearchPath(document.filePath);
+
+  return filePath === rootPath || filePath.startsWith(`${rootPath}/`);
+}
+
+function getWorkspaceSearchGroups(
+  documents: MarkdownDocument[],
+  query: string,
+  workspacePath?: string,
+): WorkspaceSearchGroup[] {
+  const normalizedQuery = query.trim();
+
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  return documents
+    .filter((document) => isDocumentInsideWorkspace(document, workspacePath))
+    .map((document) => ({
+      document,
+      matches: findMarkdownSearchMatches(
+        document.content,
+        normalizedQuery,
+        getDocumentType(document),
+      ),
+    }))
+    .filter((group) => group.matches.length > 0)
+    .sort((first, second) => {
+      const firstUpdatedAt = new Date(first.document.updatedAt).getTime();
+      const secondUpdatedAt = new Date(second.document.updatedAt).getTime();
+
+      if (firstUpdatedAt !== secondUpdatedAt) {
+        return secondUpdatedAt - firstUpdatedAt;
+      }
+
+      return getDocumentDisplayName(first.document).localeCompare(
+        getDocumentDisplayName(second.document),
+        "zh-Hans-CN",
+      );
+    });
+}
+
+function getWorkspaceSearchMatchCount(groups: WorkspaceSearchGroup[]) {
+  return groups.reduce((total, group) => total + group.matches.length, 0);
+}
+
+function getMatchOccurrenceIndex(
+  document: MarkdownDocument,
+  query: string,
+  match: MarkdownSearchMatch,
+) {
+  const matches = findMarkdownSearchMatches(
+    document.content,
+    query,
+    getDocumentType(document),
+  );
+  const exactIndex = matches.findIndex((item) => item.start === match.start);
+
+  if (exactIndex >= 0) {
+    return exactIndex;
+  }
+
+  const lineIndex = matches.findIndex(
+    (item) => item.lineIndex === match.lineIndex && item.column === match.column,
+  );
+
+  return Math.max(0, lineIndex);
+}
+
+function HighlightedSearchSnippet({
+  query,
+  text,
+}: {
+  query: string;
+  text: string;
+}) {
+  const normalizedQuery = query.trim();
+
+  if (!normalizedQuery) {
+    return <>{text}</>;
+  }
+
+  const normalizedText = text.toLocaleLowerCase();
+  const normalizedNeedle = normalizedQuery.toLocaleLowerCase();
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const index = normalizedText.indexOf(normalizedNeedle, cursor);
+
+    if (index < 0) {
+      parts.push(text.slice(cursor));
       break;
     }
 
-    const end = start + query.length;
-    const { column, lineIndex } = getLineColumnAtOffset(content, start);
+    if (index > cursor) {
+      parts.push(text.slice(cursor, index));
+    }
 
-    matches.push({
-      column,
-      end,
-      line: lineIndex + 1,
-      lineIndex,
-      snippet: createSearchSnippet(content, start, end),
-      start,
-    });
-    searchFrom = end;
+    parts.push(<mark key={`${index}-${cursor}`}>{text.slice(index, index + normalizedNeedle.length)}</mark>);
+    cursor = index + normalizedNeedle.length;
   }
 
-  return matches;
+  return <>{parts}</>;
 }
 
 function getTextareaLineHeight(textarea: HTMLTextAreaElement) {
@@ -379,7 +794,7 @@ function MenuItem({
     >
       <span className="menubar-dropdown-check">{checked ? <Check size={17} /> : null}</span>
       <span className="menubar-dropdown-label">{label}</span>
-      {shortcut && <kbd>{shortcut}</kbd>}
+      <span className="menubar-dropdown-shortcut">{shortcut ? <kbd>{shortcut}</kbd> : null}</span>
       {submenu && <ChevronRight className="menubar-dropdown-arrow" size={18} />}
     </button>
   );
@@ -397,13 +812,50 @@ function MenuSubmenu({
       <button className="menubar-dropdown-item" role="menuitem" type="button">
         <span className="menubar-dropdown-check" />
         <span className="menubar-dropdown-label">{label}</span>
-        <span />
+        <span className="menubar-dropdown-shortcut" />
         <ChevronRight className="menubar-dropdown-arrow" size={18} />
       </button>
       <div className="menubar-submenu-panel" role="menu">
         {children}
       </div>
     </div>
+  );
+}
+
+function RecentFileMenuItem({
+  document,
+  exists,
+  onOpen,
+}: {
+  document: MarkdownDocument;
+  exists?: boolean;
+  onOpen: (document: MarkdownDocument) => void;
+}) {
+  const isMissing = exists === false;
+
+  return (
+    <MenuItem
+      label={
+        <span
+          className={
+            isMissing
+              ? "recent-file-menu-entry recent-file-menu-entry-missing"
+              : "recent-file-menu-entry"
+          }
+        >
+          <strong>{getDocumentDisplayName(document)}</strong>
+          <small>
+            {isMissing
+              ? "文件不存在"
+              : document.filePath
+                ? getDocumentPathPreview(document)
+                : "未保存到本地"}
+          </small>
+        </span>
+      }
+      shortcut={isMissing ? "不存在" : formatRecentTimestamp(document.updatedAt)}
+      onSelect={() => onOpen(document)}
+    />
   );
 }
 
@@ -445,19 +897,48 @@ function getPathLabel(path?: string) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
 }
 
-function getDirectoryPath(filePath?: string) {
-  if (!filePath) {
-    return undefined;
-  }
-
-  return filePath.split(/[\\/]/).slice(0, -1).join("\\");
-}
-
 function getDocumentPathPreview(document: MarkdownDocument, workspacePath?: string) {
   const directoryPath = getDirectoryPath(document.filePath) || workspacePath || "D:";
   const normalizedPath = directoryPath.replace(/\\/g, "/");
 
   return normalizedPath.endsWith("/") ? normalizedPath : `${normalizedPath}/`;
+}
+
+function getFileExtension(filePath?: string) {
+  return filePath?.match(/\.([^.\\/]+)$/)?.[0]?.toLowerCase();
+}
+
+function getDocumentTypeFromPath(filePath?: string): DocumentType {
+  return filePath && /\.html?$/i.test(filePath) ? "html" : "markdown";
+}
+
+function getDocumentType(document?: MarkdownDocument | null): DocumentType {
+  return document?.documentType ?? getDocumentTypeFromPath(document?.filePath);
+}
+
+function isMarkdownDocument(document?: MarkdownDocument | null) {
+  return Boolean(document) && getDocumentType(document) === "markdown";
+}
+
+function isHtmlDocument(document?: MarkdownDocument | null) {
+  return Boolean(document) && getDocumentType(document) === "html";
+}
+
+function getDocumentFileExtension(document: MarkdownDocument) {
+  return (
+    document.fileExtension ??
+    getFileExtension(document.filePath) ??
+    (isHtmlDocument(document) ? ".html" : ".md")
+  );
+}
+
+function getDocumentDisplayName(document: MarkdownDocument) {
+  const extension = getDocumentFileExtension(document);
+  const title = document.title || "Untitled";
+
+  return title.toLowerCase().endsWith(extension.toLowerCase())
+    ? title
+    : `${title}${extension}`;
 }
 
 function normalizeMarkdownTitle(value: string) {
@@ -466,7 +947,13 @@ function normalizeMarkdownTitle(value: string) {
 
 function createDocumentFromLocalFile(file: LocalMarkdownFile): MarkdownDocument {
   return {
-    ...createDocument(file.title, file.content, file.filePath),
+    ...createDocument(
+      file.title,
+      file.content,
+      file.filePath,
+      file.documentType ?? getDocumentTypeFromPath(file.filePath),
+      file.fileExtension ?? getFileExtension(file.filePath),
+    ),
     createdAt: file.createdAt,
     updatedAt: file.updatedAt,
   };
@@ -486,6 +973,79 @@ function mergeDocumentByFilePath(
 
   return documents.map((item, index) =>
     index === existingIndex ? { ...item, ...document, id: item.id } : item,
+  );
+}
+
+function escapeHtmlAttribute(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function getFileBaseHref(filePath?: string) {
+  const directoryPath = getDirectoryPath(filePath);
+
+  if (!directoryPath) {
+    return undefined;
+  }
+
+  const normalizedPath = directoryPath.replace(/\\/g, "/");
+  const pathWithLeadingSlash =
+    normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`;
+  const pathWithTrailingSlash = pathWithLeadingSlash.endsWith("/")
+    ? pathWithLeadingSlash
+    : `${pathWithLeadingSlash}/`;
+
+  return encodeURI(`file://${pathWithTrailingSlash}`);
+}
+
+function createHtmlPreviewDocument(content: string, filePath?: string) {
+  const baseHref = getFileBaseHref(filePath);
+
+  if (!baseHref || /<base\s/i.test(content)) {
+    return content;
+  }
+
+  const baseTag = `<base href="${escapeHtmlAttribute(baseHref)}">`;
+
+  if (/<head\b[^>]*>/i.test(content)) {
+    return content.replace(/<head\b([^>]*)>/i, `<head$1>${baseTag}`);
+  }
+
+  if (/<html\b[^>]*>/i.test(content)) {
+    return content.replace(
+      /<html\b([^>]*)>/i,
+      `<html$1><head>${baseTag}</head>`,
+    );
+  }
+
+  return `<!doctype html><html><head>${baseTag}</head><body>${content}</body></html>`;
+}
+
+function HtmlDocumentViewer({ document }: { document: MarkdownDocument }) {
+  const previewUrl = useMemo(
+    () => getLocalPreviewUrl(document.filePath),
+    [document.filePath],
+  );
+  const srcDoc = useMemo(
+    () =>
+      previewUrl
+        ? undefined
+        : createHtmlPreviewDocument(document.content, document.filePath),
+    [document.content, document.filePath, previewUrl],
+  );
+
+  return (
+    <div className="html-document-viewer">
+      <iframe
+        title={getDocumentDisplayName(document)}
+        sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads"
+        src={previewUrl}
+        srcDoc={srcDoc}
+      />
+    </div>
   );
 }
 
@@ -580,6 +1140,106 @@ function DirectoryTree({
   );
 }
 
+function WorkspaceSearchPanel({
+  groups,
+  inputRef,
+  matchCount,
+  onClose,
+  onOpenMatch,
+  onQueryChange,
+  query,
+  workspacePath,
+}: {
+  groups: WorkspaceSearchGroup[];
+  inputRef: RefObject<HTMLInputElement>;
+  matchCount: number;
+  onClose: () => void;
+  onOpenMatch: (document: MarkdownDocument, match: MarkdownSearchMatch) => void;
+  onQueryChange: (value: string) => void;
+  query: string;
+  workspacePath?: string;
+}) {
+  const trimmedQuery = query.trim();
+
+  return (
+    <div className="workspace-search-panel">
+      <div className="workspace-search-input-row">
+        <Search size={16} />
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              onClose();
+            }
+          }}
+          placeholder="查找"
+        />
+        <div className="workspace-search-toggles" aria-hidden="true">
+          <span>Aa</span>
+          <span>W</span>
+          <span>.*</span>
+        </div>
+        {query && (
+          <button type="button" aria-label="清空查找" onClick={() => onQueryChange("")}>
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      <div className="workspace-search-meta">
+        {trimmedQuery
+          ? matchCount
+            ? `在 ${groups.length} 个文件中找到 ${matchCount} 处`
+            : "没有找到匹配内容"
+          : workspacePath
+            ? "输入关键词后搜索当前文件夹"
+            : "先打开一个本地文件夹"}
+      </div>
+
+      <div className="workspace-search-results">
+        {!trimmedQuery ? (
+          <div className="workspace-search-empty">
+            输入内容后会在当前文件夹内搜索 .md 和 .html 文件。
+          </div>
+        ) : groups.length ? (
+          groups.map((group) => (
+            <section
+              className="workspace-search-group"
+              key={group.document.filePath ?? group.document.id}
+            >
+              <div className="workspace-search-file">
+                <FileText size={15} />
+                <strong>{getDocumentDisplayName(group.document)}</strong>
+                <span>{group.matches.length}</span>
+              </div>
+              {group.matches.map((match) => (
+                <button
+                  className="workspace-search-match"
+                  key={`${group.document.filePath ?? group.document.id}-${match.start}`}
+                  type="button"
+                  onClick={() => onOpenMatch(group.document, match)}
+                >
+                  <span className="workspace-search-line">{match.line}</span>
+                  <span className="workspace-search-snippet">
+                    <HighlightedSearchSnippet
+                      query={trimmedQuery}
+                      text={match.snippet || "空白行"}
+                    />
+                  </span>
+                </button>
+              ))}
+            </section>
+          ))
+        ) : (
+          <div className="workspace-search-empty">没有匹配结果。</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function WelcomeIllustration() {
   return (
     <div className="welcome-illustration" aria-hidden="true">
@@ -606,9 +1266,11 @@ export function App() {
   const [theme, setTheme] = useState<AppTheme>(getInitialTheme);
   const [settings, setSettings] = useState<AppSettings>(loadAppSettings);
   const [isHomeOpen, setIsHomeOpen] = useState(true);
+  const [isRecentExpanded, setIsRecentExpanded] = useState(false);
   const [, setSaveState] = useState<SaveState>("idle");
   const [, setBackupMessage] = useState("本地自动保存已启用");
   const [isDrawingOpen, setIsDrawingOpen] = useState(false);
+  const [editingDrawingId, setEditingDrawingId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
@@ -616,6 +1278,10 @@ export function App() {
   const [findQuery, setFindQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
   const [findMatchIndex, setFindMatchIndex] = useState(0);
+  const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
+  const [workspaceSearchGroups, setWorkspaceSearchGroups] = useState<
+    WorkspaceSearchGroup[]
+  >([]);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -626,16 +1292,22 @@ export function App() {
       : defaultSidebarWidth;
   });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   const [newFileName, setNewFileName] = useState("Untitled");
   const [directoryTree, setDirectoryTree] = useState<DirectoryTreeItem | null>(
     null,
   );
+  const [recentFileAvailability, setRecentFileAvailability] = useState<
+    Record<string, boolean>
+  >({});
   const [expandedDirectoryPaths, setExpandedDirectoryPaths] = useState<Set<string>>(
     () => new Set(),
   );
   const [activeEditorLineIndex, setActiveEditorLineIndex] = useState(0);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const typoraEditorRef = useRef<TyporaEditorHandle | null>(null);
+  const workspaceSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingWorkspaceSearchRevealRef = useRef<WorkspaceSearchReveal | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const savedFileContentByPathRef = useRef(
     new Map(
@@ -650,6 +1322,13 @@ export function App() {
       workspace.documents.find((item) => item.id === workspace.activeDocumentId) ?? null,
     [workspace.activeDocumentId, workspace.documents],
   );
+  const editingDrawingAsset = useMemo(
+    () =>
+      activeDocument && editingDrawingId
+        ? activeDocument.drawings[editingDrawingId] ?? null
+        : null,
+    [activeDocument, editingDrawingId],
+  );
   const workspaceLabel = getPathLabel(workspace.workspacePath);
   const recentDocuments = useMemo(
     () =>
@@ -658,22 +1337,45 @@ export function App() {
           (first, second) =>
             new Date(second.updatedAt).getTime() -
             new Date(first.updatedAt).getTime(),
-        )
-        .slice(0, 5),
+        ),
     [workspace.documents],
   );
+  const hasMoreRecentDocuments = recentDocuments.length > homeRecentDocumentLimit;
+  const visibleRecentDocuments = useMemo(
+    () =>
+      isRecentExpanded
+        ? recentDocuments
+        : recentDocuments.slice(0, homeRecentDocumentLimit),
+    [isRecentExpanded, recentDocuments],
+  );
   const activeDocumentOutline = useMemo(
-    () => (activeDocument ? getMarkdownOutline(activeDocument.content) : []),
+    () =>
+      isMarkdownDocument(activeDocument)
+        ? getMarkdownOutline(activeDocument!.content)
+        : [],
     [activeDocument],
   );
   const activeDocumentWordCount = useMemo(
-    () => (activeDocument ? countMarkdownWords(activeDocument.content) : 0),
+    () =>
+      isMarkdownDocument(activeDocument)
+        ? countMarkdownWords(activeDocument!.content)
+        : 0,
     [activeDocument],
   );
+  const workspaceSearchMatchCount = useMemo(
+    () => getWorkspaceSearchMatchCount(workspaceSearchGroups),
+    [workspaceSearchGroups],
+  );
+  const isWorkspaceSearchTabVisible =
+    sidebarTab === "search" || workspaceSearchQuery.trim().length > 0;
   const findMatches = useMemo(
     () =>
-      findMarkdownSearchMatches(activeDocument?.content ?? "", findQuery),
-    [activeDocument?.content, findQuery],
+      findMarkdownSearchMatches(
+        activeDocument?.content ?? "",
+        findQuery,
+        activeDocument ? getDocumentType(activeDocument) : "markdown",
+      ),
+    [activeDocument, activeDocument?.content, findQuery],
   );
   const activeFindMatch = findMatches[findMatchIndex] ?? null;
   const visibleFindResultStart = Math.max(
@@ -684,6 +1386,57 @@ export function App() {
     visibleFindResultStart,
     visibleFindResultStart + 8,
   );
+
+  useEffect(() => {
+    if (!hasMoreRecentDocuments && isRecentExpanded) {
+      setIsRecentExpanded(false);
+    }
+  }, [hasMoreRecentDocuments, isRecentExpanded]);
+
+  useEffect(() => {
+    if (!workspaceSearchQuery.trim()) {
+      setWorkspaceSearchGroups([]);
+      return;
+    }
+
+    setWorkspaceSearchGroups(
+      getWorkspaceSearchGroups(
+        workspace.documents,
+        workspaceSearchQuery,
+        workspace.workspacePath,
+      ),
+    );
+  }, [workspace.workspacePath, workspaceSearchQuery]);
+
+  useEffect(() => {
+    const filePaths = recentDocuments
+      .map((document) => document.filePath)
+      .filter((filePath): filePath is string => Boolean(filePath));
+
+    if (!filePaths.length || !window.desktop?.pathExists) {
+      setRecentFileAvailability({});
+      return;
+    }
+
+    let isStale = false;
+
+    void Promise.all(
+      filePaths.map(async (filePath) => [
+        filePath,
+        await window.desktop!.pathExists(filePath),
+      ] as const),
+    ).then((entries) => {
+      if (isStale) {
+        return;
+      }
+
+      setRecentFileAvailability(Object.fromEntries(entries));
+    });
+
+    return () => {
+      isStale = true;
+    };
+  }, [recentDocuments]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -728,6 +1481,7 @@ export function App() {
   function startSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    setIsSidebarResizing(true);
 
     function resizeSidebar(pointerEvent: PointerEvent) {
       const nextWidth = pointerEvent.clientX;
@@ -743,12 +1497,15 @@ export function App() {
 
     function stopSidebarResize(pointerEvent: PointerEvent) {
       resizeSidebar(pointerEvent);
+      setIsSidebarResizing(false);
       window.removeEventListener("pointermove", resizeSidebar);
       window.removeEventListener("pointerup", stopSidebarResize);
+      window.removeEventListener("pointercancel", stopSidebarResize);
     }
 
     window.addEventListener("pointermove", resizeSidebar);
     window.addEventListener("pointerup", stopSidebarResize);
+    window.addEventListener("pointercancel", stopSidebarResize);
   }
 
   async function loadDirectoryTree(directoryPath = workspace.workspacePath) {
@@ -835,6 +1592,24 @@ export function App() {
         return;
       }
 
+      if (event.ctrlKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        openNewWindow();
+        return;
+      }
+
+      if (event.ctrlKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveActiveDocumentAs();
+        return;
+      }
+
+      if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveNow();
+        return;
+      }
+
       const action = getEditorShortcutAction(event);
 
       if (!action) {
@@ -874,12 +1649,46 @@ export function App() {
   }, [activeDocument?.id]);
 
   useEffect(() => {
+    if (sidebarTab !== "search" || isSidebarCollapsed) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      workspaceSearchInputRef.current?.focus();
+      workspaceSearchInputRef.current?.select();
+    });
+  }, [isSidebarCollapsed, sidebarTab]);
+
+  useEffect(() => {
+    const pendingReveal = pendingWorkspaceSearchRevealRef.current;
+
+    if (!pendingReveal || activeDocument?.filePath !== pendingReveal.filePath) {
+      return;
+    }
+
+    pendingWorkspaceSearchRevealRef.current = null;
+
+    if (!isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      revealWorkspaceSearchMatch(
+        activeDocument,
+        pendingReveal.match,
+        pendingReveal.query,
+      );
+    });
+  }, [activeDocument?.content, activeDocument?.filePath, activeDocument?.id, mode]);
+
+  useEffect(() => {
     setSaveState("saving");
     const timer = window.setTimeout(() => {
       try {
         saveWorkspace(workspace);
         const writableDocuments = workspace.documents.filter(
           (document) =>
+            isMarkdownDocument(document) &&
             document.filePath &&
             savedFileContentByPathRef.current.get(document.filePath) !== document.content,
         );
@@ -1096,7 +1905,7 @@ export function App() {
   }
 
   function updateMarkdown(content: string) {
-    if (!activeDocument) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
       return;
     }
 
@@ -1104,6 +1913,82 @@ export function App() {
       content,
       title: renameFromMarkdown(content, activeDocument.title),
     });
+  }
+
+  function openNewWindow() {
+    void window.desktop?.newWindow?.();
+  }
+
+  async function openRecentDocument(document: MarkdownDocument) {
+    if (!document.filePath) {
+      setActiveDocument(document.id);
+      return;
+    }
+
+    const exists = window.desktop?.pathExists
+      ? await window.desktop.pathExists(document.filePath)
+      : true;
+
+    setRecentFileAvailability((current) => ({
+      ...current,
+      [document.filePath!]: exists,
+    }));
+
+    if (!exists) {
+      window.alert(`文件不存在：\n${document.filePath}`);
+      return;
+    }
+
+    try {
+      const localFile = await window.desktop?.readMarkdownFile?.(document.filePath);
+
+      if (!localFile) {
+        setActiveDocument(document.id);
+        return;
+      }
+
+      const nextDocument = createDocumentFromLocalFile(localFile);
+
+      savedFileContentByPathRef.current.set(nextDocument.filePath!, nextDocument.content);
+      setWorkspace((current) => ({
+        ...current,
+        activeDocumentId: document.id,
+        documents: mergeDocumentByFilePath(current.documents, nextDocument),
+        workspacePath:
+          current.workspacePath ||
+          getDirectoryPath(nextDocument.filePath) ||
+          current.workspacePath,
+      }));
+      setIsHomeOpen(false);
+    } catch {
+      setRecentFileAvailability((current) => ({
+        ...current,
+        [document.filePath!]: false,
+      }));
+      window.alert(`无法打开最近文件：\n${document.filePath}`);
+    }
+  }
+
+  function setDrawingDialogOpen(open: boolean) {
+    setIsDrawingOpen(open);
+
+    if (!open) {
+      setEditingDrawingId(null);
+    }
+  }
+
+  function openNewDrawing() {
+    setEditingDrawingId(null);
+    setIsDrawingOpen(true);
+  }
+
+  function openDrawingEditor(drawingId: string) {
+    if (!isMarkdownDocument(activeDocument) || !activeDocument?.drawings[drawingId]) {
+      return;
+    }
+
+    setEditingDrawingId(drawingId);
+    setIsDrawingOpen(true);
   }
 
   function clearFindHighlight() {
@@ -1152,6 +2037,90 @@ export function App() {
     setTopMenu(null);
   }
 
+  function openWorkspaceSearch() {
+    setSidebarTab("search");
+    setIsSidebarCollapsed(false);
+    setIsActionsOpen(false);
+    setTopMenu(null);
+    void refreshWorkspaceSearchDocuments();
+  }
+
+  function closeWorkspaceSearch() {
+    setWorkspaceSearchQuery("");
+    setSidebarTab("current");
+  }
+
+  async function refreshWorkspaceSearchDocuments() {
+    if (!workspace.workspacePath || !window.desktop?.listMarkdownFiles) {
+      return;
+    }
+
+    const targetWorkspacePath = workspace.workspacePath;
+
+    try {
+      const localFiles = await window.desktop.listMarkdownFiles(targetWorkspacePath);
+      const localDocuments = localFiles.map(createDocumentFromLocalFile);
+
+      setWorkspace((current) => {
+        if (current.workspacePath !== targetWorkspacePath) {
+          return current;
+        }
+
+        const currentByPath = new Map(
+          current.documents
+            .filter((document) => document.filePath)
+            .map((document) => [document.filePath!, document]),
+        );
+        const nextLocalDocuments = localDocuments.map((document) => {
+          const currentDocument = currentByPath.get(document.filePath!);
+
+          if (!currentDocument) {
+            savedFileContentByPathRef.current.set(document.filePath!, document.content);
+            return document;
+          }
+
+          const savedContent = savedFileContentByPathRef.current.get(
+            currentDocument.filePath!,
+          );
+          const hasUnsavedChanges =
+            savedContent !== undefined && savedContent !== currentDocument.content;
+
+          if (hasUnsavedChanges) {
+            return currentDocument;
+          }
+
+          savedFileContentByPathRef.current.set(document.filePath!, document.content);
+          return {
+            ...document,
+            drawings: currentDocument.drawings,
+            id: currentDocument.id,
+          };
+        });
+        const externalDocuments = current.documents.filter(
+          (document) => !isDocumentInsideWorkspace(document, targetWorkspacePath),
+        );
+        const nextDocuments = [...nextLocalDocuments, ...externalDocuments];
+
+        if (workspaceSearchQuery.trim()) {
+          setWorkspaceSearchGroups(
+            getWorkspaceSearchGroups(
+              nextDocuments,
+              workspaceSearchQuery,
+              targetWorkspacePath,
+            ),
+          );
+        }
+
+        return {
+          ...current,
+          documents: nextDocuments,
+        };
+      });
+    } catch {
+      setSaveState("failed");
+    }
+  }
+
   function revealDocumentRange(
     start: number,
     end: number,
@@ -1165,6 +2134,7 @@ export function App() {
       mode === "typora" &&
       typoraEditorRef.current?.revealSearchResult({
         occurrenceIndex,
+        preserveRendered: options.preserveRendered,
         query,
       });
 
@@ -1185,6 +2155,59 @@ export function App() {
       editor.setSelectionRange(start, end);
       centerTextareaRangeInView(editor, start, content);
     });
+  }
+
+  function revealWorkspaceSearchMatch(
+    document: MarkdownDocument,
+    match: MarkdownSearchMatch,
+    query: string,
+  ) {
+    setIsHomeOpen(false);
+
+    if (!isMarkdownDocument(document)) {
+      return;
+    }
+
+    const occurrenceIndex = getMatchOccurrenceIndex(document, query, match);
+    const targetMatch =
+      findMarkdownSearchMatches(
+        document.content,
+        query,
+        getDocumentType(document),
+      )[occurrenceIndex] ?? match;
+
+    revealDocumentRange(targetMatch.start, targetMatch.end, {
+      content: document.content,
+      occurrenceIndex,
+      preserveRendered: sidebarTab === "search",
+      query,
+    });
+  }
+
+  async function openWorkspaceSearchMatch(
+    document: MarkdownDocument,
+    match: MarkdownSearchMatch,
+  ) {
+    const query = workspaceSearchQuery.trim();
+
+    if (!query) {
+      return;
+    }
+
+    setFindQuery(query);
+
+    if (!document.filePath || activeDocument?.filePath === document.filePath) {
+      setActiveDocument(document.id);
+      requestAnimationFrame(() => revealWorkspaceSearchMatch(document, match, query));
+      return;
+    }
+
+    pendingWorkspaceSearchRevealRef.current = {
+      filePath: document.filePath,
+      match,
+      query,
+    };
+    await openFileFromTree(document.filePath);
   }
 
   function goToFindMatch(nextIndex: number) {
@@ -1213,7 +2236,12 @@ export function App() {
   }
 
   function replaceCurrentFindMatch() {
-    if (!activeDocument || !activeFindMatch || !findQuery) {
+    if (
+      !activeDocument ||
+      !isMarkdownDocument(activeDocument) ||
+      !activeFindMatch ||
+      !findQuery
+    ) {
       return;
     }
 
@@ -1235,7 +2263,7 @@ export function App() {
   }
 
   function replaceAllFindMatches() {
-    if (!activeDocument || !findMatches.length || !findQuery) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument) || !findMatches.length || !findQuery) {
       return;
     }
 
@@ -1298,7 +2326,7 @@ export function App() {
   }
 
   function insertMarkdown(markdown: string) {
-    if (!activeDocument) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
       return;
     }
 
@@ -1423,7 +2451,11 @@ export function App() {
   }
 
   function runFormatCommand(command: TyporaFormatCommand) {
-    if (!activeDocument && command.type !== "copyLink" && command.type !== "openLink") {
+    if (
+      (!activeDocument || !isMarkdownDocument(activeDocument)) &&
+      command.type !== "copyLink" &&
+      command.type !== "openLink"
+    ) {
       return;
     }
 
@@ -1500,6 +2532,10 @@ export function App() {
   }
 
   async function handleImageFile(file: File) {
+    if (!isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
     try {
       const result = await uploadImage(file, {
         endpoint: settings.imageUploadEndpoint.trim() || undefined,
@@ -1527,7 +2563,11 @@ export function App() {
     try {
       saveWorkspace(workspace);
 
-      if (activeDocument?.filePath && window.desktop?.writeMarkdownFile) {
+      if (
+        isMarkdownDocument(activeDocument) &&
+        activeDocument?.filePath &&
+        window.desktop?.writeMarkdownFile
+      ) {
         await window.desktop.writeMarkdownFile({
           content: activeDocument.content,
           filePath: activeDocument.filePath,
@@ -1544,9 +2584,93 @@ export function App() {
     }
   }
 
-  function setEditorMode(nextMode: EditorMode) {
-    setMode(nextMode);
-    setIsHomeOpen(false);
+  async function saveActiveDocumentAs() {
+    if (!activeDocument) {
+      return;
+    }
+
+    if (!isMarkdownDocument(activeDocument)) {
+      window.alert("HTML files are preview-only.");
+      return;
+    }
+
+    try {
+      const savedFile = await window.desktop?.saveMarkdownFileAs?.({
+        content: activeDocument.content,
+        filePath: activeDocument.filePath,
+        title: activeDocument.title,
+      });
+
+      if (!savedFile) {
+        return;
+      }
+
+      const document = {
+        ...activeDocument,
+        content: savedFile.content,
+        documentType: savedFile.documentType,
+        fileExtension: savedFile.fileExtension,
+        filePath: savedFile.filePath,
+        title: savedFile.title,
+        updatedAt: savedFile.updatedAt,
+      };
+
+      savedFileContentByPathRef.current.set(savedFile.filePath, savedFile.content);
+      setWorkspace((current) => ({
+        ...updateDocument(current, document),
+        activeDocumentId: document.id,
+        workspacePath:
+          current.workspacePath ||
+          getDirectoryPath(savedFile.filePath) ||
+          current.workspacePath,
+      }));
+      setSaveState("saved");
+      await loadDirectoryTree(getDirectoryPath(savedFile.filePath));
+    } catch {
+      setSaveState("failed");
+      window.alert("另存为失败，请确认目标路径可写。");
+    }
+  }
+
+  async function exportActiveDocument(format: "html" | "pdf") {
+    if (!activeDocument) {
+      return;
+    }
+
+    if (!isMarkdownDocument(activeDocument)) {
+      window.alert("HTML files are preview-only and cannot be exported from Markdown mode.");
+      return;
+    }
+
+    if (!window.desktop?.exportHtmlFile || !window.desktop.exportPdfFile) {
+      window.alert("当前运行环境不支持导出。");
+      return;
+    }
+
+    try {
+      const html = await createMarkdownExportHtml({
+        document: activeDocument,
+        theme,
+      });
+      const exportedFilePath =
+        format === "pdf"
+          ? await window.desktop.exportPdfFile({
+              filePath: activeDocument.filePath,
+              html,
+              title: activeDocument.title,
+            })
+          : await window.desktop.exportHtmlFile({
+              filePath: activeDocument.filePath,
+              html,
+              title: activeDocument.title,
+            });
+
+      if (exportedFilePath) {
+        await window.desktop.showInFolder?.(exportedFilePath);
+      }
+    } catch {
+      window.alert(format === "pdf" ? "导出 PDF 失败。" : "导出 HTML 失败。");
+    }
   }
 
   async function saveAllNow() {
@@ -1554,7 +2678,7 @@ export function App() {
       saveWorkspace(workspace);
 
       const writableDocuments = workspace.documents.filter(
-        (document) => document.filePath,
+        (document) => isMarkdownDocument(document) && document.filePath,
       );
 
       if (window.desktop?.writeMarkdownFile) {
@@ -1683,6 +2807,10 @@ export function App() {
       return;
     }
 
+    if (activeDocument && !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
     if (mode === "typora" && typoraEditorRef.current) {
       typoraEditorRef.current.runEditCommand(command);
       return;
@@ -1729,7 +2857,7 @@ export function App() {
   }
 
   function runParagraphCommand(command: TyporaParagraphCommand) {
-    if (!activeDocument) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
       return;
     }
 
@@ -1759,34 +2887,61 @@ export function App() {
         return (
           <>
             <MenuItem label="新建" shortcut="Ctrl+N" onSelect={() => runTopMenuAction(createNewDocument)} />
-            <MenuItem label="新建窗口" shortcut="Ctrl+Shift+N" disabled />
+            <MenuItem label="新建窗口" shortcut="Ctrl+Shift+N" onSelect={() => runTopMenuAction(openNewWindow)} />
             <MenuSeparator />
             <MenuItem label="打开..." shortcut="Ctrl+O" onSelect={() => runTopMenuAction(() => void openMarkdownFile())} />
             <MenuItem label="打开文件夹..." onSelect={() => runTopMenuAction(() => void openWorkspaceFolder())} />
             <MenuSeparator />
-            <MenuItem label="快速打开..." shortcut="Ctrl+P" disabled />
-            <MenuItem label="打开最近文件" submenu disabled />
+            <MenuSubmenu label="打开最近文件">
+              {recentDocuments.length ? (
+                recentDocuments.map((document) => (
+                  <RecentFileMenuItem
+                    document={document}
+                    exists={
+                      document.filePath
+                        ? recentFileAvailability[document.filePath]
+                        : true
+                    }
+                    key={document.id}
+                    onOpen={(recentDocument) =>
+                      runTopMenuAction(() => void openRecentDocument(recentDocument))
+                    }
+                  />
+                ))
+              ) : (
+                <MenuItem label="没有最近文件" disabled />
+              )}
+            </MenuSubmenu>
             <MenuSeparator />
             <MenuItem label="保存" shortcut="Ctrl+S" onSelect={() => runTopMenuAction(() => void saveNow())} />
-            <MenuItem label="另存为..." shortcut="Ctrl+Shift+S" disabled />
-            <MenuItem label="移动到..." disabled />
+            <MenuItem
+              label="另存为..."
+              shortcut="Ctrl+Shift+S"
+              disabled={!isMarkdownDocument(activeDocument)}
+              onSelect={() => runTopMenuAction(() => void saveActiveDocumentAs())}
+            />
             <MenuItem label="保存全部打开的文件..." onSelect={() => runTopMenuAction(() => void saveAllNow())} />
             <MenuSeparator />
-            <MenuItem label="属性..." disabled />
+            <MenuSubmenu label="导出">
+              <MenuItem
+                label="导出为 PDF..."
+                disabled={!isMarkdownDocument(activeDocument)}
+                onSelect={() => runTopMenuAction(() => void exportActiveDocument("pdf"))}
+              />
+              <MenuItem
+                label="导出为 HTML..."
+                disabled={!isMarkdownDocument(activeDocument)}
+                onSelect={() => runTopMenuAction(() => void exportActiveDocument("html"))}
+              />
+            </MenuSubmenu>
+            <MenuSeparator />
             <MenuItem label="打开文件位置..." onSelect={() => runTopMenuAction(() => void showWorkspaceInFolder())} />
             <MenuItem label="在侧边栏中显示" onSelect={() => runTopMenuAction(() => {
               setIsSidebarCollapsed(false);
               setSidebarTab("files");
             })} />
-            <MenuItem label="删除..." disabled />
-            <MenuSeparator />
-            <MenuItem label="导入..." disabled />
-            <MenuItem label="导出" submenu disabled />
-            <MenuItem label="打印..." shortcut="Alt+Shift+P" disabled />
             <MenuSeparator />
             <MenuItem label="偏好设置..." shortcut="Ctrl+逗号" onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
-            <MenuSeparator />
-            <MenuItem label="关闭" shortcut="Ctrl+W" disabled />
           </>
         );
       case "edit":
@@ -1800,7 +2955,7 @@ export function App() {
             <MenuItem label="拷贝图片" disabled />
             <MenuItem label="粘贴" shortcut="Ctrl+V" onSelect={() => runTopMenuAction(() => void runEditCommand("paste"))} />
             <MenuSeparator />
-            <MenuItem label="插入 Excalidraw 流程图..." onSelect={() => runTopMenuAction(() => setIsDrawingOpen(true))} />
+            <MenuItem label="插入 Excalidraw 流程图..." onSelect={() => runTopMenuAction(openNewDrawing)} />
             <MenuSeparator />
             <MenuItem label="复制为纯文本" disabled />
             <MenuItem label="复制为 Markdown" shortcut="Ctrl+Shift+C" disabled />
@@ -1808,20 +2963,10 @@ export function App() {
             <MenuItem label="复制内容并简化格式" disabled />
             <MenuSeparator />
             <MenuItem label="粘贴为纯文本" shortcut="Ctrl+Shift+V" disabled />
-            <MenuSeparator />
-            <MenuItem label="选择" submenu disabled />
             <MenuItem label="上移该行" shortcut="Alt+向上箭头" onSelect={() => runTopMenuAction(() => void runEditCommand("moveLineUp"))} />
             <MenuItem label="下移该行" shortcut="Alt+向下箭头" onSelect={() => runTopMenuAction(() => void runEditCommand("moveLineDown"))} />
             <MenuSeparator />
             <MenuItem label="删除" shortcut="Delete" onSelect={() => runTopMenuAction(() => void runEditCommand("delete"))} />
-            <MenuItem label="删除范围" submenu disabled />
-            <MenuSeparator />
-            <MenuItem label="数学工具" submenu disabled />
-            <MenuSeparator />
-            <MenuItem label="智能标点" submenu disabled />
-            <MenuItem label="换行符" submenu disabled />
-            <MenuItem label="空格与换行" submenu disabled />
-            <MenuItem label="拼写检查..." disabled />
             <MenuSeparator />
             <MenuSubmenu label="查找和替换">
               <MenuItem label="查找..." shortcut="Ctrl+F" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(false))} />
@@ -1840,8 +2985,6 @@ export function App() {
             <MenuItem label="四级标题" shortcut="Ctrl+4" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "heading", level: 4 }))} />
             <MenuItem label="五级标题" shortcut="Ctrl+5" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "heading", level: 5 }))} />
             <MenuItem label="六级标题" shortcut="Ctrl+6" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "heading", level: 6 }))} />
-            <MenuSeparator />
-            <MenuItem label="段落" shortcut="Ctrl+0" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "paragraph" }))} />
             <MenuSeparator />
             <MenuItem label="提升标题级别" shortcut="Ctrl+=" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "promoteHeading" }))} />
             <MenuItem label="降低标题级别" shortcut="Ctrl+-" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "demoteHeading" }))} />
@@ -1922,11 +3065,6 @@ export function App() {
             <MenuItem label="文件树" shortcut="Ctrl+Shift+3" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
             <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(false))} />
             <MenuSeparator />
-            <MenuItem label="源代码模式" shortcut="Ctrl+/" checked={mode === "source"} onSelect={() => runTopMenuAction(() => setEditorMode("source"))} />
-            <MenuSeparator />
-            <MenuItem label="专注模式" shortcut="F8" disabled />
-            <MenuItem label="打字机模式" shortcut="F9" disabled />
-            <MenuSeparator />
             <MenuItem label="显示状态栏" checked disabled />
             <MenuItem label="字数统计窗口" disabled />
             <MenuSeparator />
@@ -1938,8 +3076,6 @@ export function App() {
             <MenuItem label="缩小" shortcut="Ctrl+Shift+-" disabled />
             <MenuSeparator />
             <MenuItem label="应用内窗口切换" shortcut="Ctrl+Tab 键" disabled />
-            <MenuSeparator />
-            <MenuItem label="开发者工具" shortcut="Shift+F12" disabled />
           </>
         );
       case "theme":
@@ -2073,17 +3209,32 @@ export function App() {
               文件
             </button>
             <button
-              className={sidebarTab === "current" ? "explorer-tab explorer-tab-active" : "explorer-tab"}
+              className={
+                sidebarTab === "current" || sidebarTab === "search"
+                  ? "explorer-tab explorer-tab-active"
+                  : "explorer-tab"
+              }
               type="button"
               role="tab"
-              aria-selected={sidebarTab === "current"}
-              onClick={() => setSidebarTab("current")}
+              aria-selected={sidebarTab === "current" || sidebarTab === "search"}
+              onClick={() =>
+                setSidebarTab(isWorkspaceSearchTabVisible ? "search" : "current")
+              }
             >
-              当前文件
+              {isWorkspaceSearchTabVisible ? "查找" : "当前文件"}
             </button>
           </div>
 
-          <div className="explorer-tree" aria-label={sidebarTab === "files" ? "文件目录" : "当前文件"}>
+          <div
+            className="explorer-tree"
+            aria-label={
+              sidebarTab === "files"
+                ? "文件目录"
+                : sidebarTab === "search"
+                  ? "查找"
+                  : "当前文件"
+            }
+          >
             {sidebarTab === "files" ? (
               directoryTree ? (
                 directoryTree.children?.length ? (
@@ -2101,7 +3252,7 @@ export function App() {
                   <div className="explorer-empty">
                     <FolderOpen size={24} />
                     <strong>{workspaceLabel}</strong>
-                    <span>当前文件夹中没有找到 Markdown 文件</span>
+                    <span>当前文件夹中没有找到 Markdown 或 HTML 文件</span>
                     <button type="button" onClick={createNewDocument}>
                       新建 Markdown 文件
                     </button>
@@ -2111,12 +3262,25 @@ export function App() {
                 <div className="explorer-empty">
                   <FolderOpen size={24} />
                   <strong>选择本地文件夹</strong>
-                  <span>打开一个目录后，会递归读取并显示其中的 .md 文件</span>
+                  <span>打开目录后，会递归读取并显示其中的 .md、.html 文件</span>
                   <button type="button" onClick={() => void openWorkspaceFolder()}>
                     打开文件夹
                   </button>
                 </div>
               )
+            ) : sidebarTab === "search" ? (
+              <WorkspaceSearchPanel
+                groups={workspaceSearchGroups}
+                inputRef={workspaceSearchInputRef}
+                matchCount={workspaceSearchMatchCount}
+                query={workspaceSearchQuery}
+                workspacePath={workspace.workspacePath}
+                onClose={closeWorkspaceSearch}
+                onOpenMatch={(document, match) => {
+                  void openWorkspaceSearchMatch(document, match);
+                }}
+                onQueryChange={setWorkspaceSearchQuery}
+              />
             ) : activeDocument && activeDocumentOutline.length ? (
               <div className="outline-tree">
                 {activeDocumentOutline.map((entry) => (
@@ -2167,7 +3331,7 @@ export function App() {
                 <FilePlus2 size={16} />
                 新建文件
               </button>
-              <button type="button" onClick={() => setIsActionsOpen(false)}>
+              <button type="button" onClick={openWorkspaceSearch}>
                 <Search size={16} />
                 搜索
               </button>
@@ -2199,7 +3363,12 @@ export function App() {
               </button>
             </div>
             <div className="explorer-actions">
-              <button type="button" aria-label="搜索">
+              <button
+                className={sidebarTab === "search" ? "explorer-action-active" : undefined}
+                type="button"
+                aria-label="搜索"
+                onClick={openWorkspaceSearch}
+              >
                 <Search size={17} />
               </button>
               <button
@@ -2232,11 +3401,13 @@ export function App() {
         </aside>
 
         <div
-          className={
-            isSidebarCollapsed
-              ? "sidebar-resizer sidebar-resizer-collapsed"
-              : "sidebar-resizer"
-          }
+          className={[
+            "sidebar-resizer",
+            isSidebarCollapsed ? "sidebar-resizer-collapsed" : "",
+            isSidebarResizing ? "sidebar-resizer-active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           role="separator"
           aria-label="Resize sidebar"
           aria-orientation="vertical"
@@ -2258,16 +3429,35 @@ export function App() {
                 <WelcomeIllustration />
               </div>
 
-              <section className="recent-documents">
+              <section
+                className={
+                  isRecentExpanded
+                    ? "recent-documents recent-documents-expanded"
+                    : "recent-documents"
+                }
+              >
                 <div className="recent-header">
                   <h2>最近文档</h2>
-                  <button type="button">
-                    更多
-                    <ChevronRight size={16} />
-                  </button>
+                  {hasMoreRecentDocuments && (
+                    <button
+                      type="button"
+                      aria-expanded={isRecentExpanded}
+                      onClick={() => setIsRecentExpanded((current) => !current)}
+                    >
+                      {isRecentExpanded ? "收起" : "更多"}
+                      <ChevronRight
+                        className={isRecentExpanded ? "recent-more-icon-expanded" : undefined}
+                        size={16}
+                      />
+                    </button>
+                  )}
                 </div>
-                <div className="recent-list">
-                  {recentDocuments.map((document) => (
+                <div
+                  className={
+                    isRecentExpanded ? "recent-list recent-list-expanded" : "recent-list"
+                  }
+                >
+                  {visibleRecentDocuments.map((document) => (
                     <button
                       className="recent-row"
                       key={document.id}
@@ -2275,7 +3465,7 @@ export function App() {
                       onClick={() => setActiveDocument(document.id)}
                     >
                       <FileText size={16} />
-                      <strong>{document.title}.md</strong>
+                      <strong>{getDocumentDisplayName(document)}</strong>
                       <span>{getDocumentPathPreview(document, workspace.workspacePath)}</span>
                       <time dateTime={document.updatedAt}>
                         {formatRecentTimestamp(document.updatedAt)}
@@ -2290,35 +3480,43 @@ export function App() {
             </section>
           ) : (
             <section className="editor-workspace">
-              <div className={`editor-layout editor-layout-${mode}`}>
-                {mode === "typora" && (
-                  <TyporaEditor
-                    ref={typoraEditorRef}
-                    documentId={activeDocument.id}
-                    value={activeDocument.content}
-                    onChange={updateMarkdown}
-                    onActiveLineChange={setActiveEditorLineIndex}
-                    onPaste={handlePaste}
-                  />
-                )}
+              {isHtmlDocument(activeDocument) ? (
+                <HtmlDocumentViewer document={activeDocument} />
+              ) : (
+                <div className={`editor-layout editor-layout-${mode}`}>
+                  {mode === "typora" && (
+                    <TyporaEditor
+                      ref={typoraEditorRef}
+                      documentId={activeDocument.id}
+                      filePath={activeDocument.filePath}
+                      value={activeDocument.content}
+                      onChange={updateMarkdown}
+                      onActiveLineChange={setActiveEditorLineIndex}
+                      onEditDrawing={openDrawingEditor}
+                      onPaste={handlePaste}
+                    />
+                  )}
 
-                {(mode === "source" || mode === "split") && (
-                  <textarea
-                    ref={editorRef}
-                    className="markdown-input"
-                    spellCheck={false}
-                    value={activeDocument.content}
-                    onChange={(event) => updateMarkdown(event.target.value)}
-                    onPaste={handlePaste}
-                  />
-                )}
+                  {(mode === "source" || mode === "split") && (
+                    <textarea
+                      ref={editorRef}
+                      className="markdown-input"
+                      spellCheck={false}
+                      value={activeDocument.content}
+                      onChange={(event) => updateMarkdown(event.target.value)}
+                      onPaste={handlePaste}
+                    />
+                  )}
 
-                {(mode === "split" || mode === "preview") && (
-                  <article className="markdown-preview">
-                    <MarkdownRenderer>{activeDocument.content}</MarkdownRenderer>
-                  </article>
-                )}
-              </div>
+                  {(mode === "split" || mode === "preview") && (
+                    <article className="markdown-preview">
+                      <MarkdownRenderer filePath={activeDocument.filePath}>
+                        {activeDocument.content}
+                      </MarkdownRenderer>
+                    </article>
+                  )}
+                </div>
+              )}
             </section>
           )}
           <footer className="workspace-statusbar">
@@ -2331,7 +3529,11 @@ export function App() {
               {isSidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
             </button>
             <span className="workspace-status-spacer" />
-            <span className="workspace-word-count">{activeDocument ? activeDocumentWordCount : 0} 词</span>
+            <span className="workspace-word-count">
+              {isHtmlDocument(activeDocument)
+                ? "HTML preview"
+                : `${activeDocument ? activeDocumentWordCount : 0} 词`}
+            </span>
           </footer>
         </section>
 
@@ -2349,7 +3551,7 @@ export function App() {
           }}
         />
 
-        <Dialog.Root open={isDrawingOpen} onOpenChange={setIsDrawingOpen}>
+        <Dialog.Root open={isDrawingOpen} onOpenChange={setDrawingDialogOpen}>
           <Dialog.Portal>
             <Dialog.Overlay className="dialog-overlay" />
             <Dialog.Content className="drawing-dialog">
@@ -2361,20 +3563,31 @@ export function App() {
                   </section>
                 }
               >
-                {activeDocument && (
+                {activeDocument && isMarkdownDocument(activeDocument) && (
                   <DrawingModal
+                    key={editingDrawingAsset?.id ?? "new-drawing"}
                     assetIndex={Object.keys(activeDocument.drawings).length + 1}
-                    onClose={() => setIsDrawingOpen(false)}
+                    initialAsset={editingDrawingAsset ?? undefined}
+                    onClose={() => setDrawingDialogOpen(false)}
                     onInsert={(asset: DrawingAsset) => {
+                      const shouldUpdatePreview = Boolean(editingDrawingAsset);
+                      const nextContent = shouldUpdatePreview
+                        ? replaceExcalidrawImagePreview(activeDocument.content, asset)
+                        : activeDocument.content;
+
                       patchActiveDocument({
+                        content: nextContent,
                         drawings: {
                           ...activeDocument.drawings,
                           [asset.id]: asset,
                         },
+                        title: renameFromMarkdown(nextContent, activeDocument.title),
                       });
-                      insertMarkdown(
-                        `![${asset.name}](${asset.dataUrl} "excalidraw:${asset.id} align=left") `,
-                      );
+                      if (!shouldUpdatePreview) {
+                        insertMarkdown(
+                          `![${asset.name}](${asset.dataUrl} "excalidraw:${asset.id} align=left") `,
+                        );
+                      }
                     }}
                   />
                 )}

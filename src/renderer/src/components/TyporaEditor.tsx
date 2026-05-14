@@ -1,4 +1,5 @@
 import { defaultValueCtx, editorViewCtx, Editor, rootCtx } from "@milkdown/kit/core";
+import { math } from "@milkdown/plugin-math";
 import { clipboard } from "@milkdown/kit/plugin/clipboard";
 import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
@@ -35,16 +36,24 @@ import { commonmark, htmlSchema } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { $prose, insert, replaceAll } from "@milkdown/kit/utils";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
+import "katex/dist/katex.min.css";
 import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  CircleAlert,
   Columns2,
   EllipsisVertical,
   Grid3x3,
+  Info,
+  Lightbulb,
   Maximize2,
+  OctagonAlert,
+  Pencil,
   Rows2,
   Trash2,
+  TriangleAlert,
+  type LucideIcon,
 } from "lucide-react";
 import {
   forwardRef,
@@ -57,23 +66,31 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { registerMarkdownLanguages } from "../syntaxHighlighting";
 import { createMermaidRenderId, renderMermaidSvg } from "../mermaid";
 import type {
   ImageAlignment,
+  TyporaAlertKind,
   TyporaEditCommand,
   TyporaFormatCommand,
   TyporaParagraphCommand,
 } from "../editorCommands";
 import {
   clampImageWidth,
+  getExcalidrawDrawingId,
   maxImageWidth,
   minImageWidth,
   parseImageMeta,
   patchImageMetaTitle,
   type ImageMeta,
 } from "../imageMeta";
-import { createMarkdownAlert, getMarkdownAlertByMarker } from "../markdownAlerts";
+import {
+  createMarkdownAlert,
+  getMarkdownAlertByMarker,
+  getMarkdownAlertByPrefix,
+} from "../markdownAlerts";
+import { resolveDocumentResourceUrl } from "../localPreviewUrls";
 import {
   createTableOfContentsMarkdown,
   getMarkdownHeadingAtLine as getHeadingAtLine,
@@ -94,14 +111,17 @@ export type {
 
 type TyporaEditorProps = {
   documentId: string;
+  filePath?: string;
   onActiveLineChange?: (lineIndex: number) => void;
   onChange: (value: string) => void;
+  onEditDrawing?: (drawingId: string) => void;
   onPaste: (event: ClipboardEvent<HTMLElement>) => void;
   value: string;
 };
 
 type TyporaSearchRevealOptions = {
   occurrenceIndex: number;
+  preserveRendered?: boolean;
   query: string;
 };
 
@@ -114,6 +134,31 @@ export type TyporaEditorHandle = {
   runParagraphCommand: (command: TyporaParagraphCommand) => void;
   scrollToLine: (lineIndex: number) => void;
 };
+
+const typoraAlertIcons: Record<TyporaAlertKind, LucideIcon> = {
+  caution: OctagonAlert,
+  important: CircleAlert,
+  note: Info,
+  tip: Lightbulb,
+  warning: TriangleAlert,
+};
+
+function createTyporaAlertTitle(kind: TyporaAlertKind, title: string) {
+  const Icon = typoraAlertIcons[kind] ?? Info;
+  const element = document.createElement("div");
+  const icon = document.createElement("span");
+  const label = document.createElement("span");
+
+  element.className = "typora-alert-title";
+  element.contentEditable = "false";
+  icon.className = "markdown-alert-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = renderToStaticMarkup(<Icon size={15} strokeWidth={2.35} />);
+  label.textContent = title;
+  element.append(icon, label);
+
+  return element;
+}
 
 function formatCodeLanguageLabel(language: string) {
   const normalizedLanguage = language.trim().toLowerCase();
@@ -205,6 +250,97 @@ function getRawHtmlImageSource(node: ProseMirrorNode) {
   const value = typeof node.attrs.value === "string" ? node.attrs.value : "";
 
   return rawHtmlImagePattern.test(value) ? value : null;
+}
+
+function getRawHtmlValue(node: ProseMirrorNode) {
+  return typeof node.attrs.value === "string"
+    ? node.attrs.value
+    : node.textContent;
+}
+
+function createRenderedHtmlPreview(
+  value: string,
+  filePath?: string,
+): HTMLElement | null {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue || /<script\b/i.test(trimmedValue)) {
+    return null;
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "typora-raw-html-preview";
+  wrapper.innerHTML = trimmedValue;
+
+  wrapper.querySelectorAll("[src]").forEach((element) => {
+    const source = element.getAttribute("src");
+    const resolvedSource = resolveDocumentResourceUrl(source ?? undefined, filePath);
+
+    if (resolvedSource) {
+      element.setAttribute("src", resolvedSource);
+    }
+  });
+
+  wrapper.querySelectorAll("[href]").forEach((element) => {
+    const href = element.getAttribute("href");
+    const resolvedHref = resolveDocumentResourceUrl(href ?? undefined, filePath);
+
+    if (resolvedHref) {
+      element.setAttribute("href", resolvedHref);
+    }
+  });
+
+  return wrapper;
+}
+
+function createRawHtmlPreviewDecoration(
+  filePathRef: MutableRefObject<string | undefined>,
+) {
+  return $prose(
+    () =>
+      new Plugin({
+        props: {
+          decorations(state) {
+            const decorations: Decoration[] = [];
+
+            state.doc.descendants((node: ProseMirrorNode, pos) => {
+              if (node.type.name !== "html") {
+                return;
+              }
+
+              const value = getRawHtmlValue(node);
+
+              if (!value.trim() || /<script\b/i.test(value)) {
+                return;
+              }
+
+              decorations.push(
+                Decoration.node(pos, pos + node.nodeSize, {
+                  class: "typora-raw-html-source-hidden",
+                }),
+                Decoration.widget(
+                  pos + node.nodeSize,
+                  () =>
+                    createRenderedHtmlPreview(value, filePathRef.current) ??
+                    document.createTextNode(""),
+                  {
+                    ignoreSelection: true,
+                    key: `typora-raw-html-preview-${pos}-${value}`,
+                    side: 1,
+                    stopEvent: (event) =>
+                      event.type === "click" ||
+                      event.type === "mousedown" ||
+                      event.type === "mouseup",
+                  },
+                ),
+              );
+            });
+
+            return DecorationSet.create(state.doc, decorations);
+          },
+        },
+      }),
+  );
 }
 
 const editableHtmlSchema = htmlSchema.extendSchema((previousSchema) => (ctx) => {
@@ -1098,7 +1234,8 @@ const markdownAlertDecoration = $prose(
             }
 
             const markerNode = node.child(0);
-            const alert = getMarkdownAlertByMarker(markerNode.textContent);
+            const markerText = markerNode.textContent;
+            const alert = getMarkdownAlertByPrefix(markerText);
 
             if (!alert) {
               return;
@@ -1107,12 +1244,35 @@ const markdownAlertDecoration = $prose(
             decorations.push(
               Decoration.node(pos, pos + node.nodeSize, {
                 class: `typora-alert-block typora-alert-${alert.kind}`,
-                "data-alert-title": alert.title,
               }),
-              Decoration.node(pos + 1, pos + 1 + markerNode.nodeSize, {
-                class: "typora-alert-marker-line",
-              }),
+              Decoration.widget(
+                pos + 1,
+                () => createTyporaAlertTitle(alert.kind, alert.title),
+                { side: -1 },
+              ),
             );
+
+            if (getMarkdownAlertByMarker(markerText)) {
+              decorations.push(
+                Decoration.node(pos + 1, pos + 1 + markerNode.nodeSize, {
+                  class: "typora-alert-marker-line",
+                }),
+              );
+              return;
+            }
+
+            const markerPrefix = markerText.match(
+              /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i,
+            )?.[0];
+
+            if (markerPrefix) {
+              const markerStart = pos + 2;
+              decorations.push(
+                Decoration.inline(markerStart, markerStart + markerPrefix.length, {
+                  class: "typora-alert-marker-inline",
+                }),
+              );
+            }
           });
 
           return DecorationSet.create(state.doc, decorations);
@@ -1263,6 +1423,19 @@ const markdownSyntaxDecoration = $prose(
           const { from, to } = state.selection;
           const pluginState = markdownSyntaxPluginKey.getState(state);
           const shouldShowMarkdownSyntax = pluginState?.isFocused ?? false;
+
+          if (pluginState?.expandedInlineCode) {
+            const { from: codeFrom, to: codeTo } = pluginState.expandedInlineCode;
+
+            if (codeFrom < codeTo && codeTo <= state.doc.content.size) {
+              decorations.push(
+                Decoration.inline(codeFrom, codeTo, {
+                  class: "typora-inline-code-source",
+                }),
+              );
+            }
+          }
+
           state.doc.descendants((node: ProseMirrorNode, pos) => {
             if (/^heading$/i.test(node.type.name)) {
               const level =
@@ -1365,41 +1538,53 @@ const disableNativeWritingChecks = $prose(
     }),
 );
 
-const editableImageDecoration = $prose(
-  () =>
-    new Plugin({
-      props: {
-        decorations(state) {
-          const decorations: Decoration[] = [];
+function createEditableImageDecoration(
+  filePathRef: MutableRefObject<string | undefined>,
+) {
+  return $prose(
+    () =>
+      new Plugin({
+        props: {
+          decorations(state) {
+            const decorations: Decoration[] = [];
 
-          state.doc.descendants((node: ProseMirrorNode, pos) => {
-            if (node.type.name !== "image") {
-              return;
-            }
+            state.doc.descendants((node: ProseMirrorNode, pos) => {
+              if (node.type.name !== "image") {
+                return;
+              }
 
-            const meta = parseImageMeta(node.attrs.title);
-            const className = [
-              "typora-editable-image",
-              `typora-editable-image-${meta.align}`,
-            ].join(" ");
-            const attrs: Record<string, string> = {
-              class: className,
-              "data-image-align": meta.align,
-            };
+              const meta = parseImageMeta(node.attrs.title);
+              const className = [
+                "typora-editable-image",
+                `typora-editable-image-${meta.align}`,
+              ].join(" ");
+              const attrs: Record<string, string> = {
+                class: className,
+                "data-image-align": meta.align,
+              };
+              const resolvedSrc = resolveDocumentResourceUrl(
+                node.attrs.src,
+                filePathRef.current,
+              );
 
-            if (meta.width) {
-              attrs.style = `width: ${meta.width}px;`;
-              attrs["data-image-width"] = String(meta.width);
-            }
+              if (resolvedSrc) {
+                attrs.src = resolvedSrc;
+              }
 
-            decorations.push(Decoration.node(pos, pos + node.nodeSize, attrs));
-          });
+              if (meta.width) {
+                attrs.style = `width: ${meta.width}px;`;
+                attrs["data-image-width"] = String(meta.width);
+              }
 
-          return DecorationSet.create(state.doc, decorations);
+              decorations.push(Decoration.node(pos, pos + node.nodeSize, attrs));
+            });
+
+            return DecorationSet.create(state.doc, decorations);
+          },
         },
-      },
-    }),
-);
+      }),
+  );
+}
 
 const editableImageSelection = $prose(
   () =>
@@ -1769,6 +1954,22 @@ function applyImageMetaPatch(
   return true;
 }
 
+function applyImageNamePatch(view: EditorView, pos: number, name: string) {
+  const node = view.state.doc.nodeAt(pos);
+
+  if (!node || node.type.name !== "image") {
+    return false;
+  }
+
+  view.dispatch(
+    view.state.tr.setNodeMarkup(pos, undefined, {
+      ...node.attrs,
+      alt: name,
+    }),
+  );
+  return true;
+}
+
 function setCurrentBlockType(
   view: EditorView,
   typeName: string,
@@ -2079,6 +2280,7 @@ type ImageToolbarState =
   | {
       align: ImageAlignment;
       displayWidth: number;
+      name: string;
       imageHeight: number;
       imageLeft: number;
       imageTop: number;
@@ -2087,8 +2289,36 @@ type ImageToolbarState =
       pos: number;
       top: number;
       visible: true;
+      drawingId?: string;
       width?: number;
     };
+
+function getImageDisplayName(node: ProseMirrorNode) {
+  const alt = typeof node.attrs.alt === "string" ? node.attrs.alt.trim() : "";
+
+  if (alt) {
+    return alt;
+  }
+
+  const source = typeof node.attrs.src === "string" ? node.attrs.src.trim() : "";
+
+  if (!source || source.startsWith("data:")) {
+    return getExcalidrawDrawingId(node.attrs.title) ? "Excalidraw" : "Image";
+  }
+
+  const cleanSource = source.split(/[?#]/)[0] ?? "";
+  const fileName = cleanSource.split(/[\\/]/).filter(Boolean).pop();
+
+  if (!fileName) {
+    return "Image";
+  }
+
+  try {
+    return decodeURIComponent(fileName);
+  } catch {
+    return fileName;
+  }
+}
 
 export function LegacyTableToolbar({
   onRun,
@@ -2392,11 +2622,13 @@ function TableToolbar({
 }
 
 function ImageToolbar({
+  onEditDrawing,
   onResetWidth,
   onSetAlign,
   onSetWidth,
   state,
 }: {
+  onEditDrawing?: (drawingId: string) => void;
   onResetWidth: (pos: number) => void;
   onSetAlign: (pos: number, align: ImageAlignment) => void;
   onSetWidth: (pos: number, width: number) => void;
@@ -2423,6 +2655,17 @@ function ImageToolbar({
       style={{ left: state.left, top: state.top }}
       onMouseDown={(event) => event.preventDefault()}
     >
+      {state.drawingId && onEditDrawing && (
+        <button
+          className="milkdown-image-toolbar-button"
+          type="button"
+          title="Edit Excalidraw"
+          aria-label="Edit Excalidraw"
+          onClick={() => onEditDrawing(state.drawingId!)}
+        >
+          <Pencil size={15} />
+        </button>
+      )}
       <div className="milkdown-image-toolbar-group">
         {alignmentActions.map((action) => (
           <button
@@ -2465,6 +2708,59 @@ function ImageToolbar({
   );
 }
 
+function ImageNameEditor({
+  onRename,
+  state,
+}: {
+  onRename: (pos: number, name: string) => void;
+  state: ImageToolbarState;
+}) {
+  const [draft, setDraft] = useState("");
+  const visiblePos = state.visible ? state.pos : -1;
+  const visibleName = state.visible ? state.name : "";
+
+  useEffect(() => {
+    setDraft(visibleName);
+  }, [visibleName, visiblePos]);
+
+  if (!state.visible) {
+    return null;
+  }
+
+  const commit = () => {
+    const nextName = draft.trim() || (state.drawingId ? "Excalidraw" : "Image");
+
+    if (nextName !== state.name) {
+      onRename(state.pos, nextName);
+    }
+  };
+
+  return (
+    <input
+      className="milkdown-image-name-editor"
+      aria-label="Image name"
+      value={draft}
+      style={{
+        left: state.imageLeft + state.imageWidth / 2,
+        top: state.imageTop + state.imageHeight + 7,
+        width: Math.max(148, Math.min(state.imageWidth, 360)),
+      }}
+      onBlur={commit}
+      onChange={(event) => setDraft(event.target.value)}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+      }}
+      onMouseDown={(event) => event.stopPropagation()}
+    />
+  );
+}
+
 function ImageResizeHandle({
   onResizeStart,
   state,
@@ -2500,14 +2796,17 @@ type MilkdownRuntimeProps = TyporaEditorProps & {
 function MilkdownRuntime({
   controllerRef,
   documentId,
+  filePath,
   markdownRef,
   onActiveLineChange,
   onChangeRef,
+  onEditDrawing,
   rootRef,
   value,
   valueRef,
 }: MilkdownRuntimeProps) {
   const applyingExternalValueRef = useRef(false);
+  const filePathRef = useRef(filePath);
   const [imageToolbar, setImageToolbar] = useState<ImageToolbarState>({
     visible: false,
   });
@@ -2515,6 +2814,10 @@ function MilkdownRuntime({
     visible: false,
   });
   const activeHeadingTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    filePathRef.current = filePath;
+  }, [filePath]);
   const previousDocumentIdRef = useRef(documentId);
   const pendingActiveHeadingRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
@@ -2612,11 +2915,13 @@ function MilkdownRuntime({
     setImageToolbar({
       align: meta.align,
       displayWidth: clampImageWidth(imageRect.width || minImageWidth),
+      drawingId: getExcalidrawDrawingId(image.node.attrs.title) ?? undefined,
       imageHeight: imageRect.height,
       imageLeft: imageRect.left - overlayRect.left,
       imageTop: imageRect.top - overlayRect.top,
       imageWidth: imageRect.width,
       left,
+      name: getImageDisplayName(image.node),
       pos: image.pos,
       top,
       visible: true,
@@ -2723,6 +3028,25 @@ function MilkdownRuntime({
 
   function resetImageWidth(pos: number) {
     updateImageMeta(pos, { width: undefined });
+  }
+
+  function renameImage(pos: number, name: string) {
+    const editor = get();
+
+    if (!editor) {
+      return;
+    }
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+
+      if (!applyImageNamePatch(view, pos, name)) {
+        setImageToolbar({ visible: false });
+        return;
+      }
+
+      requestAnimationFrame(() => updateImageToolbarFromView(view));
+    });
   }
 
   function stopImageResize() {
@@ -2855,15 +3179,17 @@ function MilkdownRuntime({
       .use(trailing)
       .use(clipboard)
       .use(gfm)
+      .use(math)
       .use(prism)
       .use(disableNativeWritingChecks)
       .use(codeBlockLanguageDecoration)
       .use(mermaidBlockDecoration)
+      .use(createRawHtmlPreviewDecoration(filePathRef))
       .use(markdownAlertDecoration)
       .use(markdownSyntaxDecoration)
       .use(searchHighlightDecoration)
       .use(editableImageSelection)
-      .use(editableImageDecoration);
+      .use(createEditableImageDecoration(filePathRef));
   }, []);
 
   function reportActiveHeading() {
@@ -3098,15 +3424,33 @@ function MilkdownRuntime({
             return;
           }
 
-          view.dispatch(
-            view.state.tr
-              .setSelection(TextSelection.create(view.state.doc, range.from, range.to))
-              .setMeta(searchHighlightPluginKey, {
-                range,
-              } satisfies Partial<SearchHighlightPluginState>)
-              .scrollIntoView(),
-          );
-          view.focus();
+          if (options.preserveRendered) {
+            view.dispatch(
+              view.state.tr
+                .setMeta(searchHighlightPluginKey, {
+                  range,
+                } satisfies Partial<SearchHighlightPluginState>)
+                .setMeta(markdownSyntaxPluginKey, {
+                  isFocused: false,
+                  suppressedInlineCodeAt: null,
+                } satisfies Partial<MarkdownSyntaxPluginState>),
+            );
+            const activeElement = document.activeElement;
+
+            if (activeElement instanceof HTMLElement && view.dom.contains(activeElement)) {
+              activeElement.blur();
+            }
+          } else {
+            view.dispatch(
+              view.state.tr
+                .setSelection(TextSelection.create(view.state.doc, range.from, range.to))
+                .setMeta(searchHighlightPluginKey, {
+                  range,
+                } satisfies Partial<SearchHighlightPluginState>)
+                .scrollIntoView(),
+            );
+            view.focus();
+          }
 
           const currentRange =
             searchHighlightPluginKey.getState(view.state)?.range ?? range;
@@ -3368,10 +3712,12 @@ function MilkdownRuntime({
     >
       <ImageToolbar
         state={imageToolbar}
+        onEditDrawing={onEditDrawing}
         onResetWidth={resetImageWidth}
         onSetAlign={setImageAlignment}
         onSetWidth={setImageWidth}
       />
+      <ImageNameEditor state={imageToolbar} onRename={renameImage} />
       <ImageResizeHandle state={imageToolbar} onResizeStart={startImageResize} />
       <TableToolbar state={tableToolbar} onResize={resizeSelectedTable} onRun={runTableCommand} />
       <Milkdown />
@@ -3380,7 +3726,10 @@ function MilkdownRuntime({
 }
 
 export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
-  function TyporaEditor({ documentId, onActiveLineChange, onChange, onPaste, value }, ref) {
+  function TyporaEditor(
+    { documentId, filePath, onActiveLineChange, onChange, onEditDrawing, onPaste, value },
+    ref,
+  ) {
     const rootRef = useRef<HTMLElement | null>(null);
     const controllerRef = useRef<TyporaEditorHandle | null>(null);
     const markdownRef = useRef(value);
@@ -3430,6 +3779,23 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
         aria-label="Milkdown markdown editor"
         autoCapitalize="off"
         autoCorrect="off"
+        onDoubleClick={(event) => {
+          if (!onEditDrawing || !(event.target instanceof Element)) {
+            return;
+          }
+
+          const imageElement = event.target.closest("img.typora-editable-image");
+          const drawingId = getExcalidrawDrawingId(
+            imageElement?.getAttribute("title") ?? undefined,
+          );
+
+          if (!drawingId) {
+            return;
+          }
+
+          event.preventDefault();
+          onEditDrawing(drawingId);
+        }}
         onPaste={onPaste}
         spellCheck={false}
       >
@@ -3437,10 +3803,12 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
           <MilkdownRuntime
             controllerRef={controllerRef}
             documentId={documentId}
+            filePath={filePath}
             markdownRef={markdownRef}
             onActiveLineChange={onActiveLineChange}
             onChange={onChange}
             onChangeRef={onChangeRef}
+            onEditDrawing={onEditDrawing}
             onPaste={onPaste}
             rootRef={rootRef}
             value={value}

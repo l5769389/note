@@ -1,4 +1,4 @@
-import type { MarkdownDocument, WorkspaceSnapshot } from "./types";
+import type { DocumentType, MarkdownDocument, WorkspaceSnapshot } from "./types";
 
 const STORAGE_KEY = "typora-like-editor:workspace:v1";
 
@@ -30,6 +30,8 @@ export function createDocument(
   title = "未命名文档",
   content = defaultMarkdown,
   filePath?: string,
+  documentType: DocumentType = "markdown",
+  fileExtension?: string,
 ): MarkdownDocument {
   const timestamp = now();
 
@@ -37,7 +39,9 @@ export function createDocument(
     id: crypto.randomUUID(),
     title,
     content,
+    documentType,
     drawings: {},
+    fileExtension,
     filePath,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -52,6 +56,24 @@ export function createInitialWorkspace(): WorkspaceSnapshot {
     activeDocumentId: "",
     documents: [document],
     updatedAt: now(),
+  };
+}
+
+function getStoredDocumentType(filePath?: string): DocumentType {
+  return filePath && /\.html?$/i.test(filePath) ? "html" : "markdown";
+}
+
+function getStoredFileExtension(filePath?: string) {
+  return filePath?.match(/\.([^.\\/]+)$/)?.[0]?.toLowerCase();
+}
+
+function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
+  return {
+    ...document,
+    documentType: document.documentType ?? getStoredDocumentType(document.filePath),
+    drawings: document.drawings ?? {},
+    fileExtension:
+      document.fileExtension ?? getStoredFileExtension(document.filePath) ?? ".md",
   };
 }
 
@@ -72,6 +94,7 @@ export function loadWorkspace(): WorkspaceSnapshot {
     return {
       ...parsed,
       activeDocumentId: "",
+      documents: parsed.documents.map(normalizeStoredDocument),
     };
   } catch {
     return createInitialWorkspace();

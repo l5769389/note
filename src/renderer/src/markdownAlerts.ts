@@ -55,7 +55,9 @@ export const markdownAlertByType = Object.fromEntries(
   markdownAlertOptions.map((option) => [option.markdownType, option]),
 ) as Record<MarkdownAlertType, MarkdownAlertMeta>;
 
-const alertMarkerPattern = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/i;
+const alertMarkerPattern = /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i;
+const alertMarkerPrefixPattern =
+  /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i;
 
 export function createMarkdownAlert(kind: TyporaAlertKind) {
   const alert = markdownAlertByKind[kind] ?? markdownAlertByKind.note;
@@ -64,11 +66,25 @@ export function createMarkdownAlert(kind: TyporaAlertKind) {
 }
 
 export function getMarkdownAlertByMarker(text: string) {
-  const match = text.trim().match(alertMarkerPattern);
+  const match = text.match(alertMarkerPattern);
 
   if (!match) {
     return null;
   }
 
   return markdownAlertByType[match[1].toUpperCase() as MarkdownAlertType] ?? null;
+}
+
+export function getMarkdownAlertByPrefix(text: string) {
+  const match = text.match(alertMarkerPrefixPattern);
+
+  if (!match) {
+    return null;
+  }
+
+  return markdownAlertByType[match[1].toUpperCase() as MarkdownAlertType] ?? null;
+}
+
+export function stripMarkdownAlertMarker(text: string) {
+  return text.replace(alertMarkerPrefixPattern, "");
 }

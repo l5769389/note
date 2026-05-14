@@ -12,14 +12,48 @@ type ExcalidrawApi = {
 
 type DrawingModalProps = {
   assetIndex: number;
+  initialAsset?: DrawingAsset;
   onClose: () => void;
   onInsert: (asset: DrawingAsset) => void;
 };
 
 const now = () => new Date().toISOString();
 
+function getInitialDrawingData(asset?: DrawingAsset) {
+  const fallback = {
+    appState: {
+      viewBackgroundColor: "#ffffff",
+      currentItemFontFamily: 1,
+    },
+  };
+
+  if (!asset?.sceneJSON) {
+    return fallback;
+  }
+
+  try {
+    const scene = JSON.parse(asset.sceneJSON) as {
+      appState?: Record<string, unknown>;
+      elements?: readonly unknown[];
+      files?: Record<string, unknown>;
+    };
+
+    return {
+      ...scene,
+      appState: {
+        ...scene.appState,
+        viewBackgroundColor: "#ffffff",
+        currentItemFontFamily: 1,
+      },
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 export function DrawingModal({
   assetIndex,
+  initialAsset,
   onClose,
   onInsert,
 }: DrawingModalProps) {
@@ -59,8 +93,8 @@ export function DrawingModal({
         new File([blob], "excalidraw-flow.png", { type: "image/png" }),
       );
       const asset: DrawingAsset = {
-        id: crypto.randomUUID(),
-        name: `流程图 ${assetIndex}`,
+        id: initialAsset?.id ?? crypto.randomUUID(),
+        name: initialAsset?.name ?? `Excalidraw ${assetIndex}`,
         dataUrl,
         sceneJSON: serializeAsJSON(
           elements as never,
@@ -68,7 +102,7 @@ export function DrawingModal({
           files as never,
           "local",
         ),
-        createdAt: now(),
+        createdAt: initialAsset?.createdAt ?? now(),
       };
 
       onInsert(asset);
@@ -94,7 +128,7 @@ export function DrawingModal({
             disabled={isExportingDrawing}
           >
             <Check size={16} />
-            {isExportingDrawing ? "插入中" : "插入文档"}
+            {isExportingDrawing ? "保存中" : initialAsset ? "保存" : "插入"}
           </button>
         </div>
       </header>
@@ -103,12 +137,7 @@ export function DrawingModal({
           excalidrawAPI={(api) => {
             excalidrawApiRef.current = api as ExcalidrawApi;
           }}
-          initialData={{
-            appState: {
-              viewBackgroundColor: "#ffffff",
-              currentItemFontFamily: 1,
-            },
-          }}
+          initialData={getInitialDrawingData(initialAsset)}
         />
       </div>
     </section>

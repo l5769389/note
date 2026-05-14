@@ -1,12 +1,28 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
-import type { OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from "electron";
+import type { IpcMainInvokeEvent, OpenDialogOptions, SaveDialogOptions } from "electron";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, extname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 const appName = "Markdown Studio";
 const appUserModelId = "com.local.markdownstudio";
+const localPreviewProtocol = "typora-local";
+
+protocol.registerSchemesAsPrivileged([
+  {
+    privileges: {
+      secure: true,
+      standard: true,
+      stream: true,
+      supportFetchAPI: true,
+    },
+    scheme: localPreviewProtocol,
+  },
+]);
 
 let mainWindow: BrowserWindow | null = null;
 const ignoredDirectoryNames = new Set([
@@ -16,12 +32,23 @@ const ignoredDirectoryNames = new Set([
   "out",
   "target",
 ]);
+const markdownExtensions = new Set([".md", ".markdown", ".mdown"]);
+const htmlExtensions = new Set([".html", ".htm"]);
+const maxDirectoryTreeDepth = 8;
+
+type DocumentFileType = "markdown" | "html";
 
 type DirectoryTreeItem = {
   children?: DirectoryTreeItem[];
   name: string;
   path: string;
   type: "directory" | "file";
+};
+
+type ExportDocumentPayload = {
+  filePath?: string;
+  html: string;
+  title: string;
 };
 
 function getWorkspaceLabel(directoryPath: string) {
@@ -66,13 +93,67 @@ function titleFromFilePath(filePath: string) {
   return basename(filePath, extname(filePath));
 }
 
+function getDocumentFileType(filePath: string): DocumentFileType | null {
+  const extension = extname(filePath).toLowerCase();
+
+  if (markdownExtensions.has(extension)) {
+    return "markdown";
+  }
+
+  if (htmlExtensions.has(extension)) {
+    return "html";
+  }
+
+  return null;
+}
+
+function isSupportedDocumentFile(filePath: string) {
+  return getDocumentFileType(filePath) !== null;
+}
+
+function getDefaultExportPath(payload: ExportDocumentPayload, extension: "html" | "pdf") {
+  const safeTitle = normalizeMarkdownName(payload.title);
+  const directoryPath = payload.filePath ? dirname(payload.filePath) : app.getPath("documents");
+
+  return join(directoryPath, `${safeTitle}.${extension}`);
+}
+
+async function pickExportFilePath(
+  event: IpcMainInvokeEvent,
+  payload: ExportDocumentPayload,
+  extension: "html" | "pdf",
+) {
+  const options: SaveDialogOptions = {
+    defaultPath: getDefaultExportPath(payload, extension),
+    filters: [
+      extension === "pdf"
+        ? { name: "PDF", extensions: ["pdf"] }
+        : { name: "HTML", extensions: ["html", "htm"] },
+    ],
+    title: extension === "pdf" ? "导出为 PDF" : "导出为 HTML",
+  };
+  const owner = getDialogOwner(event);
+  const result = owner
+    ? await dialog.showSaveDialog(owner, options)
+    : await dialog.showSaveDialog(options);
+
+  return result.canceled ? null : result.filePath ?? null;
+}
+
 async function readMarkdownFile(filePath: string) {
   const fileStat = await stat(filePath);
+  const documentType = getDocumentFileType(filePath);
+
+  if (!documentType) {
+    throw new Error(`Unsupported document file: ${filePath}`);
+  }
 
   return {
     content: await readFile(filePath, "utf-8"),
     createdAt: fileStat.birthtime.toISOString(),
+    documentType,
     filePath,
+    fileExtension: extname(filePath).toLowerCase(),
     title: titleFromFilePath(filePath),
     updatedAt: fileStat.mtime.toISOString(),
   };
@@ -98,7 +179,10 @@ async function readSafeDirectoryEntries(directoryPath: string) {
   }
 }
 
-async function readDirectoryTree(directoryPath: string, depth = 0): Promise<DirectoryTreeItem> {
+async function readDirectoryTree(
+  directoryPath: string,
+  depth = 0,
+): Promise<DirectoryTreeItem | null> {
   const entries = await readSafeDirectoryEntries(directoryPath);
   const children: DirectoryTreeItem[] = [];
 
@@ -110,15 +194,20 @@ async function readDirectoryTree(directoryPath: string, depth = 0): Promise<Dire
     const entryPath = join(directoryPath, entry.name);
 
     if (entry.isDirectory()) {
-      children.push(
-        depth >= 3
-          ? { name: entry.name, path: entryPath, type: "directory" }
-          : await readDirectoryTree(entryPath, depth + 1),
-      );
+      if (depth >= maxDirectoryTreeDepth) {
+        continue;
+      }
+
+      const childTree = await readDirectoryTree(entryPath, depth + 1);
+
+      if (childTree?.children?.length) {
+        children.push(childTree);
+      }
+
       continue;
     }
 
-    if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+    if (entry.isFile() && isSupportedDocumentFile(entry.name)) {
       children.push({ name: entry.name, path: entryPath, type: "file" });
     }
   }
@@ -130,6 +219,10 @@ async function readDirectoryTree(directoryPath: string, depth = 0): Promise<Dire
 
     return a.name.localeCompare(b.name, "zh-Hans-CN");
   });
+
+  if (!children.length && depth > 0) {
+    return null;
+  }
 
   return {
     children,
@@ -153,7 +246,7 @@ async function listMarkdownFiles(directoryPath: string, depth = 0): Promise<Awai
         return depth >= 3 ? [] : listMarkdownFiles(entryPath, depth + 1);
       }
 
-      if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+      if (entry.isFile() && isSupportedDocumentFile(entry.name)) {
         try {
           return [await readMarkdownFile(entryPath)];
         } catch {
@@ -184,8 +277,29 @@ function getAppIconPath() {
     : join(process.cwd(), "resources", "icon.ico");
 }
 
-function createMainWindow(): void {
-  mainWindow = new BrowserWindow({
+function getSenderWindow(event: IpcMainInvokeEvent) {
+  return BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
+}
+
+function getDialogOwner(event?: IpcMainInvokeEvent) {
+  return event ? getSenderWindow(event) : BrowserWindow.getFocusedWindow() ?? mainWindow;
+}
+
+function registerLocalPreviewProtocol() {
+  protocol.handle(localPreviewProtocol, (request) => {
+    const url = new URL(request.url);
+    const pathname = decodeURIComponent(url.pathname);
+    const filePath =
+      process.platform === "win32" && /^\/[a-zA-Z]:\//.test(pathname)
+        ? pathname.slice(1)
+        : pathname;
+
+    return net.fetch(pathToFileURL(filePath).toString());
+  });
+}
+
+function createMainWindow(): BrowserWindow {
+  const window = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 960,
@@ -203,16 +317,20 @@ function createMainWindow(): void {
     },
   });
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+  mainWindow = window;
+
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = BrowserWindow.getAllWindows().find((item) => item !== window) ?? null;
+    }
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };
   });
 
-  mainWindow.webContents.on("will-navigate", (event, url) => {
+  window.webContents.on("will-navigate", (event, url) => {
     if (isSafeNavigation(url)) {
       return;
     }
@@ -222,12 +340,13 @@ function createMainWindow(): void {
   });
 
   if (devServerUrl) {
-    void mainWindow.loadURL(devServerUrl);
-    mainWindow.webContents.openDevTools({ mode: "detach" });
-    return;
+    void window.loadURL(devServerUrl);
+    window.webContents.openDevTools({ mode: "detach" });
+    return window;
   }
 
-  void mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+  void window.loadFile(join(__dirname, "../renderer/index.html"));
+  return window;
 }
 
 if (process.platform === "win32") {
@@ -269,6 +388,31 @@ function registerFileIpc() {
     return result.canceled ? null : readMarkdownFile(result.filePaths[0]);
   });
 
+  ipcMain.handle("workspace:save-markdown-file-as", async (event, payload: { content: string; filePath?: string; title: string }) => {
+    const safeTitle = normalizeMarkdownName(payload.title);
+    const defaultPath = payload.filePath || join(app.getPath("documents"), `${safeTitle}.md`);
+    const options: SaveDialogOptions = {
+      defaultPath,
+      filters: [
+        { name: "Documents", extensions: ["md", "markdown", "mdown", "html", "htm"] },
+        { name: "Markdown", extensions: ["md", "markdown", "mdown"] },
+        { name: "HTML", extensions: ["html", "htm"] },
+      ],
+      title: "另存为 Markdown 文件",
+    };
+    const owner = getDialogOwner(event);
+    const result = owner
+      ? await dialog.showSaveDialog(owner, options)
+      : await dialog.showSaveDialog(options);
+
+    if (result.canceled || !result.filePath) {
+      return null;
+    }
+
+    await writeFile(result.filePath, payload.content, "utf-8");
+    return readMarkdownFile(result.filePath);
+  });
+
   ipcMain.handle("workspace:create-markdown-file", async (_, payload: { directoryPath: string; title: string }) => {
     const directoryPath = payload.directoryPath || app.getPath("desktop");
     const title = normalizeMarkdownName(payload.title);
@@ -292,6 +436,10 @@ function registerFileIpc() {
     return readMarkdownFile(filePath);
   });
 
+  ipcMain.handle("workspace:path-exists", async (_, filePath: string) => {
+    return pathExists(filePath);
+  });
+
   ipcMain.handle("workspace:list-markdown-files", async (_, directoryPath: string) => {
     return listMarkdownFiles(directoryPath || app.getPath("desktop"));
   });
@@ -310,34 +458,103 @@ function registerFileIpc() {
 
     shell.showItemInFolder(targetPath);
   });
+
+  ipcMain.handle("export:html", async (event, payload: ExportDocumentPayload) => {
+    const filePath = await pickExportFilePath(event, payload, "html");
+
+    if (!filePath) {
+      return null;
+    }
+
+    await writeFile(filePath, payload.html, "utf-8");
+    return filePath;
+  });
+
+  ipcMain.handle("export:pdf", async (event, payload: ExportDocumentPayload) => {
+    const filePath = await pickExportFilePath(event, payload, "pdf");
+
+    if (!filePath) {
+      return null;
+    }
+
+    const tempHtmlPath = join(tmpdir(), `markdown-studio-export-${randomUUID()}.html`);
+    let exportWindow: BrowserWindow | null = null;
+
+    try {
+      await writeFile(tempHtmlPath, payload.html, "utf-8");
+
+      exportWindow = new BrowserWindow({
+        show: false,
+        backgroundColor: "#ffffff",
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      });
+
+      exportWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+      await exportWindow.loadFile(tempHtmlPath);
+      await exportWindow.webContents
+        .executeJavaScript(
+          "document.fonts?.ready ? document.fonts.ready.then(() => true) : true",
+          true,
+        )
+        .catch(() => true);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const pdf = await exportWindow.webContents.printToPDF({
+        displayHeaderFooter: false,
+        generateDocumentOutline: true,
+        margins: { marginType: "none" },
+        pageSize: "A4",
+        preferCSSPageSize: true,
+        printBackground: true,
+      });
+
+      await writeFile(filePath, pdf);
+      return filePath;
+    } finally {
+      exportWindow?.destroy();
+      await rm(tempHtmlPath, { force: true });
+    }
+  });
 }
 
 function registerWindowIpc() {
-  ipcMain.handle("window:minimize", () => {
-    mainWindow?.minimize();
+  ipcMain.handle("window:new", () => {
+    createMainWindow();
   });
 
-  ipcMain.handle("window:maximize", () => {
-    if (!mainWindow) {
+  ipcMain.handle("window:minimize", (event) => {
+    getSenderWindow(event)?.minimize();
+  });
+
+  ipcMain.handle("window:maximize", (event) => {
+    const window = getSenderWindow(event);
+
+    if (!window) {
       return false;
     }
 
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize();
+    if (window.isMaximized()) {
+      window.unmaximize();
       return false;
     }
 
-    mainWindow.maximize();
+    window.maximize();
     return true;
   });
 
-  ipcMain.handle("window:close", () => {
-    mainWindow?.close();
+  ipcMain.handle("window:close", (event) => {
+    getSenderWindow(event)?.close();
   });
 }
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  registerLocalPreviewProtocol();
   registerFileIpc();
   registerWindowIpc();
   createMainWindow();

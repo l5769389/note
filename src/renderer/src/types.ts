@@ -1,4 +1,5 @@
 export type EditorMode = "typora" | "source" | "split" | "preview";
+export type DocumentType = "markdown" | "html";
 
 export type DrawingAsset = {
   id: string;
@@ -12,7 +13,9 @@ export type MarkdownDocument = {
   id: string;
   title: string;
   content: string;
+  documentType: DocumentType;
   drawings: Record<string, DrawingAsset>;
+  fileExtension?: string;
   filePath?: string;
   createdAt: string;
   updatedAt: string;
@@ -43,6 +46,8 @@ export type DirectoryTreeItem = {
 export type LocalMarkdownFile = {
   content: string;
   createdAt: string;
+  documentType: DocumentType;
+  fileExtension: string;
   filePath: string;
   title: string;
   updatedAt: string;
