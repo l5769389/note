@@ -81,7 +81,13 @@ function parseJsonTopic(topic: Record<string, unknown>, fallbackTitle: string): 
 
 function parseContentJson(content: string): XmindDocumentModel {
   const parsed = JSON.parse(content) as unknown;
-  const rawSheets = Array.isArray(parsed) ? parsed : [];
+  const rawSheets = Array.isArray(parsed)
+    ? parsed
+    : parsed &&
+        typeof parsed === "object" &&
+        Array.isArray((parsed as Record<string, unknown>).sheets)
+      ? ((parsed as Record<string, unknown>).sheets as unknown[])
+      : [];
   const sheets = rawSheets
     .filter((sheet): sheet is Record<string, unknown> => sheet && typeof sheet === "object")
     .map((sheet, index) => {

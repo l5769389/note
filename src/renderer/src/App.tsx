@@ -1526,6 +1526,34 @@ export function App() {
     }
   }
 
+  async function reloadDocumentFromDisk(document?: MarkdownDocument | null) {
+    if (!document?.filePath) {
+      return;
+    }
+
+    const localFile = await window.desktop?.readMarkdownFile?.(document.filePath);
+
+    if (!localFile) {
+      throw new Error("无法读取磁盘上的文件。");
+    }
+
+    const nextDocument = createDocumentFromLocalFile(localFile);
+
+    if (nextDocument.filePath) {
+      savedFileContentByPathRef.current.set(nextDocument.filePath, nextDocument.content);
+    }
+
+    setWorkspace((current) => ({
+      ...current,
+      activeDocumentId: document.id,
+      documents: mergeDocumentByFilePath(current.documents, nextDocument),
+      workspacePath:
+        current.workspacePath ||
+        getDirectoryPath(nextDocument.filePath) ||
+        current.workspacePath,
+    }));
+  }
+
   function setDrawingDialogOpen(open: boolean) {
     setIsDrawingOpen(open);
 
@@ -3189,7 +3217,10 @@ export function App() {
                   }
                 />
               ) : isXmindDocument(activeDocument) ? (
-                <XmindDocumentViewer document={activeDocument} />
+                <XmindDocumentViewer
+                  document={activeDocument}
+                  onReload={() => reloadDocumentFromDisk(activeDocument)}
+                />
               ) : (
                 <div className={`editor-layout editor-layout-${mode}`}>
                   {mode === "typora" && (

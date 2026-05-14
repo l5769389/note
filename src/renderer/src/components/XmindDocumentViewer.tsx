@@ -1,4 +1,4 @@
-import { ExternalLink, FileText, GitBranch, Loader2 } from "lucide-react";
+import { ExternalLink, FileText, GitBranch, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { MarkdownDocument } from "../types";
 import {
@@ -9,6 +9,7 @@ import {
 
 type XmindDocumentViewerProps = {
   document: MarkdownDocument;
+  onReload?: () => Promise<void>;
 };
 
 type XmindParseState =
@@ -84,9 +85,16 @@ function XmindMap({ rootTopic }: { rootTopic: XmindTopicNode }) {
   );
 }
 
-export function XmindDocumentViewer({ document }: XmindDocumentViewerProps) {
+export function XmindDocumentViewer({
+  document,
+  onReload,
+}: XmindDocumentViewerProps) {
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
-  const [parseState, setParseState] = useState<XmindParseState>({ status: "loading" });
+  const [parseState, setParseState] = useState<XmindParseState>({
+    status: "loading",
+  });
+  const [externalMessage, setExternalMessage] = useState("");
+  const [isReloading, setIsReloading] = useState(false);
   const displayName = getDisplayName(document);
 
   useEffect(() => {
@@ -94,6 +102,22 @@ export function XmindDocumentViewer({ document }: XmindDocumentViewerProps) {
 
     setActiveSheetIndex(0);
     setParseState({ status: "loading" });
+
+    if (!document.content && document.filePath && onReload) {
+      onReload().catch((error: unknown) => {
+        if (!isDisposed) {
+          setParseState({
+            message:
+              error instanceof Error ? error.message : "Unable to reload this XMind file.",
+            status: "error",
+          });
+        }
+      });
+
+      return () => {
+        isDisposed = true;
+      };
+    }
 
     parseXmindDocument(document.content)
       .then((model) => {
@@ -104,7 +128,8 @@ export function XmindDocumentViewer({ document }: XmindDocumentViewerProps) {
       .catch((error: unknown) => {
         if (!isDisposed) {
           setParseState({
-            message: error instanceof Error ? error.message : "Unable to read this XMind file.",
+            message:
+              error instanceof Error ? error.message : "Unable to read this XMind file.",
             status: "error",
           });
         }
@@ -113,7 +138,11 @@ export function XmindDocumentViewer({ document }: XmindDocumentViewerProps) {
     return () => {
       isDisposed = true;
     };
-  }, [document.content, document.id]);
+  }, [document.content, document.filePath, document.id]);
+
+  useEffect(() => {
+    setExternalMessage("");
+  }, [document.id]);
 
   const activeSheet = useMemo(() => {
     if (parseState.status !== "ready") {
@@ -123,9 +152,42 @@ export function XmindDocumentViewer({ document }: XmindDocumentViewerProps) {
     return parseState.model.sheets[activeSheetIndex] ?? parseState.model.sheets[0] ?? null;
   }, [activeSheetIndex, parseState]);
 
-  function openInXmind() {
-    if (document.filePath) {
-      void window.desktop?.openPath?.(document.filePath);
+  async function openInXmind() {
+    if (!document.filePath) {
+      return;
+    }
+
+    setExternalMessage("");
+
+    try {
+      const errorMessage = await window.desktop?.openPath?.(document.filePath);
+
+      if (errorMessage) {
+        setExternalMessage(`无法打开默认 XMind 应用：${errorMessage}`);
+        return;
+      }
+
+      setExternalMessage("已交给系统默认应用打开，编辑保存后可返回这里重新载入。");
+    } catch (error) {
+      setExternalMessage(error instanceof Error ? error.message : "无法打开 XMind 文件。");
+    }
+  }
+
+  async function reloadFromDisk() {
+    if (!onReload) {
+      return;
+    }
+
+    setIsReloading(true);
+    setExternalMessage("");
+
+    try {
+      await onReload();
+      setExternalMessage("已重新载入磁盘上的 XMind 文件。");
+    } catch (error) {
+      setExternalMessage(error instanceof Error ? error.message : "重新载入 XMind 文件失败。");
+    } finally {
+      setIsReloading(false);
     }
   }
 
@@ -156,12 +218,24 @@ export function XmindDocumentViewer({ document }: XmindDocumentViewerProps) {
               ))}
             </div>
           ) : null}
+          <button
+            type="button"
+            disabled={!document.filePath || isReloading || !onReload}
+            onClick={reloadFromDisk}
+          >
+            <RefreshCw size={16} />
+            重新载入
+          </button>
           <button type="button" disabled={!document.filePath} onClick={openInXmind}>
             <ExternalLink size={16} />
             用 XMind 编辑
           </button>
         </div>
       </header>
+
+      {externalMessage ? (
+        <div className="xmind-viewer-message">{externalMessage}</div>
+      ) : null}
 
       {parseState.status === "loading" ? (
         <div className="xmind-viewer-state">
