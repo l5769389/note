@@ -1,11 +1,29 @@
-import { ExternalLink, FileText, GitBranch, Loader2, RefreshCw } from "lucide-react";
+import "@xyflow/react/dist/style.css";
+
+import {
+  Background,
+  Controls,
+  MiniMap,
+  type Node,
+  ReactFlow,
+  type NodeProps,
+} from "@xyflow/react";
+import { ExternalLink, FileText, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import {
+  layoutMindMapDiagram,
+  type MindMapDiagramData,
+  type MindMapFlowNodeData,
+  type MindMapNodeData,
+  type MindMapSide,
+} from "../mindMapDocument";
 import type { MarkdownDocument } from "../types";
 import {
   parseXmindDocument,
   type XmindDocumentModel,
   type XmindTopicNode,
 } from "../xmindDocument";
+import { MindMapNodeCard } from "./MindMapNodeCard";
 
 type XmindDocumentViewerProps = {
   document: MarkdownDocument;
@@ -21,66 +39,76 @@ function getDisplayName(document: MarkdownDocument) {
   return document.filePath?.split(/[\\/]/).pop() ?? `${document.title}.xmind`;
 }
 
-function splitBranches(children: XmindTopicNode[]) {
-  const middle = Math.ceil(children.length / 2);
+const nodeTypes = {
+  mindMapNode: (props: NodeProps<Node<MindMapFlowNodeData>>) => (
+    <MindMapNodeCard {...props} />
+  ),
+};
 
+function createXmindNode(topic: XmindTopicNode, side?: MindMapSide): MindMapNodeData {
   return {
-    left: children.slice(0, middle),
-    right: children.slice(middle),
+    children: topic.children.map((child) => createXmindNode(child)),
+    id: topic.id,
+    text: topic.title,
+    ...(side ? { side } : {}),
   };
 }
 
-function XmindBranch({
-  side,
-  topic,
-}: {
-  side: "left" | "right";
-  topic: XmindTopicNode;
-}) {
-  return (
-    <div className={`xmind-branch xmind-branch-${side}`}>
-      <article className="xmind-topic-card">
-        <strong>{topic.title}</strong>
-        {topic.notes ? <p>{topic.notes}</p> : null}
-        {topic.labels.length ? (
-          <div className="xmind-topic-labels">
-            {topic.labels.map((label) => (
-              <span key={label}>{label}</span>
-            ))}
-          </div>
-        ) : null}
-      </article>
-      {topic.children.length ? (
-        <div className="xmind-branch-children">
-          {topic.children.map((child) => (
-            <XmindBranch key={child.id} side={side} topic={child} />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
+function createXmindMindMapData(rootTopic: XmindTopicNode): MindMapDiagramData {
+  const middle = Math.ceil(rootTopic.children.length / 2);
+
+  return {
+    layout: "balanced",
+    root: {
+      children: rootTopic.children.map((child, index) =>
+        createXmindNode(child, index < middle ? "left" : "right"),
+      ),
+      id: rootTopic.id,
+      text: rootTopic.title,
+    },
+    version: 1,
+  };
 }
 
-function XmindMap({ rootTopic }: { rootTopic: XmindTopicNode }) {
-  const branches = splitBranches(rootTopic.children);
+function createXmindFlowData(rootTopic: XmindTopicNode) {
+  const layout = layoutMindMapDiagram(createXmindMindMapData(rootTopic));
+
+  return {
+    edges: layout.edges.map((edge) => ({
+      ...edge,
+      className: "mindmap-edge",
+      selectable: false,
+    })),
+    nodes: layout.nodes.map((node) => ({
+      ...node,
+      draggable: false,
+      selectable: false,
+    })),
+  };
+}
+
+function XmindFlowMap({ rootTopic }: { rootTopic: XmindTopicNode }) {
+  const flowData = useMemo(() => createXmindFlowData(rootTopic), [rootTopic]);
 
   return (
-    <div className="xmind-map">
-      <div className="xmind-map-side xmind-map-side-left">
-        {branches.left.map((topic) => (
-          <XmindBranch key={topic.id} side="left" topic={topic} />
-        ))}
-      </div>
-      <article className="xmind-root-topic">
-        <GitBranch size={22} />
-        <strong>{rootTopic.title}</strong>
-        {rootTopic.notes ? <p>{rootTopic.notes}</p> : null}
-      </article>
-      <div className="xmind-map-side xmind-map-side-right">
-        {branches.right.map((topic) => (
-          <XmindBranch key={topic.id} side="right" topic={topic} />
-        ))}
-      </div>
+    <div className="xmind-flow-map">
+      <ReactFlow
+        key={rootTopic.id}
+        nodes={flowData.nodes}
+        edges={flowData.edges}
+        nodeTypes={nodeTypes}
+        fitView
+        fitViewOptions={{ padding: 0.28 }}
+        minZoom={0.12}
+        maxZoom={1.8}
+        nodesConnectable={false}
+        nodesDraggable={false}
+        elementsSelectable={false}
+      >
+        <Background gap={22} size={1} />
+        <Controls showInteractive={false} />
+        <MiniMap pannable={false} zoomable={false} />
+      </ReactFlow>
     </div>
   );
 }
@@ -253,7 +281,7 @@ export function XmindDocumentViewer({
         </div>
       ) : activeSheet ? (
         <div className="xmind-canvas" aria-label={activeSheet.title}>
-          <XmindMap rootTopic={activeSheet.rootTopic} />
+          <XmindFlowMap rootTopic={activeSheet.rootTopic} />
         </div>
       ) : (
         <div className="xmind-viewer-state xmind-viewer-error">
