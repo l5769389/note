@@ -92,8 +92,10 @@ import { registerMarkdownLanguages } from "../syntaxHighlighting";
 import { createMermaidRenderId, renderMermaidSvg } from "../mermaid";
 import { isMindMapLanguage } from "../mindMapDocument";
 import { isReactFlowLanguage } from "../reactFlowDocument";
+import { isUniverSheetLanguage } from "../univerSheetDocument";
 import { MindMapDiagram } from "./MindMapDiagram";
 import { ReactFlowDiagram } from "./ReactFlowDiagram";
+import { UniverSheetPreview } from "./UniverSheetPreview";
 import type {
   ImageAlignment,
   TyporaAlertKind,
@@ -139,6 +141,7 @@ type TyporaEditorProps = {
   onActiveLineChange?: (lineIndex: number) => void;
   onChange: (value: string) => void;
   onEditDrawing?: (drawingId: string) => void;
+  onEditUniverSheet?: (code: string) => void;
   onPaste: (event: ClipboardEvent<HTMLElement>) => void;
   value: string;
 };
@@ -718,7 +721,7 @@ const mermaidBlockDecoration = $prose(
                     event.target instanceof Element &&
                     Boolean(
                       event.target.closest(
-                        ".typora-mermaid-diagram, .typora-react-flow-widget",
+                        ".typora-mermaid-diagram, .typora-react-flow-widget, .typora-mindmap-widget",
                       ),
                     ),
                 },
@@ -731,6 +734,75 @@ const mermaidBlockDecoration = $prose(
       },
     }),
 );
+
+function createUniverSheetBlockDecoration(
+  onEditUniverSheetRef: MutableRefObject<TyporaEditorProps["onEditUniverSheet"]>,
+) {
+  return $prose(
+    () =>
+      new Plugin({
+        props: {
+          decorations(state) {
+            const decorations: Decoration[] = [];
+
+            state.doc.descendants((node: ProseMirrorNode, pos) => {
+              if (node.type.name !== "code_block") {
+                return;
+              }
+
+              const language =
+                typeof node.attrs.language === "string" ? node.attrs.language : "";
+
+              if (!isUniverSheetLanguage(language)) {
+                return;
+              }
+
+              const isActive = selectionTouchesNode(state.selection, pos, node);
+              const nodeDecorations = isActive
+                ? []
+                : [
+                    Decoration.node(pos, pos + node.nodeSize, {
+                      class: "typora-mermaid-source-hidden",
+                    }),
+                  ];
+
+              decorations.push(
+                ...nodeDecorations,
+                Decoration.widget(
+                  pos + node.nodeSize,
+                  () => {
+                    const container = document.createElement("div");
+                    const root = createRoot(container);
+
+                    container.className = "typora-univer-sheet-widget";
+                    container.setAttribute("aria-label", "Univer sheet");
+                    root.render(
+                      <UniverSheetPreview
+                        code={node.textContent}
+                        onEdit={(code) => onEditUniverSheetRef.current?.(code)}
+                      />,
+                    );
+
+                    return container;
+                  },
+                  {
+                    ignoreSelection: true,
+                    key: `${language}-${pos}-${node.textContent}`,
+                    side: 1,
+                    stopEvent: (event) =>
+                      event.target instanceof Element &&
+                      Boolean(event.target.closest(".typora-univer-sheet-widget")),
+                  },
+                ),
+              );
+            });
+
+            return DecorationSet.create(state.doc, decorations);
+          },
+        },
+      }),
+  );
+}
 
 const markdownAlertDecoration = $prose(
   () =>
@@ -1703,12 +1775,14 @@ function MilkdownRuntime({
   onActiveLineChange,
   onChangeRef,
   onEditDrawing,
+  onEditUniverSheet,
   rootRef,
   value,
   valueRef,
 }: MilkdownRuntimeProps) {
   const applyingExternalValueRef = useRef(false);
   const filePathRef = useRef(filePath);
+  const onEditUniverSheetRef = useRef(onEditUniverSheet);
   const [imageToolbar, setImageToolbar] = useState<ImageToolbarState>({
     visible: false,
   });
@@ -1720,6 +1794,10 @@ function MilkdownRuntime({
   useEffect(() => {
     filePathRef.current = filePath;
   }, [filePath]);
+
+  useEffect(() => {
+    onEditUniverSheetRef.current = onEditUniverSheet;
+  }, [onEditUniverSheet]);
   const previousDocumentIdRef = useRef(documentId);
   const pendingActiveHeadingRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
@@ -2086,6 +2164,7 @@ function MilkdownRuntime({
       .use(disableNativeWritingChecks)
       .use(codeBlockLanguageDecoration)
       .use(mermaidBlockDecoration)
+      .use(createUniverSheetBlockDecoration(onEditUniverSheetRef))
       .use(createRawHtmlPreviewDecoration(filePathRef))
       .use(markdownAlertDecoration)
       .use(markdownSyntaxDecoration)
@@ -2629,7 +2708,16 @@ function MilkdownRuntime({
 
 export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
   function TyporaEditor(
-    { documentId, filePath, onActiveLineChange, onChange, onEditDrawing, onPaste, value },
+    {
+      documentId,
+      filePath,
+      onActiveLineChange,
+      onChange,
+      onEditDrawing,
+      onEditUniverSheet,
+      onPaste,
+      value,
+    },
     ref,
   ) {
     const rootRef = useRef<HTMLElement | null>(null);
@@ -2711,6 +2799,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
             onChange={onChange}
             onChangeRef={onChangeRef}
             onEditDrawing={onEditDrawing}
+            onEditUniverSheet={onEditUniverSheet}
             onPaste={onPaste}
             rootRef={rootRef}
             value={value}

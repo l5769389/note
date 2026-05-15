@@ -3,6 +3,7 @@ import type { IpcMainInvokeEvent, OpenDialogOptions, SaveDialogOptions } from "e
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,6 +12,25 @@ const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 const appName = "Markdown Studio";
 const appUserModelId = "com.local.markdownstudio";
 const localPreviewProtocol = "typora-local";
+const require = createRequire(import.meta.url);
+const mammoth = require("mammoth") as {
+  convertToHtml: (
+    input: { path: string },
+    options?: {
+      convertImage?: unknown;
+      includeDefaultStyleMap?: boolean;
+      styleMap?: string[];
+    },
+  ) => Promise<{ messages: Array<{ message: string; type: string }>; value: string }>;
+  images: {
+    imgElement: (
+      callback: (image: {
+        contentType: string;
+        read: (encoding: string) => Promise<string>;
+      }) => Promise<{ src: string }>,
+    ) => unknown;
+  };
+};
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -34,10 +54,13 @@ const ignoredDirectoryNames = new Set([
 ]);
 const markdownExtensions = new Set([".md", ".markdown", ".mdown"]);
 const htmlExtensions = new Set([".html", ".htm"]);
-const xmindExtensions = new Set([".xmind"]);
+const pdfExtensions = new Set([".pdf"]);
+const wordExtensions = new Set([".docx"]);
+const sheetExtensions = new Set([".univer"]);
+const drawingExtensions = new Set([".excalidraw"]);
 const maxDirectoryTreeDepth = 8;
 
-type DocumentFileType = "markdown" | "html" | "xmind";
+type DocumentFileType = "markdown" | "html" | "pdf" | "word" | "sheet" | "drawing";
 
 type DirectoryTreeItem = {
   children?: DirectoryTreeItem[];
@@ -60,6 +83,18 @@ function normalizeMarkdownName(name: string) {
   const baseName = name
     .trim()
     .replace(/\.md$/i, "")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
+    .replace(/\s+/g, " ");
+
+  return baseName || "Untitled";
+}
+
+function normalizeDocumentName(name: string, extension: string) {
+  const escapedExtension = extension.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const extensionPattern = new RegExp(`${escapedExtension}$`, "i");
+  const baseName = name
+    .trim()
+    .replace(extensionPattern, "")
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
     .replace(/\s+/g, " ");
 
@@ -90,6 +125,25 @@ async function createUniqueMarkdownPath(directoryPath: string, title: string) {
   }
 }
 
+async function createUniqueDocumentPath(
+  directoryPath: string,
+  title: string,
+  extension: string,
+) {
+  let index = 0;
+
+  while (true) {
+    const suffix = index === 0 ? "" : ` ${index + 1}`;
+    const candidate = join(directoryPath, `${title}${suffix}${extension}`);
+
+    if (!(await pathExists(candidate))) {
+      return candidate;
+    }
+
+    index += 1;
+  }
+}
+
 function titleFromFilePath(filePath: string) {
   return basename(filePath, extname(filePath));
 }
@@ -105,8 +159,20 @@ function getDocumentFileType(filePath: string): DocumentFileType | null {
     return "html";
   }
 
-  if (xmindExtensions.has(extension)) {
-    return "xmind";
+  if (pdfExtensions.has(extension)) {
+    return "pdf";
+  }
+
+  if (wordExtensions.has(extension)) {
+    return "word";
+  }
+
+  if (sheetExtensions.has(extension)) {
+    return "sheet";
+  }
+
+  if (drawingExtensions.has(extension)) {
+    return "drawing";
   }
 
   return null;
@@ -155,15 +221,49 @@ async function readMarkdownFile(filePath: string) {
 
   return {
     content:
-      documentType === "xmind"
-        ? await readFile(filePath, "base64")
-        : await readFile(filePath, "utf-8"),
+      documentType === "markdown" ||
+      documentType === "html" ||
+      documentType === "sheet" ||
+      documentType === "drawing"
+        ? await readFile(filePath, "utf-8")
+        : "",
     createdAt: fileStat.birthtime.toISOString(),
     documentType,
     filePath,
     fileExtension: extname(filePath).toLowerCase(),
     title: titleFromFilePath(filePath),
     updatedAt: fileStat.mtime.toISOString(),
+  };
+}
+
+async function renderWordDocument(filePath: string) {
+  if (!wordExtensions.has(extname(filePath).toLowerCase())) {
+    throw new Error(`Unsupported Word document: ${filePath}`);
+  }
+
+  const result = await mammoth.convertToHtml(
+    { path: filePath },
+    {
+      convertImage: mammoth.images.imgElement(async (image) => ({
+        src: `data:${image.contentType};base64,${await image.read("base64")}`,
+      })),
+      includeDefaultStyleMap: true,
+      styleMap: [
+        "p[style-name='Title'] => h1:fresh",
+        "p[style-name='Subtitle'] => p.subtitle:fresh",
+        "p[style-name='Heading 1'] => h1:fresh",
+        "p[style-name='Heading 2'] => h2:fresh",
+        "p[style-name='Heading 3'] => h3:fresh",
+      ],
+    },
+  );
+
+  return {
+    html: result.value,
+    messages: result.messages.map((message) => ({
+      message: message.message,
+      type: message.type,
+    })),
   };
 }
 
@@ -386,10 +486,13 @@ function registerFileIpc() {
   ipcMain.handle("workspace:select-markdown-file", async () => {
     const options: OpenDialogOptions = {
       filters: [
-        { name: "Documents", extensions: ["md", "markdown", "mdown", "html", "htm", "xmind"] },
+        { name: "Documents", extensions: ["md", "markdown", "mdown", "html", "htm", "pdf", "docx", "univer", "excalidraw"] },
         { name: "Markdown", extensions: ["md", "markdown", "mdown"] },
         { name: "HTML", extensions: ["html", "htm"] },
-        { name: "XMind", extensions: ["xmind"] },
+        { name: "PDF", extensions: ["pdf"] },
+        { name: "Word", extensions: ["docx"] },
+        { name: "Univer Sheet", extensions: ["univer"] },
+        { name: "Excalidraw", extensions: ["excalidraw"] },
       ],
       properties: ["openFile"],
       title: "选择 Markdown 文件",
@@ -440,6 +543,33 @@ function registerFileIpc() {
     return readMarkdownFile(filePath);
   });
 
+  ipcMain.handle(
+    "workspace:create-document-file",
+    async (
+      _,
+      payload: {
+        content: string;
+        directoryPath: string;
+        extension: ".excalidraw" | ".md" | ".univer";
+        title: string;
+      },
+    ) => {
+      const directoryPath = payload.directoryPath || app.getPath("desktop");
+      const allowedExtensions = new Set([".excalidraw", ".md", ".univer"]);
+      const extension = allowedExtensions.has(payload.extension)
+        ? payload.extension
+        : ".md";
+      const title = normalizeDocumentName(payload.title, extension);
+
+      await mkdir(directoryPath, { recursive: true });
+
+      const filePath = await createUniqueDocumentPath(directoryPath, title, extension);
+      await writeFile(filePath, payload.content, "utf-8");
+
+      return readMarkdownFile(filePath);
+    },
+  );
+
   ipcMain.handle("workspace:write-markdown-file", async (_, payload: { content: string; filePath: string }) => {
     await writeFile(payload.filePath, payload.content, "utf-8");
     return readMarkdownFile(payload.filePath);
@@ -447,6 +577,10 @@ function registerFileIpc() {
 
   ipcMain.handle("workspace:read-markdown-file", async (_, filePath: string) => {
     return readMarkdownFile(filePath);
+  });
+
+  ipcMain.handle("workspace:render-word-document", async (_, filePath: string) => {
+    return renderWordDocument(filePath);
   });
 
   ipcMain.handle("workspace:path-exists", async (_, filePath: string) => {

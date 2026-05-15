@@ -61,5 +61,30 @@ describe("workspace search helpers", () => {
 
     expect(groups.map((group) => group.document.id)).toEqual(["a"]);
   });
+
+  it("skips binary preview documents", () => {
+    const groups = getWorkspaceSearchGroups(
+      [
+        document({
+          content: "alpha",
+          documentType: "pdf",
+          fileExtension: ".pdf",
+          filePath: "D:/notes/a.pdf",
+          id: "pdf",
+        }),
+        document({
+          content: "alpha",
+          documentType: "word",
+          fileExtension: ".docx",
+          filePath: "D:/notes/a.docx",
+          id: "word",
+        }),
+      ],
+      "alpha",
+      "D:/notes",
+    );
+
+    expect(groups).toEqual([]);
+  });
 });
 

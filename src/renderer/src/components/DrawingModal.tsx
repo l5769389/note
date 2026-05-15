@@ -1,6 +1,8 @@
 import { Check, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { Excalidraw, exportToBlob, serializeAsJSON } from "@excalidraw/excalidraw";
+import type { LibraryItems, LibraryItemsSource } from "@excalidraw/excalidraw/types";
+import { getBundledExcalidrawLibraryItems } from "../excalidrawLibraries";
 import { fileToDataUrl } from "../services/imageUpload";
 import type { DrawingAsset } from "../types";
 
@@ -8,6 +10,13 @@ type ExcalidrawApi = {
   getSceneElements: () => readonly unknown[];
   getAppState: () => Record<string, unknown>;
   getFiles: () => Record<string, unknown>;
+  updateLibrary: (options: {
+    defaultStatus?: "published" | "unpublished";
+    libraryItems: LibraryItemsSource;
+    merge?: boolean;
+    openLibraryMenu?: boolean;
+    prompt?: boolean;
+  }) => Promise<LibraryItems>;
 };
 
 type DrawingModalProps = {
@@ -25,6 +34,7 @@ function getInitialDrawingData(asset?: DrawingAsset) {
       viewBackgroundColor: "#ffffff",
       currentItemFontFamily: 1,
     },
+    libraryItems: getBundledExcalidrawLibraryItems(),
   };
 
   if (!asset?.sceneJSON) {
@@ -45,6 +55,7 @@ function getInitialDrawingData(asset?: DrawingAsset) {
         viewBackgroundColor: "#ffffff",
         currentItemFontFamily: 1,
       },
+      libraryItems: getBundledExcalidrawLibraryItems(),
     };
   } catch {
     return fallback;
@@ -59,6 +70,7 @@ export function DrawingModal({
 }: DrawingModalProps) {
   const [isExportingDrawing, setIsExportingDrawing] = useState(false);
   const excalidrawApiRef = useRef<ExcalidrawApi | null>(null);
+  const libraryLoadedRef = useRef(false);
 
   async function saveDrawing() {
     const api = excalidrawApiRef.current;
@@ -136,6 +148,16 @@ export function DrawingModal({
         <Excalidraw
           excalidrawAPI={(api) => {
             excalidrawApiRef.current = api as ExcalidrawApi;
+            if (!libraryLoadedRef.current) {
+              libraryLoadedRef.current = true;
+              void (api as ExcalidrawApi).updateLibrary({
+                libraryItems: getBundledExcalidrawLibraryItems(),
+                merge: true,
+                prompt: false,
+                openLibraryMenu: false,
+                defaultStatus: "published",
+              });
+            }
           }}
           initialData={getInitialDrawingData(initialAsset)}
         />

@@ -3,12 +3,13 @@ import { createHtmlPreviewDocument } from "../components/HtmlDocumentViewer";
 
 describe("createHtmlPreviewDocument", () => {
   it("injects a base tag for srcDoc html with a local file path", () => {
-    expect(
-      createHtmlPreviewDocument(
-        "<!doctype html><html><head><title>x</title></head><body></body></html>",
-        "D:/notes/site/index.html",
-      ),
-    ).toContain('<base href="file:///D:/notes/site/">');
+    const preview = createHtmlPreviewDocument(
+      "<!doctype html><html><head><title>x</title></head><body><img src=\"./assets/demo.svg\"><script src=\"./app.js\"></script></body></html>",
+      "D:/notes/site/index.html",
+    );
+
+    expect(preview).toContain('<base href="typora-local://file/D%3A/notes/site/">');
+    expect(preview).not.toContain("file:///D:/notes/site/");
   });
 
   it("does not duplicate an existing base tag", () => {

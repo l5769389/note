@@ -19,7 +19,6 @@ describe("mindMapDocument", () => {
   it("recognizes mindmap fenced code languages", () => {
     expect(isMindMapLanguage("mindmap")).toBe(true);
     expect(isMindMapLanguage("mind-map")).toBe(true);
-    expect(isMindMapLanguage("xmind-map")).toBe(true);
     expect(isMindMapLanguage("react-flow")).toBe(false);
   });
 

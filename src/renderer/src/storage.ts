@@ -64,8 +64,20 @@ function getStoredDocumentType(filePath?: string): DocumentType {
     return "html";
   }
 
-  if (filePath && /\.xmind$/i.test(filePath)) {
-    return "xmind";
+  if (filePath && /\.pdf$/i.test(filePath)) {
+    return "pdf";
+  }
+
+  if (filePath && /\.docx$/i.test(filePath)) {
+    return "word";
+  }
+
+  if (filePath && /\.univer$/i.test(filePath)) {
+    return "sheet";
+  }
+
+  if (filePath && /\.excalidraw$/i.test(filePath)) {
+    return "drawing";
   }
 
   return "markdown";
@@ -80,18 +92,30 @@ function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
 
   return {
     ...document,
-    content: documentType === "xmind" ? "" : document.content,
+    content: documentType === "pdf" || documentType === "word" ? "" : document.content,
     documentType,
     drawings: document.drawings ?? {},
     fileExtension:
       document.fileExtension ??
       getStoredFileExtension(document.filePath) ??
-      (documentType === "xmind" ? ".xmind" : ".md"),
+      (documentType === "html"
+        ? ".html"
+        : documentType === "pdf"
+          ? ".pdf"
+          : documentType === "word"
+            ? ".docx"
+            : documentType === "sheet"
+              ? ".univer"
+              : documentType === "drawing"
+                ? ".excalidraw"
+                : ".md"),
   };
 }
 
 function serializeDocument(document: MarkdownDocument): MarkdownDocument {
-  return document.documentType === "xmind" ? { ...document, content: "" } : document;
+  return document.documentType === "pdf" || document.documentType === "word"
+    ? { ...document, content: "" }
+    : document;
 }
 
 export function loadWorkspace(): WorkspaceSnapshot {

@@ -1,5 +1,11 @@
 export type EditorMode = "typora" | "source" | "split" | "preview";
-export type DocumentType = "markdown" | "html" | "xmind";
+export type DocumentType =
+  | "markdown"
+  | "html"
+  | "pdf"
+  | "word"
+  | "sheet"
+  | "drawing";
 
 export type DrawingAsset = {
   id: string;

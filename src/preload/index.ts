@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("desktop", {
+  createDocumentFile: (payload: {
+    content: string;
+    directoryPath: string;
+    extension: ".excalidraw" | ".md" | ".univer";
+    title: string;
+  }) => ipcRenderer.invoke("workspace:create-document-file", payload),
   createMarkdownFile: (payload: { directoryPath: string; title: string }) =>
     ipcRenderer.invoke("workspace:create-markdown-file", payload),
   exportHtmlFile: (payload: { filePath?: string; html: string; title: string }) =>
@@ -23,6 +29,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("workspace:read-directory-tree", directoryPath),
   readMarkdownFile: (filePath: string) =>
     ipcRenderer.invoke("workspace:read-markdown-file", filePath),
+  renderWordDocument: (filePath: string) =>
+    ipcRenderer.invoke("workspace:render-word-document", filePath),
   saveMarkdownFileAs: (payload: { content: string; filePath?: string; title: string }) =>
     ipcRenderer.invoke("workspace:save-markdown-file-as", payload),
   selectMarkdownFile: () =>

@@ -21,6 +21,7 @@ import {
   Search,
   SplitSquareHorizontal,
   Square,
+  Table2,
   X,
 } from "lucide-react";
 import {
@@ -32,6 +33,7 @@ import {
   useState,
   type ClipboardEvent,
   type CSSProperties,
+  type FocusEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   type ReactNode,
@@ -54,8 +56,10 @@ import {
 import { HtmlDocumentViewer } from "./components/HtmlDocumentViewer";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
 import { MindMapModal } from "./components/MindMapModal";
+import { PdfDocumentViewer } from "./components/PdfDocumentViewer";
 import { ReactFlowModal } from "./components/ReactFlowModal";
-import { XmindDocumentViewer } from "./components/XmindDocumentViewer";
+import { UniverSheetPreview } from "./components/UniverSheetPreview";
+import { WordDocumentViewer } from "./components/WordDocumentViewer";
 import {
   TyporaEditor,
   type TyporaEditorHandle,
@@ -82,8 +86,11 @@ import {
   getDocumentPathPreview,
   getDocumentType,
   isHtmlDocument,
+  isDrawingDocument,
   isMarkdownDocument,
-  isXmindDocument,
+  isPdfDocument,
+  isSheetDocument,
+  isWordDocument,
   mergeDocumentByFilePath,
   normalizeMarkdownTitle,
   replaceExcalidrawImagePreview,
@@ -112,6 +119,15 @@ import {
   type ReactFlowEditTarget,
 } from "./reactFlowDocument";
 import {
+  createDefaultUniverSheetData,
+  createUniverSheetMarkdown,
+  parseUniverSheetData,
+  replaceUniverSheetMarkdownBlock,
+  serializeUniverSheetData,
+  type UniverSheetData,
+  type UniverSheetEditTarget,
+} from "./univerSheetDocument";
+import {
   countMarkdownWords,
   getMarkdownOutline,
 } from "./markdownStructure";
@@ -128,6 +144,7 @@ import type {
   EditorMode,
   MarkdownDocument,
   SaveState,
+  LocalMarkdownFile,
 } from "./types";
 import {
   findMarkdownSearchMatches,
@@ -142,6 +159,12 @@ import {
 const DrawingModal = lazy(() =>
   import("./components/DrawingModal").then((module) => ({
     default: module.DrawingModal,
+  })),
+);
+
+const UniverSheetModal = lazy(() =>
+  import("./components/UniverSheetModal").then((module) => ({
+    default: module.UniverSheetModal,
   })),
 );
 
@@ -165,6 +188,9 @@ const defaultSidebarWidth = 334;
 const minSidebarWidth = 236;
 const maxSidebarWidth = 560;
 const homeRecentDocumentLimit = 3;
+const sidebarRecentDirectoryLimit = 5;
+const storedRecentDirectoryLimit = 12;
+const recentDirectoryStorageKey = "typora-like-editor:recent-directories:v1";
 
 type FindPanelMode = "find" | "replace";
 
@@ -180,6 +206,34 @@ type RevealDocumentRangeOptions = {
   preserveRendered?: boolean;
   query?: string;
 };
+
+function createDefaultExcalidrawScene() {
+  return JSON.stringify(
+    {
+      type: "excalidraw",
+      version: 2,
+      source: "https://excalidraw.com",
+      elements: [],
+      appState: {
+        viewBackgroundColor: "#ffffff",
+        currentItemFontFamily: 1,
+      },
+      files: {},
+    },
+    null,
+    2,
+  );
+}
+
+function createDrawingAssetFromDocument(document: MarkdownDocument): DrawingAsset {
+  return {
+    id: document.id,
+    name: document.title || "Excalidraw",
+    dataUrl: "",
+    sceneJSON: document.content || createDefaultExcalidrawScene(),
+    createdAt: document.createdAt,
+  };
+}
 
 const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
   { key: "file", label: "文件(F)" },
@@ -350,19 +404,49 @@ function MenuItem({
 function MenuSubmenu({
   children,
   label,
+  panelClassName,
 }: {
   children: ReactNode;
   label: ReactNode;
+  panelClassName?: string;
 }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  function closeWhenFocusLeaves(event: FocusEvent<HTMLDivElement>) {
+    const nextTarget = event.relatedTarget;
+    if (!nextTarget || !event.currentTarget.contains(nextTarget as Node)) {
+      setIsOpen(false);
+    }
+  }
+
   return (
-    <div className="menubar-submenu">
-      <button className="menubar-dropdown-item" role="menuitem" type="button">
+    <div
+      className={["menubar-submenu", isOpen ? "menubar-submenu-open" : ""]
+        .filter(Boolean)
+        .join(" ")}
+      onBlur={closeWhenFocusLeaves}
+      onFocus={() => setIsOpen(true)}
+      onPointerEnter={() => setIsOpen(true)}
+      onPointerLeave={() => setIsOpen(false)}
+    >
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        className="menubar-dropdown-item"
+        role="menuitem"
+        type="button"
+      >
         <span className="menubar-dropdown-check" />
         <span className="menubar-dropdown-label">{label}</span>
         <span className="menubar-dropdown-shortcut" />
         <ChevronRight className="menubar-dropdown-arrow" size={18} />
       </button>
-      <div className="menubar-submenu-panel" role="menu">
+      <div
+        className={["menubar-submenu-panel", panelClassName ?? ""]
+          .filter(Boolean)
+          .join(" ")}
+        role="menu"
+      >
         {children}
       </div>
     </div>
@@ -379,30 +463,36 @@ function RecentFileMenuItem({
   onOpen: (document: MarkdownDocument) => void;
 }) {
   const isMissing = exists === false;
+  const displayName = getDocumentDisplayName(document);
+  const pathLabel = isMissing
+    ? "文件不存在"
+    : document.filePath
+      ? getDocumentPathPreview(document)
+      : "未保存到本地";
+  const timeLabel = isMissing ? "不存在" : formatRecentTimestamp(document.updatedAt);
 
   return (
-    <MenuItem
-      label={
-        <span
-          className={
-            isMissing
-              ? "recent-file-menu-entry recent-file-menu-entry-missing"
-              : "recent-file-menu-entry"
-          }
-        >
-          <strong>{getDocumentDisplayName(document)}</strong>
-          <small>
-            {isMissing
-              ? "文件不存在"
-              : document.filePath
-                ? getDocumentPathPreview(document)
-                : "未保存到本地"}
-          </small>
-        </span>
-      }
-      shortcut={isMissing ? "不存在" : formatRecentTimestamp(document.updatedAt)}
-      onSelect={() => onOpen(document)}
-    />
+    <button
+      className={[
+        "menubar-dropdown-item",
+        "recent-file-menu-button",
+        isMissing ? "recent-file-menu-button-missing" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      disabled={isMissing}
+      onClick={() => onOpen(document)}
+      role="menuitem"
+      title={`${displayName}\n${pathLabel}`}
+      type="button"
+    >
+      <FileText className="recent-file-menu-icon" size={16} />
+      <span className="recent-file-menu-entry">
+        <strong>{displayName}</strong>
+        <small>{pathLabel}</small>
+      </span>
+      <span className="recent-file-menu-time">{timeLabel}</span>
+    </button>
   );
 }
 
@@ -442,6 +532,23 @@ function getPathLabel(path?: string) {
   }
 
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
+}
+
+function normalizeDirectoryKey(path?: string) {
+  return path?.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() ?? "";
+}
+
+function loadRecentDirectoryPaths() {
+  try {
+    const raw = window.localStorage.getItem(recentDirectoryStorageKey);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+
+    return Array.isArray(parsed)
+      ? parsed.filter((path): path is string => typeof path === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function collectDirectoryPaths(item: DirectoryTreeItem): string[] {
@@ -571,9 +678,56 @@ function DirectoryTreeItems({
 
 type DirectoryFileListItem = {
   directoryLabel: string;
+  document?: MarkdownDocument;
   name: string;
   path: string;
 };
+
+function normalizeFilePathKey(filePath?: string) {
+  return filePath?.replace(/\\/g, "/").toLowerCase() ?? "";
+}
+
+function stripMarkdownForFilePreview(content: string) {
+  return content
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}>\s?/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+[.)]\s+/gm, "")
+    .replace(/^\s*\|?[-:| ]{3,}\|?\s*$/gm, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getFileListPreview(document?: MarkdownDocument) {
+  if (!document) {
+    return "";
+  }
+
+  if (isPdfDocument(document)) {
+    return "PDF 文档 · 只读预览";
+  }
+
+  if (isWordDocument(document)) {
+    return "Word 文档 · 只读预览";
+  }
+
+  if (isSheetDocument(document)) {
+    return "在线表格 · 可打开编辑";
+  }
+
+  if (isDrawingDocument(document)) {
+    return "Excalidraw 画板 · 可打开编辑";
+  }
+
+  const preview = stripMarkdownForFilePreview(document.content);
+
+  return preview || "空白文档";
+}
 
 function getDirectoryDisplayPath(filePath: string, workspacePath?: string) {
   const directoryPath = getDirectoryPath(filePath);
@@ -604,16 +758,24 @@ function getDirectoryDisplayPath(filePath: string, workspacePath?: string) {
 }
 
 function collectDirectoryFiles(
+  documents: MarkdownDocument[],
   items: DirectoryTreeItem[],
   workspacePath?: string,
 ): DirectoryFileListItem[] {
+  const documentsByPath = new Map(
+    documents
+      .filter((document) => document.filePath)
+      .map((document) => [normalizeFilePathKey(document.filePath), document]),
+  );
+
   return items
     .flatMap((item): DirectoryFileListItem[] =>
       item.type === "directory"
-        ? collectDirectoryFiles(item.children ?? [], workspacePath)
+        ? collectDirectoryFiles(documents, item.children ?? [], workspacePath)
         : [
             {
               directoryLabel: getDirectoryDisplayPath(item.path, workspacePath),
+              document: documentsByPath.get(normalizeFilePathKey(item.path)),
               name: item.name,
               path: item.path,
             },
@@ -630,18 +792,20 @@ function collectDirectoryFiles(
 
 function DirectoryFileList({
   activeFilePath,
+  documents,
   items,
   onOpenFile,
   workspacePath,
 }: {
   activeFilePath?: string;
+  documents: MarkdownDocument[];
   items: DirectoryTreeItem[];
   onOpenFile: (filePath: string) => void;
   workspacePath?: string;
 }) {
   const files = useMemo(
-    () => collectDirectoryFiles(items, workspacePath),
-    [items, workspacePath],
+    () => collectDirectoryFiles(documents, items, workspacePath),
+    [documents, items, workspacePath],
   );
 
   if (!files.length) {
@@ -663,9 +827,19 @@ function DirectoryFileList({
         >
           <FileText size={17} />
           <span className="directory-file-list-text">
-            <span>{file.name}</span>
-            {file.directoryLabel ? <small>{file.directoryLabel}</small> : null}
+            <span className="directory-file-list-title">{file.name}</span>
+            <span className="directory-file-list-meta">
+              {file.directoryLabel || getPathLabel(workspacePath)}
+            </span>
+            <span className="directory-file-list-preview">
+              {getFileListPreview(file.document)}
+            </span>
           </span>
+          {file.document?.updatedAt ? (
+            <time dateTime={file.document.updatedAt}>
+              {formatRecentTimestamp(file.document.updatedAt)}
+            </time>
+          ) : null}
         </button>
       ))}
     </div>
@@ -811,6 +985,10 @@ export function App() {
     initialData: MindMapDiagramData;
     target: MindMapEditTarget;
   } | null>(null);
+  const [univerSheetEditorState, setUniverSheetEditorState] = useState<{
+    initialData: UniverSheetData;
+    target: UniverSheetEditTarget;
+  } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
@@ -842,6 +1020,9 @@ export function App() {
   const [recentFileAvailability, setRecentFileAvailability] = useState<
     Record<string, boolean>
   >({});
+  const [recentDirectoryPaths, setRecentDirectoryPaths] = useState(
+    loadRecentDirectoryPaths,
+  );
   const [expandedDirectoryPaths, setExpandedDirectoryPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -866,9 +1047,11 @@ export function App() {
   );
   const editingDrawingAsset = useMemo(
     () =>
-      activeDocument && editingDrawingId
-        ? activeDocument.drawings[editingDrawingId] ?? null
-        : null,
+      activeDocument && isDrawingDocument(activeDocument)
+        ? createDrawingAssetFromDocument(activeDocument)
+        : activeDocument && editingDrawingId
+          ? activeDocument.drawings[editingDrawingId] ?? null
+          : null,
     [activeDocument, editingDrawingId],
   );
   const workspaceLabel = getPathLabel(workspace.workspacePath);
@@ -882,6 +1065,31 @@ export function App() {
         ),
     [workspace.documents],
   );
+  const recentDirectories = useMemo(() => {
+    const currentDirectoryKey = normalizeDirectoryKey(workspace.workspacePath);
+    const seen = new Set<string>();
+    const entries: Array<{ isCurrent: boolean; label: string; path: string }> = [];
+    const pushDirectory = (path?: string) => {
+      const key = normalizeDirectoryKey(path);
+
+      if (!path || !key || seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      entries.push({
+        path,
+        label: getPathLabel(path),
+        isCurrent: Boolean(currentDirectoryKey && key === currentDirectoryKey),
+      });
+    };
+
+    pushDirectory(workspace.workspacePath);
+    recentDirectoryPaths.forEach(pushDirectory);
+    recentDocuments.forEach((document) => pushDirectory(getDirectoryPath(document.filePath)));
+
+    return entries.slice(0, sidebarRecentDirectoryLimit);
+  }, [recentDirectoryPaths, recentDocuments, workspace.workspacePath]);
   const hasMoreRecentDocuments = recentDocuments.length > homeRecentDocumentLimit;
   const visibleRecentDocuments = useMemo(
     () =>
@@ -1086,6 +1294,26 @@ export function App() {
     }
   }
 
+  function rememberRecentDirectory(path?: string) {
+    const key = normalizeDirectoryKey(path);
+
+    if (!path || !key) {
+      return;
+    }
+
+    setRecentDirectoryPaths((current) => [
+      path,
+      ...current.filter((item) => normalizeDirectoryKey(item) !== key),
+    ].slice(0, storedRecentDirectoryLimit));
+  }
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      recentDirectoryStorageKey,
+      JSON.stringify(recentDirectoryPaths),
+    );
+  }, [recentDirectoryPaths]);
+
   useEffect(() => {
     if (workspace.workspacePath || !window.desktop?.getDefaultWorkspaceDirectory) {
       return;
@@ -1116,7 +1344,11 @@ export function App() {
         return;
       }
 
-      if (topMenu && !event.target.closest(".menubar-item")) {
+      if (
+        topMenu &&
+        !event.target.closest(".menubar-trigger") &&
+        !event.target.closest(".menubar-dropdown")
+      ) {
         setTopMenu(null);
       }
 
@@ -1345,6 +1577,148 @@ export function App() {
     }
   }
 
+  async function getCreationDirectory() {
+    return (
+      workspace.workspacePath ||
+      (await window.desktop?.getDefaultWorkspaceDirectory?.()) ||
+      ""
+    );
+  }
+
+  function activateCreatedDocument(document: MarkdownDocument, directoryPath?: string) {
+    if (document.filePath) {
+      savedFileContentByPathRef.current.set(document.filePath, document.content);
+    }
+
+    setWorkspace((current) => ({
+      ...current,
+      activeDocumentId: document.id,
+      documents: mergeDocumentByFilePath(current.documents, document),
+      workspacePath: directoryPath || current.workspacePath,
+    }));
+    setIsHomeOpen(false);
+    setIsActionsOpen(false);
+    setTopMenu(null);
+  }
+
+  async function createStandaloneSheetDocument() {
+    const data = createDefaultUniverSheetData();
+    const title = data.title || "Online Sheet";
+    const content = serializeUniverSheetData(data);
+
+    try {
+      const directoryPath = await getCreationDirectory();
+      const localFile =
+        directoryPath && window.desktop?.createDocumentFile
+          ? await window.desktop.createDocumentFile({
+              content,
+              directoryPath,
+              extension: ".univer",
+              title,
+            })
+          : null;
+      const document = localFile
+        ? createDocumentFromLocalFile(localFile)
+        : createDocument(title, content, undefined, "sheet", ".univer");
+
+      activateCreatedDocument(document, directoryPath);
+      openUniverSheetEditor({ kind: "document" }, document.content);
+
+      if (directoryPath) {
+        await loadDirectoryTree(directoryPath);
+      }
+    } catch {
+      setSaveState("failed");
+    }
+  }
+
+  async function createStandaloneDrawingDocument() {
+    const title = "Excalidraw";
+    const content = createDefaultExcalidrawScene();
+
+    try {
+      const directoryPath = await getCreationDirectory();
+      const localFile =
+        directoryPath && window.desktop?.createDocumentFile
+          ? await window.desktop.createDocumentFile({
+              content,
+              directoryPath,
+              extension: ".excalidraw",
+              title,
+            })
+          : null;
+      const document = localFile
+        ? createDocumentFromLocalFile(localFile)
+        : createDocument(title, content, undefined, "drawing", ".excalidraw");
+
+      activateCreatedDocument(document, directoryPath);
+      window.setTimeout(() => setDrawingDialogOpen(true), 0);
+
+      if (directoryPath) {
+        await loadDirectoryTree(directoryPath);
+      }
+    } catch {
+      setSaveState("failed");
+    }
+  }
+
+  function applyWorkspaceDirectory(
+    directoryPath: string,
+    localFiles: LocalMarkdownFile[],
+    tree: DirectoryTreeItem | null,
+  ) {
+    const localDocuments = localFiles.map(createDocumentFromLocalFile);
+    const fallbackDocument = createDocument("Untitled", "# Untitled\n\n");
+    const nextDocuments = localDocuments.length ? localDocuments : [fallbackDocument];
+
+    localDocuments.forEach((document) => {
+      if (document.filePath) {
+        savedFileContentByPathRef.current.set(document.filePath, document.content);
+      }
+    });
+
+    setWorkspace((current) => ({
+      ...current,
+      activeDocumentId: "",
+      documents: nextDocuments,
+      workspacePath: directoryPath,
+    }));
+    setDirectoryTree(tree);
+    setExpandedDirectoryPaths(new Set(tree ? collectDirectoryPaths(tree) : []));
+    setIsHomeOpen(true);
+    setIsActionsOpen(false);
+    setTopMenu(null);
+    setSaveState("saved");
+    rememberRecentDirectory(directoryPath);
+  }
+
+  async function openWorkspaceDirectoryPath(directoryPath: string) {
+    if (!directoryPath) {
+      return;
+    }
+
+    try {
+      if (window.desktop?.pathExists && !(await window.desktop.pathExists(directoryPath))) {
+        window.alert(`无法打开最近目录：\n${directoryPath}`);
+        return;
+      }
+
+      const [localFiles, tree] = await Promise.all([
+        window.desktop?.listMarkdownFiles
+          ? window.desktop.listMarkdownFiles(directoryPath)
+          : Promise.resolve([]),
+        window.desktop?.readDirectoryTree
+          ? window.desktop.readDirectoryTree(directoryPath)
+          : Promise.resolve(null),
+      ]);
+
+      applyWorkspaceDirectory(directoryPath, localFiles, tree);
+    } catch (error) {
+      console.error("Failed to open recent workspace folder", error);
+      setSaveState("failed");
+    }
+  }
+
   async function openWorkspaceFolder() {
     try {
       const openedWorkspace = await window.desktop?.openWorkspaceDirectory?.();
@@ -1372,27 +1746,7 @@ export function App() {
         return;
       }
 
-      const localDocuments = localFiles.map(createDocumentFromLocalFile);
-      const fallbackDocument = createDocument("Untitled", "# Untitled\n\n");
-      const nextDocuments = localDocuments.length ? localDocuments : [fallbackDocument];
-      localDocuments.forEach((document) => {
-        if (document.filePath) {
-          savedFileContentByPathRef.current.set(document.filePath, document.content);
-        }
-      });
-
-      setWorkspace((current) => ({
-        ...current,
-        activeDocumentId: "",
-        documents: nextDocuments,
-        workspacePath: directoryPath,
-      }));
-      setDirectoryTree(tree);
-      setExpandedDirectoryPaths(new Set(tree ? collectDirectoryPaths(tree) : []));
-      setIsHomeOpen(true);
-      setIsActionsOpen(false);
-      setTopMenu(null);
-      setSaveState("saved");
+      applyWorkspaceDirectory(directoryPath, localFiles, tree);
     } catch (error) {
       console.error("Failed to open workspace folder", error);
       setSaveState("failed");
@@ -1428,6 +1782,7 @@ export function App() {
       documents: mergeDocumentByFilePath(current.documents, document),
       workspacePath: current.workspacePath || filePath.split(/[\\/]/).slice(0, -1).join("\\"),
     }));
+    rememberRecentDirectory(getDirectoryPath(document.filePath));
     setIsHomeOpen(false);
   }
 
@@ -1507,6 +1862,7 @@ export function App() {
       const nextDocument = createDocumentFromLocalFile(localFile);
 
       savedFileContentByPathRef.current.set(nextDocument.filePath!, nextDocument.content);
+      rememberRecentDirectory(getDirectoryPath(nextDocument.filePath));
       setWorkspace((current) => ({
         ...current,
         activeDocumentId: document.id,
@@ -1542,6 +1898,7 @@ export function App() {
     if (nextDocument.filePath) {
       savedFileContentByPathRef.current.set(nextDocument.filePath, nextDocument.content);
     }
+    rememberRecentDirectory(getDirectoryPath(nextDocument.filePath));
 
     setWorkspace((current) => ({
       ...current,
@@ -1563,6 +1920,11 @@ export function App() {
   }
 
   function openNewDrawing() {
+    if (!isMarkdownDocument(activeDocument)) {
+      void createStandaloneDrawingDocument();
+      return;
+    }
+
     setEditingDrawingId(null);
     setIsDrawingOpen(true);
   }
@@ -1577,7 +1939,12 @@ export function App() {
   }
 
   function isWritableTextDocument(document?: MarkdownDocument | null) {
-    return isMarkdownDocument(document) || isHtmlDocument(document);
+    return (
+      isMarkdownDocument(document) ||
+      isHtmlDocument(document) ||
+      isSheetDocument(document) ||
+      isDrawingDocument(document)
+    );
   }
 
   function openReactFlowEditor(target: ReactFlowEditTarget, code?: string) {
@@ -1592,14 +1959,6 @@ export function App() {
     }
 
     setReactFlowEditorState({ initialData, target });
-  }
-
-  function openNewReactFlowDiagram() {
-    if (!isWritableTextDocument(activeDocument)) {
-      return;
-    }
-
-    openReactFlowEditor({ kind: "insert" });
   }
 
   function saveReactFlowDiagram(data: ReactFlowDiagramData) {
@@ -1651,14 +2010,6 @@ export function App() {
     setMindMapEditorState({ initialData, target });
   }
 
-  function openNewMindMapDiagram() {
-    if (!isWritableTextDocument(activeDocument)) {
-      return;
-    }
-
-    openMindMapEditor({ kind: "insert" });
-  }
-
   function saveMindMapDiagram(data: MindMapDiagramData) {
     if (!activeDocument || !mindMapEditorState) {
       return;
@@ -1691,6 +2042,56 @@ export function App() {
       if (isMarkdownDocument(activeDocument)) {
         insertMarkdown(createMindMapMarkdown(data));
       }
+    }
+  }
+
+  function openUniverSheetEditor(target: UniverSheetEditTarget, code?: string) {
+    let initialData = createDefaultUniverSheetData();
+
+    if (code) {
+      try {
+        initialData = parseUniverSheetData(code);
+      } catch {
+        initialData = createDefaultUniverSheetData();
+      }
+    }
+
+    setUniverSheetEditorState({ initialData, target });
+  }
+
+  function openNewUniverSheet() {
+    if (!isMarkdownDocument(activeDocument)) {
+      void createStandaloneSheetDocument();
+      return;
+    }
+
+    openUniverSheetEditor({ kind: "insert" });
+  }
+
+  function saveUniverSheet(data: UniverSheetData) {
+    if (!activeDocument || !univerSheetEditorState) {
+      return;
+    }
+
+    const { target } = univerSheetEditorState;
+
+    if (target.kind === "markdown" && isMarkdownDocument(activeDocument)) {
+      updateMarkdown(
+        replaceUniverSheetMarkdownBlock(activeDocument.content, target.code, data),
+      );
+      return;
+    }
+
+    if (target.kind === "insert" && isMarkdownDocument(activeDocument)) {
+      insertMarkdown(createUniverSheetMarkdown(data));
+      return;
+    }
+
+    if (target.kind === "document" && isSheetDocument(activeDocument)) {
+      patchActiveDocument({
+        content: serializeUniverSheetData(data),
+        title: data.title || activeDocument.title,
+      });
     }
   }
 
@@ -2317,6 +2718,7 @@ export function App() {
       };
 
       savedFileContentByPathRef.current.set(savedFile.filePath, savedFile.content);
+      rememberRecentDirectory(getDirectoryPath(savedFile.filePath));
       setWorkspace((current) => ({
         ...updateDocument(current, document),
         activeDocumentId: document.id,
@@ -2587,13 +2989,17 @@ export function App() {
       case "file":
         return (
           <>
-            <MenuItem label="新建" shortcut="Ctrl+N" onSelect={() => runTopMenuAction(createNewDocument)} />
+            <MenuSubmenu label="新建">
+              <MenuItem label="Markdown 文件" shortcut="Ctrl+N" onSelect={() => runTopMenuAction(createNewDocument)} />
+              <MenuItem label="在线表格文件" onSelect={() => runTopMenuAction(() => void createStandaloneSheetDocument())} />
+              <MenuItem label="Excalidraw 文件" onSelect={() => runTopMenuAction(() => void createStandaloneDrawingDocument())} />
+            </MenuSubmenu>
             <MenuItem label="新建窗口" shortcut="Ctrl+Shift+N" onSelect={() => runTopMenuAction(openNewWindow)} />
             <MenuSeparator />
             <MenuItem label="打开..." shortcut="Ctrl+O" onSelect={() => runTopMenuAction(() => void openMarkdownFile())} />
             <MenuItem label="打开文件夹..." onSelect={() => runTopMenuAction(() => void openWorkspaceFolder())} />
             <MenuSeparator />
-            <MenuSubmenu label="打开最近文件">
+            <MenuSubmenu label="打开最近文件" panelClassName="recent-file-submenu-panel">
               {recentDocuments.length ? (
                 recentDocuments.map((document) => (
                   <RecentFileMenuItem
@@ -2658,14 +3064,8 @@ export function App() {
             <MenuSeparator />
             <MenuItem label="插入 Excalidraw 流程图..." onSelect={() => runTopMenuAction(openNewDrawing)} />
             <MenuItem
-              label="插入 React Flow 图..."
-              disabled={!isWritableTextDocument(activeDocument)}
-              onSelect={() => runTopMenuAction(openNewReactFlowDiagram)}
-            />
-            <MenuItem
-              label="插入思维导图..."
-              disabled={!isWritableTextDocument(activeDocument)}
-              onSelect={() => runTopMenuAction(openNewMindMapDiagram)}
+              label="插入在线表格..."
+              onSelect={() => runTopMenuAction(openNewUniverSheet)}
             />
             <MenuSeparator />
             <MenuItem label="复制为纯文本" disabled />
@@ -2872,6 +3272,14 @@ export function App() {
                       className={`menubar-dropdown menubar-dropdown-${item.key}`}
                       role="menu"
                       aria-label={item.label}
+                      onPointerDown={(event) => {
+                        if (
+                          event.target instanceof Element &&
+                          !event.target.closest("button")
+                        ) {
+                          setTopMenu(null);
+                        }
+                      }}
                     >
                       {renderMenubarDropdown(item.key)}
                     </div>
@@ -2966,6 +3374,7 @@ export function App() {
                   ) : (
                     <DirectoryFileList
                       activeFilePath={activeDocument?.filePath}
+                      documents={workspace.documents}
                       items={directoryTree.children ?? []}
                       workspacePath={workspace.workspacePath}
                       onOpenFile={(filePath) => {
@@ -2977,7 +3386,7 @@ export function App() {
                   <div className="explorer-empty">
                     <FolderOpen size={24} />
                     <strong>{workspaceLabel}</strong>
-                    <span>当前文件夹中没有找到 Markdown 或 HTML 文件</span>
+                  <span>当前文件夹中没有找到可打开的文档</span>
                     <button type="button" onClick={createNewDocument}>
                       新建 Markdown 文件
                     </button>
@@ -2987,7 +3396,7 @@ export function App() {
                 <div className="explorer-empty">
                   <FolderOpen size={24} />
                   <strong>选择本地文件夹</strong>
-                  <span>打开目录后，会递归读取并显示其中的 .md、.html、.xmind 文件</span>
+                  <span>打开目录后，会递归读取并显示其中的 .md、.html、.pdf、.docx、.univer、.excalidraw 文件</span>
                   <button type="button" onClick={() => void openWorkspaceFolder()}>
                     打开文件夹
                   </button>
@@ -3056,6 +3465,14 @@ export function App() {
                 <FilePlus2 size={16} />
                 新建文件
               </button>
+              <button type="button" onClick={() => void createStandaloneSheetDocument()}>
+                <Table2 size={16} />
+                新建在线表格
+              </button>
+              <button type="button" onClick={() => void createStandaloneDrawingDocument()}>
+                <FileText size={16} />
+                新建 Excalidraw
+              </button>
               <button type="button" onClick={openWorkspaceSearch}>
                 <Search size={16} />
                 搜索
@@ -3088,6 +3505,32 @@ export function App() {
                 <FolderOpen size={16} />
                 打开文件夹...
               </button>
+              {recentDirectories.length ? (
+                <div className="sidebar-popover-section sidebar-recent-directories">
+                  <span>最近使用的目录</span>
+                  {recentDirectories.map((directory) => (
+                    <button
+                      type="button"
+                      key={directory.path}
+                      title={directory.path}
+                      onClick={() => {
+                        void openWorkspaceDirectoryPath(directory.path);
+                      }}
+                    >
+                      <Folder size={16} />
+                      <span className="sidebar-recent-directory-label">
+                        {directory.label}
+                      </span>
+                      {directory.isCurrent ? (
+                        <span
+                          className="sidebar-recent-directory-current"
+                          aria-label="当前目录"
+                        />
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -3216,11 +3659,39 @@ export function App() {
                     openReactFlowEditor({ index, kind: "html" }, code)
                   }
                 />
-              ) : isXmindDocument(activeDocument) ? (
-                <XmindDocumentViewer
+              ) : isPdfDocument(activeDocument) ? (
+                <PdfDocumentViewer
                   document={activeDocument}
-                  onReload={() => reloadDocumentFromDisk(activeDocument)}
+                  onReload={() => void reloadDocumentFromDisk(activeDocument)}
                 />
+              ) : isWordDocument(activeDocument) ? (
+                <WordDocumentViewer document={activeDocument} />
+              ) : isSheetDocument(activeDocument) ? (
+                <section className="standalone-document-viewer standalone-sheet-viewer">
+                  <UniverSheetPreview
+                    code={activeDocument.content}
+                    onEdit={(code) =>
+                      openUniverSheetEditor({ kind: "document" }, code)
+                    }
+                  />
+                </section>
+              ) : isDrawingDocument(activeDocument) ? (
+                <section className="standalone-document-viewer standalone-drawing-viewer">
+                  <div className="standalone-document-card">
+                    <FileText size={26} />
+                    <div>
+                      <h2>{getDocumentDisplayName(activeDocument)}</h2>
+                      <p>Excalidraw drawing file</p>
+                    </div>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => setDrawingDialogOpen(true)}
+                    >
+                      编辑画板
+                    </button>
+                  </div>
+                </section>
               ) : (
                 <div className={`editor-layout editor-layout-${mode}`}>
                   {mode === "typora" && (
@@ -3232,6 +3703,9 @@ export function App() {
                       onChange={updateMarkdown}
                       onActiveLineChange={setActiveEditorLineIndex}
                       onEditDrawing={openDrawingEditor}
+                      onEditUniverSheet={(code) =>
+                        openUniverSheetEditor({ code, kind: "markdown" }, code)
+                      }
                       onPaste={handlePaste}
                     />
                   )}
@@ -3257,6 +3731,9 @@ export function App() {
                         onEditReactFlow={(code) =>
                           openReactFlowEditor({ code, kind: "markdown" }, code)
                         }
+                        onEditUniverSheet={(code) =>
+                          openUniverSheetEditor({ code, kind: "markdown" }, code)
+                        }
                       >
                         {activeDocument.content}
                       </MarkdownRenderer>
@@ -3279,9 +3756,15 @@ export function App() {
             <span className="workspace-word-count">
               {isHtmlDocument(activeDocument)
                 ? "HTML preview"
-                : isXmindDocument(activeDocument)
-                  ? "XMind preview"
-                  : `${activeDocument ? activeDocumentWordCount : 0} 词`}
+                : isPdfDocument(activeDocument)
+                  ? "PDF preview"
+                  : isWordDocument(activeDocument)
+                    ? "Word preview"
+                    : isSheetDocument(activeDocument)
+                      ? "Sheet"
+                      : isDrawingDocument(activeDocument)
+                        ? "Excalidraw"
+                        : `${activeDocument ? activeDocumentWordCount : 0} 词`}
             </span>
           </footer>
         </section>
@@ -3312,13 +3795,23 @@ export function App() {
                   </section>
                 }
               >
-                {activeDocument && isMarkdownDocument(activeDocument) && (
+                {activeDocument &&
+                  (isMarkdownDocument(activeDocument) ||
+                    isDrawingDocument(activeDocument)) && (
                   <DrawingModal
                     key={editingDrawingAsset?.id ?? "new-drawing"}
                     assetIndex={Object.keys(activeDocument.drawings).length + 1}
                     initialAsset={editingDrawingAsset ?? undefined}
                     onClose={() => setDrawingDialogOpen(false)}
                     onInsert={(asset: DrawingAsset) => {
+                      if (isDrawingDocument(activeDocument)) {
+                        patchActiveDocument({
+                          content: asset.sceneJSON,
+                          title: asset.name || activeDocument.title,
+                        });
+                        return;
+                      }
+
                       const shouldUpdatePreview = Boolean(editingDrawingAsset);
                       const nextContent = shouldUpdatePreview
                         ? replaceExcalidrawImagePreview(activeDocument.content, asset)
@@ -3538,10 +4031,12 @@ export function App() {
                 <div className="dialog-actions">
                   <Dialog.Close asChild>
                     <button className="secondary-button" type="button">
+                      <X size={16} />
                       取消
                     </button>
                   </Dialog.Close>
                   <button className="primary-button" type="submit">
+                    <Check size={16} />
                     确定
                   </button>
                 </div>
@@ -3591,6 +4086,31 @@ export function App() {
                   onClose={() => setMindMapEditorState(null)}
                   onSave={saveMindMapDiagram}
                 />
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root
+          open={Boolean(univerSheetEditorState)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setUniverSheetEditorState(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Content className="drawing-dialog univer-sheet-dialog">
+              <Dialog.Title className="sr-only">在线表格</Dialog.Title>
+              {univerSheetEditorState && (
+                <Suspense fallback={<div className="drawing-loading">正在加载在线表格...</div>}>
+                  <UniverSheetModal
+                    initialData={univerSheetEditorState.initialData}
+                    onClose={() => setUniverSheetEditorState(null)}
+                    onSave={saveUniverSheet}
+                  />
+                </Suspense>
               )}
             </Dialog.Content>
           </Dialog.Portal>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { getDocumentDisplayName } from "../documentModel";
-import { getDirectoryPath } from "../localPreviewUrls";
+import { getDirectoryPath, getLocalPreviewUrl } from "../localPreviewUrls";
 import type { MarkdownDocument } from "../types";
 
 function escapeHtmlAttribute(value: string) {
@@ -18,14 +18,8 @@ function getFileBaseHref(filePath?: string) {
     return undefined;
   }
 
-  const normalizedPath = directoryPath.replace(/\\/g, "/");
-  const pathWithLeadingSlash =
-    normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`;
-  const pathWithTrailingSlash = pathWithLeadingSlash.endsWith("/")
-    ? pathWithLeadingSlash
-    : `${pathWithLeadingSlash}/`;
-
-  return encodeURI(`file://${pathWithTrailingSlash}`);
+  const baseUrl = getLocalPreviewUrl(directoryPath);
+  return baseUrl ? `${baseUrl}/` : undefined;
 }
 
 export function createHtmlPreviewDocument(content: string, filePath?: string) {

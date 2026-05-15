@@ -57,8 +57,20 @@ export function getDocumentTypeFromPath(filePath?: string): DocumentType {
     return "html";
   }
 
-  if (filePath && /\.xmind$/i.test(filePath)) {
-    return "xmind";
+  if (filePath && /\.pdf$/i.test(filePath)) {
+    return "pdf";
+  }
+
+  if (filePath && /\.docx$/i.test(filePath)) {
+    return "word";
+  }
+
+  if (filePath && /\.univer$/i.test(filePath)) {
+    return "sheet";
+  }
+
+  if (filePath && /\.excalidraw$/i.test(filePath)) {
+    return "drawing";
   }
 
   return "markdown";
@@ -78,15 +90,37 @@ export function isHtmlDocument(document?: MarkdownDocument | null) {
   return Boolean(document) && getDocumentType(document) === "html";
 }
 
-export function isXmindDocument(document?: MarkdownDocument | null) {
-  return Boolean(document) && getDocumentType(document) === "xmind";
+export function isPdfDocument(document?: MarkdownDocument | null) {
+  return Boolean(document) && getDocumentType(document) === "pdf";
+}
+
+export function isWordDocument(document?: MarkdownDocument | null) {
+  return Boolean(document) && getDocumentType(document) === "word";
+}
+
+export function isSheetDocument(document?: MarkdownDocument | null) {
+  return Boolean(document) && getDocumentType(document) === "sheet";
+}
+
+export function isDrawingDocument(document?: MarkdownDocument | null) {
+  return Boolean(document) && getDocumentType(document) === "drawing";
 }
 
 export function getDocumentFileExtension(document: MarkdownDocument) {
   return (
     document.fileExtension ??
     getFileExtension(document.filePath) ??
-    (isHtmlDocument(document) ? ".html" : isXmindDocument(document) ? ".xmind" : ".md")
+    (isHtmlDocument(document)
+      ? ".html"
+      : isPdfDocument(document)
+        ? ".pdf"
+        : isWordDocument(document)
+          ? ".docx"
+          : isSheetDocument(document)
+            ? ".univer"
+            : isDrawingDocument(document)
+              ? ".excalidraw"
+              : ".md")
   );
 }
 

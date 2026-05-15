@@ -20,9 +20,11 @@ function document(overrides: Partial<MarkdownDocument>): MarkdownDocument {
 }
 
 describe("document model helpers", () => {
-  it("detects html files separately from markdown files", () => {
+  it("detects preview-only files separately from markdown files", () => {
     expect(getDocumentTypeFromPath("D:/notes/page.html")).toBe("html");
     expect(getDocumentTypeFromPath("D:/notes/page.htm")).toBe("html");
+    expect(getDocumentTypeFromPath("D:/notes/manual.pdf")).toBe("pdf");
+    expect(getDocumentTypeFromPath("D:/notes/spec.docx")).toBe("word");
     expect(getDocumentTypeFromPath("D:/notes/page.md")).toBe("markdown");
   });
 
@@ -37,6 +39,16 @@ describe("document model helpers", () => {
         document({ fileExtension: ".md", title: "already.md" }),
       ),
     ).toBe("already.md");
+    expect(
+      getDocumentDisplayName(
+        document({ documentType: "pdf", fileExtension: ".pdf", title: "guide" }),
+      ),
+    ).toBe("guide.pdf");
+    expect(
+      getDocumentDisplayName(
+        document({ documentType: "word", fileExtension: ".docx", title: "draft" }),
+      ),
+    ).toBe("draft.docx");
   });
 
   it("merges opened files by path while preserving the existing document id", () => {

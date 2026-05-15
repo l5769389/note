@@ -268,7 +268,12 @@ function createDocumentSearchLines(
   content: string,
   documentType: DocumentType = "markdown",
 ) {
-  if (documentType === "xmind") {
+  if (
+    documentType === "pdf" ||
+    documentType === "word" ||
+    documentType === "sheet" ||
+    documentType === "drawing"
+  ) {
     return [];
   }
 

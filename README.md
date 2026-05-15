@@ -1,6 +1,6 @@
 # Typora Like Editor
 
-一个本地优先的 Markdown 编辑器原型，提供 Markdown 编辑/预览、文档本地存储、Excalidraw 流程图插入、图片自动插入、XMind 预览和 React Flow 图表嵌入。
+一个本地优先的 Markdown 编辑器原型，提供 Markdown 编辑/预览、文档本地存储、Excalidraw 流程图插入、图片自动插入、PDF/Word 只读预览和 React Flow 图表嵌入。
 
 ## 项目结构
 
@@ -11,9 +11,9 @@ src/
   renderer/   React 渲染进程
 ```
 
-项目已调整为标准 electron-vite 结构，入口配置位于 `electron.vite.config.ts`。
+项目采用标准 electron-vite 结构，入口配置位于 `electron.vite.config.ts`。
 
-UI 基础组件使用 Radix UI，当前用于编辑模式切换、工具栏提示和 Excalidraw 弹窗。Radix 的视觉约束很少，适合继续打磨接近 Typora 的安静桌面编辑器界面。
+UI 基础组件使用 Radix UI，适合继续打磨接近 Typora 的安静桌面编辑器体验。
 
 ## 运行
 

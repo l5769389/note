@@ -7,6 +7,12 @@ import type {
 } from "./types";
 
 type DesktopApi = {
+  createDocumentFile: (payload: {
+    content: string;
+    directoryPath: string;
+    extension: ".excalidraw" | ".md" | ".univer";
+    title: string;
+  }) => Promise<LocalMarkdownFile>;
   createMarkdownFile: (payload: {
     directoryPath: string;
     title: string;
@@ -30,6 +36,10 @@ type DesktopApi = {
   platform: string;
   readDirectoryTree: (directoryPath: string) => Promise<DirectoryTreeItem>;
   readMarkdownFile: (filePath: string) => Promise<LocalMarkdownFile>;
+  renderWordDocument: (filePath: string) => Promise<{
+    html: string;
+    messages: Array<{ message: string; type: string }>;
+  }>;
   saveMarkdownFileAs: (payload: {
     content: string;
     filePath?: string;

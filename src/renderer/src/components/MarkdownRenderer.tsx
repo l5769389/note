@@ -25,6 +25,7 @@ import remarkMath from "remark-math";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { MindMapDiagram } from "./MindMapDiagram";
 import { ReactFlowDiagram } from "./ReactFlowDiagram";
+import { UniverSheetPreview } from "./UniverSheetPreview";
 import { registerMarkdownLanguages } from "../syntaxHighlighting";
 import {
   getMarkdownAlertByPrefix,
@@ -34,6 +35,7 @@ import { parseImageMeta } from "../imageMeta";
 import { resolveDocumentResourceUrl } from "../localPreviewUrls";
 import { isMindMapLanguage } from "../mindMapDocument";
 import { isReactFlowLanguage } from "../reactFlowDocument";
+import { isUniverSheetLanguage } from "../univerSheetDocument";
 import type { TyporaAlertKind } from "../editorCommands";
 
 type MarkdownRendererProps = {
@@ -41,6 +43,7 @@ type MarkdownRendererProps = {
   filePath?: string;
   onEditMindMap?: (code: string) => void;
   onEditReactFlow?: (code: string) => void;
+  onEditUniverSheet?: (code: string) => void;
 };
 
 const safeEmbeddedImagePattern =
@@ -213,10 +216,12 @@ function PreRenderer({
   children,
   onEditMindMap,
   onEditReactFlow,
+  onEditUniverSheet,
 }: {
   children?: ReactNode;
   onEditMindMap?: (code: string) => void;
   onEditReactFlow?: (code: string) => void;
+  onEditUniverSheet?: (code: string) => void;
 }) {
   const child = Children.toArray(children)[0];
 
@@ -238,6 +243,11 @@ function PreRenderer({
     if (language && isMindMapLanguage(language)) {
       const code = String(child.props.children ?? "").replace(/\n$/, "");
       return <MindMapDiagram code={code} onEdit={onEditMindMap} />;
+    }
+
+    if (language && isUniverSheetLanguage(language)) {
+      const code = String(child.props.children ?? "").replace(/\n$/, "");
+      return <UniverSheetPreview code={code} onEdit={onEditUniverSheet} />;
     }
   }
 
@@ -299,6 +309,7 @@ export function MarkdownRenderer({
   filePath,
   onEditMindMap,
   onEditReactFlow,
+  onEditUniverSheet,
 }: MarkdownRendererProps) {
   return (
     <ReactMarkdown
@@ -315,6 +326,7 @@ export function MarkdownRenderer({
           <PreRenderer
             onEditMindMap={onEditMindMap}
             onEditReactFlow={onEditReactFlow}
+            onEditUniverSheet={onEditUniverSheet}
           >
             {preChildren}
           </PreRenderer>

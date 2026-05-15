@@ -29,9 +29,9 @@ export type MindMapEditTarget =
   | { code: string; kind: "markdown" }
   | { index: number; kind: "html" };
 
-const mindMapLanguagePattern = /^(?:mindmap|mind-map|xmind-map)$/i;
+const mindMapLanguagePattern = /^(?:mindmap|mind-map)$/i;
 const markdownMindMapBlockPattern =
-  /```(?:mindmap|mind-map|xmind-map)\s*\n([\s\S]*?)\n```/gi;
+  /```(?:mindmap|mind-map)\s*\n([\s\S]*?)\n```/gi;
 const htmlMindMapScriptPattern =
   /<script\b(?=[^>]*\bdata-mindmap\b)[^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi;
 
