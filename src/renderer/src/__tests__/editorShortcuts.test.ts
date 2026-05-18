@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getEditorShortcutAction,
+  isAppShortcutModifier,
   type EditorShortcutEvent,
 } from "../editorShortcuts";
 
@@ -19,6 +20,14 @@ function shortcut(
 }
 
 describe("getEditorShortcutAction", () => {
+  it("recognizes application shortcut modifiers", () => {
+    expect(isAppShortcutModifier(shortcut({ ctrlKey: true }))).toBe(true);
+    expect(isAppShortcutModifier(shortcut({ metaKey: true }))).toBe(true);
+    expect(
+      isAppShortcutModifier(shortcut({ ctrlKey: true, metaKey: true })),
+    ).toBe(false);
+  });
+
   it("maps format shortcuts", () => {
     expect(getEditorShortcutAction(shortcut({ ctrlKey: true, key: "b" }))).toEqual({
       command: { type: "bold" },
@@ -26,6 +35,10 @@ describe("getEditorShortcutAction", () => {
     });
     expect(getEditorShortcutAction(shortcut({ ctrlKey: true, key: "I" }))).toEqual({
       command: { type: "italic" },
+      type: "format",
+    });
+    expect(getEditorShortcutAction(shortcut({ metaKey: true, key: "b" }))).toEqual({
+      command: { type: "bold" },
       type: "format",
     });
     expect(

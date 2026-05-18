@@ -65,6 +65,10 @@ export function getDocumentTypeFromPath(filePath?: string): DocumentType {
     return "word";
   }
 
+  if (filePath && /\.(?:xlsx|xlsm|xlsb|xls)$/i.test(filePath)) {
+    return "excel";
+  }
+
   if (filePath && /\.univer$/i.test(filePath)) {
     return "sheet";
   }
@@ -98,6 +102,10 @@ export function isWordDocument(document?: MarkdownDocument | null) {
   return Boolean(document) && getDocumentType(document) === "word";
 }
 
+export function isExcelDocument(document?: MarkdownDocument | null) {
+  return Boolean(document) && getDocumentType(document) === "excel";
+}
+
 export function isSheetDocument(document?: MarkdownDocument | null) {
   return Boolean(document) && getDocumentType(document) === "sheet";
 }
@@ -116,11 +124,13 @@ export function getDocumentFileExtension(document: MarkdownDocument) {
         ? ".pdf"
         : isWordDocument(document)
           ? ".docx"
-          : isSheetDocument(document)
-            ? ".univer"
-            : isDrawingDocument(document)
-              ? ".excalidraw"
-              : ".md")
+          : isExcelDocument(document)
+            ? ".xlsx"
+            : isSheetDocument(document)
+              ? ".univer"
+              : isDrawingDocument(document)
+                ? ".excalidraw"
+                : ".md")
   );
 }
 

@@ -16,6 +16,10 @@ export type EditorShortcutEvent = Pick<
   "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey"
 >;
 
+export function isAppShortcutModifier(event: EditorShortcutEvent) {
+  return (event.ctrlKey || event.metaKey) && !(event.ctrlKey && event.metaKey);
+}
+
 const shiftedParagraphShortcuts: Record<string, TyporaParagraphCommand> = {
   "[": { type: "orderedList" },
   "]": { type: "bulletList" },
@@ -50,7 +54,7 @@ export function getEditorShortcutAction(
     return { command: { type: "strikethrough" }, type: "format" };
   }
 
-  if (!event.ctrlKey || event.altKey || event.metaKey) {
+  if (!isAppShortcutModifier(event) || event.altKey) {
     return null;
   }
 

@@ -66,9 +66,9 @@
     "@univerjs/preset-sheets-core": "^0.22.1",
     "@univerjs/presets": "^0.22.1",
     "@xyflow/react": "^12.10.2",
+    "chokidar": "^5.0.0",
     "docx-preview": "^0.3.7",
     "lucide-react": "^0.468.0",
-    "mammoth": "^1.12.0",
     "mermaid": "^11.15.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -77,7 +77,8 @@
     "rehype-raw": "^7.0.0",
     "remark-deflist": "^1.0.0",
     "remark-gfm": "^4.0.0",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",

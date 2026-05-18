@@ -72,6 +72,10 @@ function getStoredDocumentType(filePath?: string): DocumentType {
     return "word";
   }
 
+  if (filePath && /\.(?:xlsx|xlsm|xlsb|xls)$/i.test(filePath)) {
+    return "excel";
+  }
+
   if (filePath && /\.univer$/i.test(filePath)) {
     return "sheet";
   }
@@ -92,7 +96,7 @@ function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
 
   return {
     ...document,
-    content: documentType === "pdf" || documentType === "word" ? "" : document.content,
+    content: documentType === "pdf" || documentType === "word" || documentType === "excel" ? "" : document.content,
     documentType,
     drawings: document.drawings ?? {},
     fileExtension:
@@ -104,16 +108,20 @@ function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
           ? ".pdf"
           : documentType === "word"
             ? ".docx"
-            : documentType === "sheet"
-              ? ".univer"
-              : documentType === "drawing"
-                ? ".excalidraw"
-                : ".md"),
+            : documentType === "excel"
+              ? ".xlsx"
+              : documentType === "sheet"
+                ? ".univer"
+                : documentType === "drawing"
+                  ? ".excalidraw"
+                  : ".md"),
   };
 }
 
 function serializeDocument(document: MarkdownDocument): MarkdownDocument {
-  return document.documentType === "pdf" || document.documentType === "word"
+  return document.documentType === "pdf" ||
+    document.documentType === "word" ||
+    document.documentType === "excel"
     ? { ...document, content: "" }
     : document;
 }

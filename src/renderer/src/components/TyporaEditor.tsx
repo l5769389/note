@@ -14,6 +14,7 @@ import { lift, setBlockType, toggleMark, wrapIn } from "@milkdown/kit/prose/comm
 import { redo, undo } from "@milkdown/kit/prose/history";
 import { liftListItem, sinkListItem, wrapInList } from "@milkdown/kit/prose/schema-list";
 import {
+  type EditorState,
   NodeSelection,
   Plugin,
   Selection,
@@ -590,6 +591,333 @@ const codeBlockLanguageDecoration = $prose(
     }),
 );
 
+type CodeBlockDomTarget = { node: ProseMirrorNode; pos: number };
+
+function findCodeBlockAtDocumentPosition(
+  view: EditorView,
+  position: number,
+): CodeBlockDomTarget | null {
+  let result: CodeBlockDomTarget | null = null;
+
+  view.state.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (result || node.type.name !== "code_block") {
+      return;
+    }
+
+    if (position >= pos && position <= pos + node.nodeSize) {
+      result = { node, pos };
+    }
+  });
+
+  return result;
+}
+
+function getCodeBlockAtDomTarget(
+  view: EditorView,
+  target: EventTarget | null,
+): CodeBlockDomTarget | null {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+
+  const codeBlockElement = target.closest("pre.typora-code-block, pre");
+
+  if (!codeBlockElement || !view.dom.contains(codeBlockElement)) {
+    return null;
+  }
+
+  let result: CodeBlockDomTarget | null = null;
+
+  view.state.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (node.type.name !== "code_block") {
+      return;
+    }
+
+    const nodeDOM = view.nodeDOM(pos);
+
+    if (
+      nodeDOM === codeBlockElement ||
+      (nodeDOM instanceof Element &&
+        (nodeDOM.contains(codeBlockElement) || codeBlockElement.contains(nodeDOM)))
+    ) {
+      result = result ?? { node, pos };
+    }
+  });
+
+  return result as CodeBlockDomTarget | null;
+}
+
+function getCodeBlockAtMouseEvent(
+  view: EditorView,
+  event: MouseEvent,
+): CodeBlockDomTarget | null {
+  const domMatch = getCodeBlockAtDomTarget(view, event.target);
+
+  if (domMatch) {
+    return domMatch;
+  }
+
+  const position = view.posAtCoords({ left: event.clientX, top: event.clientY });
+
+  return position ? findCodeBlockAtDocumentPosition(view, position.pos) : null;
+}
+
+function placeCursorInsideCodeBlock(view: EditorView, pos: number) {
+  view.dispatch(
+    view.state.tr
+      .setSelection(TextSelection.create(view.state.doc, pos + 1))
+      .scrollIntoView(),
+  );
+  view.focus();
+}
+
+function focusEmptyCodeBlock(view: EditorView, pos: number) {
+  const node = view.state.doc.nodeAt(pos);
+
+  if (!node || node.type.name !== "code_block" || node.textContent.length > 0) {
+    return false;
+  }
+
+  const contentPosition = pos + 1;
+
+  view.dispatch(
+    view.state.tr
+      .setSelection(TextSelection.create(view.state.doc, contentPosition))
+      .scrollIntoView(),
+  );
+  view.focus();
+  return true;
+}
+
+function getActiveBlankCodeBlock(state: EditorState): CodeBlockDomTarget | null {
+  const { from, to } = state.selection;
+  let result: CodeBlockDomTarget | null = null;
+
+  state.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (result || node.type.name !== "code_block") {
+      return false;
+    }
+
+    if (
+      node.textContent.trim().length === 0 &&
+      from >= pos &&
+      to <= pos + node.nodeSize
+    ) {
+      result = { node, pos };
+      return false;
+    }
+
+    return true;
+  });
+
+  return result;
+}
+
+function getActiveEmptyCodeBlock(state: EditorState): CodeBlockDomTarget | null {
+  const { from, to } = state.selection;
+  let result: CodeBlockDomTarget | null = null;
+
+  state.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (result || node.type.name !== "code_block") {
+      return false;
+    }
+
+    if (
+      node.textContent.length === 0 &&
+      selectionTouchesRange(from, to, pos, pos + node.nodeSize)
+    ) {
+      result = { node, pos };
+      return false;
+    }
+
+    return true;
+  });
+
+  return result;
+}
+
+function createEmptyCodeBlockFocusTransaction(
+  state: EditorState,
+  codeBlock: CodeBlockDomTarget,
+) {
+  if (codeBlock.node.textContent.length > 0) {
+    return null;
+  }
+
+  const contentPosition = codeBlock.pos + 1;
+
+  if (state.selection.empty && state.selection.from === contentPosition) {
+    return null;
+  }
+
+  return state.tr
+    .setSelection(TextSelection.create(state.doc, contentPosition))
+    .scrollIntoView();
+}
+
+function getBlankCodeBlockForDeletion(
+  state: EditorState,
+  key: "Backspace" | "Delete",
+): CodeBlockDomTarget | null {
+  const activeCodeBlock = getActiveBlankCodeBlock(state);
+
+  if (activeCodeBlock) {
+    return activeCodeBlock;
+  }
+
+  const { selection } = state;
+
+  if (!selection.empty) {
+    return null;
+  }
+
+  const cursor = selection.from;
+  let result: CodeBlockDomTarget | null = null;
+
+  state.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (result || node.type.name !== "code_block") {
+      return false;
+    }
+
+    if (node.textContent.trim().length > 0) {
+      return false;
+    }
+
+    const blockFrom = pos;
+    const blockTo = pos + node.nodeSize;
+    const isNextBlankBlock =
+      key === "Delete" && (blockFrom === cursor || blockFrom === cursor + 1);
+    const isPreviousBlankBlock =
+      key === "Backspace" && (blockTo === cursor || blockTo === cursor - 1);
+
+    if (isNextBlankBlock || isPreviousBlankBlock) {
+      result = { node, pos };
+      return false;
+    }
+
+    return true;
+  });
+
+  return result;
+}
+
+function deleteBlankCodeBlockForKey(
+  view: EditorView,
+  key: "Backspace" | "Delete",
+) {
+  const codeBlock = getBlankCodeBlockForDeletion(view.state, key);
+
+  if (!codeBlock) {
+    return false;
+  }
+
+  view.dispatch(
+    view.state.tr
+      .delete(codeBlock.pos, codeBlock.pos + codeBlock.node.nodeSize)
+      .scrollIntoView(),
+  );
+  return true;
+}
+
+function createBlankCodeBlockBehavior(
+  applyingExternalValueRef: MutableRefObject<boolean>,
+) {
+  return $prose(
+    () => {
+      let pendingDeleteKey: "Backspace" | "Delete" | null = null;
+
+      return new Plugin({
+        appendTransaction(transactions, _oldState, newState) {
+          const key = pendingDeleteKey;
+
+          if (!transactions.some((transaction) => transaction.docChanged)) {
+            return null;
+          }
+
+          if (key) {
+            pendingDeleteKey = null;
+            const codeBlock = getBlankCodeBlockForDeletion(newState, key);
+
+            return codeBlock
+              ? newState.tr
+                  .delete(codeBlock.pos, codeBlock.pos + codeBlock.node.nodeSize)
+                  .scrollIntoView()
+              : null;
+          }
+
+          if (applyingExternalValueRef.current) {
+            return null;
+          }
+
+          const codeBlock = getActiveEmptyCodeBlock(newState);
+
+          return codeBlock
+            ? createEmptyCodeBlockFocusTransaction(newState, codeBlock)
+            : null;
+        },
+        props: {
+          handleDOMEvents: {
+            keydown(view, event) {
+              const keyboardEvent = event as KeyboardEvent;
+
+              if (
+                keyboardEvent.key !== "Backspace" &&
+                keyboardEvent.key !== "Delete"
+              ) {
+                pendingDeleteKey = null;
+                return false;
+              }
+
+              if (deleteBlankCodeBlockForKey(view, keyboardEvent.key)) {
+                keyboardEvent.preventDefault();
+                pendingDeleteKey = null;
+                return true;
+              }
+
+              pendingDeleteKey = keyboardEvent.key;
+              return false;
+            },
+          },
+        },
+      });
+    },
+  );
+}
+
+const emptyCodeBlockSelection = $prose(
+  () =>
+    new Plugin({
+      props: {
+        handleDOMEvents: {
+          mousedown(view, event) {
+            const mouseEvent = event as MouseEvent;
+
+            if (mouseEvent.button !== 0) {
+              return false;
+            }
+
+            if (
+              event.target instanceof Element &&
+              event.target.closest(".typora-code-language-editor")
+            ) {
+              return false;
+            }
+
+            const codeBlock = getCodeBlockAtMouseEvent(view, mouseEvent);
+
+            if (!codeBlock || codeBlock.node.textContent.trim().length > 0) {
+              return false;
+            }
+
+            event.preventDefault();
+            placeCursorInsideCodeBlock(view, codeBlock.pos);
+            return true;
+          },
+        },
+      },
+    }),
+);
+
 const mermaidBlockDecoration = $prose(
   () =>
     new Plugin({
@@ -735,6 +1063,40 @@ const mermaidBlockDecoration = $prose(
     }),
 );
 
+type UniverSheetBlockRange = {
+  from: number;
+  to: number;
+};
+
+function findUniverSheetBlockRange(
+  state: EditorView["state"],
+): UniverSheetBlockRange | null {
+  const { from, to } = state.selection;
+  let range: UniverSheetBlockRange | null = null;
+
+  state.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (range || node.type.name !== "code_block") {
+      return;
+    }
+
+    const language =
+      typeof node.attrs.language === "string" ? node.attrs.language : "";
+
+    if (!isUniverSheetLanguage(language)) {
+      return;
+    }
+
+    const blockFrom = pos;
+    const blockTo = pos + node.nodeSize;
+
+    if (selectionTouchesRange(from, to, blockFrom, blockTo)) {
+      range = { from: blockFrom, to: blockTo };
+    }
+  });
+
+  return range;
+}
+
 function createUniverSheetBlockDecoration(
   onEditUniverSheetRef: MutableRefObject<TyporaEditorProps["onEditUniverSheet"]>,
 ) {
@@ -742,6 +1104,25 @@ function createUniverSheetBlockDecoration(
     () =>
       new Plugin({
         props: {
+          handleKeyDown(view, event) {
+            if (event.key !== "Backspace" && event.key !== "Delete") {
+              return false;
+            }
+
+            const range = findUniverSheetBlockRange(view.state);
+
+            if (!range) {
+              return false;
+            }
+
+            event.preventDefault();
+            view.dispatch(
+              view.state.tr
+                .delete(range.from, range.to)
+                .scrollIntoView(),
+            );
+            return true;
+          },
           decorations(state) {
             const decorations: Decoration[] = [];
 
@@ -757,17 +1138,10 @@ function createUniverSheetBlockDecoration(
                 return;
               }
 
-              const isActive = selectionTouchesNode(state.selection, pos, node);
-              const nodeDecorations = isActive
-                ? []
-                : [
-                    Decoration.node(pos, pos + node.nodeSize, {
-                      class: "typora-mermaid-source-hidden",
-                    }),
-                  ];
-
               decorations.push(
-                ...nodeDecorations,
+                Decoration.node(pos, pos + node.nodeSize, {
+                  class: "typora-mermaid-source-hidden typora-univer-sheet-source-hidden",
+                }),
                 Decoration.widget(
                   pos + node.nodeSize,
                   () => {
@@ -2163,6 +2537,8 @@ function MilkdownRuntime({
       .use(prism)
       .use(disableNativeWritingChecks)
       .use(codeBlockLanguageDecoration)
+      .use(createBlankCodeBlockBehavior(applyingExternalValueRef))
+      .use(emptyCodeBlockSelection)
       .use(mermaidBlockDecoration)
       .use(createUniverSheetBlockDecoration(onEditUniverSheetRef))
       .use(createRawHtmlPreviewDecoration(filePathRef))
@@ -2593,7 +2969,27 @@ function MilkdownRuntime({
               insert("\n$$\n\n$$\n")(ctx);
               break;
             case "codeBlock":
-              setCurrentBlockType(view, "code_block", { language: "" });
+              if (setCurrentBlockType(view, "code_block", { language: "" })) {
+                const block = getActiveTopLevelBlock(view);
+
+                if (block?.node.type.name === "code_block") {
+                  if (!focusEmptyCodeBlock(view, block.start)) {
+                    placeCursorInsideCodeBlock(view, block.start);
+                  }
+                  requestAnimationFrame(() => {
+                    const latestBlock = getActiveTopLevelBlock(view);
+
+                    if (
+                      latestBlock?.node.type.name === "code_block" &&
+                      latestBlock.node.textContent.length === 0
+                    ) {
+                      if (!focusEmptyCodeBlock(view, latestBlock.start)) {
+                        placeCursorInsideCodeBlock(view, latestBlock.start);
+                      }
+                    }
+                  });
+                }
+              }
               break;
             case "blockquote":
               toggleBlockquote(view);

@@ -45,6 +45,7 @@ describe("loadAppSettings", () => {
               editorFontFamily: "serif",
               editorFontSize: "16px",
               editorLineHeight: "2",
+              editorMode: "split",
               imageUploadEndpoint: "https://example.com/upload",
               remoteServerUrl: "https://example.com/sync",
             })
@@ -57,6 +58,7 @@ describe("loadAppSettings", () => {
       editorFontFamily: "serif",
       editorFontSize: "16px",
       editorLineHeight: "2",
+      editorMode: "split",
     });
   });
 
@@ -69,6 +71,7 @@ describe("loadAppSettings", () => {
           editorFontFamily: "missing",
           editorFontSize: "3px",
           editorLineHeight: "9",
+          editorMode: "raw",
         }),
     } as unknown as Storage;
 

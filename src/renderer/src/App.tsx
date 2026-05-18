@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import {
+  AlertTriangle,
   BookOpenText,
   Check,
   ChevronDown,
@@ -53,6 +54,7 @@ import {
   type AppSettings,
   type AppTheme,
 } from "./appSettings";
+import { ExcelDocumentViewer } from "./components/ExcelDocumentViewer";
 import { HtmlDocumentViewer } from "./components/HtmlDocumentViewer";
 import { MarkdownRenderer } from "./components/MarkdownRenderer";
 import { MindMapModal } from "./components/MindMapModal";
@@ -70,7 +72,10 @@ import type {
   TyporaFormatCommand,
   TyporaParagraphCommand,
 } from "./editorCommands";
-import { getEditorShortcutAction } from "./editorShortcuts";
+import {
+  getEditorShortcutAction,
+  isAppShortcutModifier,
+} from "./editorShortcuts";
 import { createMarkdownExportHtml } from "./exportDocument";
 import { createParagraphCommandMarkdown } from "./markdownCommands";
 import {
@@ -85,6 +90,7 @@ import {
   getDocumentDisplayName,
   getDocumentPathPreview,
   getDocumentType,
+  isExcelDocument,
   isHtmlDocument,
   isDrawingDocument,
   isMarkdownDocument,
@@ -191,6 +197,7 @@ const homeRecentDocumentLimit = 3;
 const sidebarRecentDirectoryLimit = 5;
 const storedRecentDirectoryLimit = 12;
 const recentDirectoryStorageKey = "typora-like-editor:recent-directories:v1";
+const internalFileWriteGraceMs = 8000;
 
 type FindPanelMode = "find" | "replace";
 
@@ -205,6 +212,18 @@ type RevealDocumentRangeOptions = {
   occurrenceIndex?: number;
   preserveRendered?: boolean;
   query?: string;
+};
+
+type AppDialogTone = "info" | "warning" | "danger";
+
+type AppDialogState = {
+  title: string;
+  description: string;
+  detail?: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  tone: AppDialogTone;
+  type: "alert" | "confirm";
 };
 
 function createDefaultExcalidrawScene() {
@@ -411,6 +430,28 @@ function MenuSubmenu({
   panelClassName?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const submenuRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelStyle, setPanelStyle] = useState<CSSProperties>({
+    left: -9999,
+    top: -9999,
+  });
+
+  function openSubmenu() {
+    const rect = submenuRef.current?.getBoundingClientRect();
+
+    if (rect) {
+      const panelHeight = panelRef.current?.offsetHeight ?? 320;
+      const maxTop = Math.max(8, window.innerHeight - panelHeight - 8);
+
+      setPanelStyle({
+        left: rect.right + 4,
+        top: Math.min(Math.max(8, rect.top - 8), maxTop),
+      });
+    }
+
+    setIsOpen(true);
+  }
 
   function closeWhenFocusLeaves(event: FocusEvent<HTMLDivElement>) {
     const nextTarget = event.relatedTarget;
@@ -421,18 +462,20 @@ function MenuSubmenu({
 
   return (
     <div
+      ref={submenuRef}
       className={["menubar-submenu", isOpen ? "menubar-submenu-open" : ""]
         .filter(Boolean)
         .join(" ")}
       onBlur={closeWhenFocusLeaves}
-      onFocus={() => setIsOpen(true)}
-      onPointerEnter={() => setIsOpen(true)}
+      onFocus={openSubmenu}
+      onPointerEnter={openSubmenu}
       onPointerLeave={() => setIsOpen(false)}
     >
       <button
         aria-expanded={isOpen}
         aria-haspopup="menu"
         className="menubar-dropdown-item"
+        onClick={openSubmenu}
         role="menuitem"
         type="button"
       >
@@ -442,10 +485,12 @@ function MenuSubmenu({
         <ChevronRight className="menubar-dropdown-arrow" size={18} />
       </button>
       <div
+        ref={panelRef}
         className={["menubar-submenu-panel", panelClassName ?? ""]
           .filter(Boolean)
           .join(" ")}
         role="menu"
+        style={panelStyle}
       >
         {children}
       </div>
@@ -716,6 +761,10 @@ function getFileListPreview(document?: MarkdownDocument) {
     return "Word 文档 · 只读预览";
   }
 
+  if (isExcelDocument(document)) {
+    return "Excel 表格 · 只读预览";
+  }
+
   if (isSheetDocument(document)) {
     return "在线表格 · 可打开编辑";
   }
@@ -726,7 +775,7 @@ function getFileListPreview(document?: MarkdownDocument) {
 
   const preview = stripMarkdownForFilePreview(document.content);
 
-  return preview || "空白文档";
+  return preview;
 }
 
 function getDirectoryDisplayPath(filePath: string, workspacePath?: string) {
@@ -814,34 +863,40 @@ function DirectoryFileList({
 
   return (
     <div className="directory-file-list">
-      {files.map((file) => (
-        <button
-          className={
-            file.path === activeFilePath
-              ? "directory-file-list-item directory-file-list-item-active"
-              : "directory-file-list-item"
-          }
-          key={file.path}
-          type="button"
-          onClick={() => onOpenFile(file.path)}
-        >
-          <FileText size={17} />
-          <span className="directory-file-list-text">
-            <span className="directory-file-list-title">{file.name}</span>
-            <span className="directory-file-list-meta">
-              {file.directoryLabel || getPathLabel(workspacePath)}
+      {files.map((file) => {
+        const preview = getFileListPreview(file.document);
+
+        return (
+          <button
+            className={
+              file.path === activeFilePath
+                ? "directory-file-list-item directory-file-list-item-active"
+                : "directory-file-list-item"
+            }
+            key={file.path}
+            type="button"
+            onClick={() => onOpenFile(file.path)}
+          >
+            <FileText size={17} />
+            <span className="directory-file-list-text">
+              <span className="directory-file-list-title">{file.name}</span>
+              {file.directoryLabel ? (
+                <span className="directory-file-list-meta">
+                  {file.directoryLabel}
+                </span>
+              ) : null}
+              {preview ? (
+                <span className="directory-file-list-preview">{preview}</span>
+              ) : null}
             </span>
-            <span className="directory-file-list-preview">
-              {getFileListPreview(file.document)}
-            </span>
-          </span>
-          {file.document?.updatedAt ? (
-            <time dateTime={file.document.updatedAt}>
-              {formatRecentTimestamp(file.document.updatedAt)}
-            </time>
-          ) : null}
-        </button>
-      ))}
+            {file.document?.updatedAt ? (
+              <time dateTime={file.document.updatedAt}>
+                {formatRecentTimestamp(file.document.updatedAt)}
+              </time>
+            ) : null}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -967,7 +1022,7 @@ function WelcomeIllustration() {
 
 export function App() {
   const [workspace, setWorkspace] = useState(loadWorkspace);
-  const [mode, setMode] = useState<EditorMode>("typora");
+  const [mode, setMode] = useState<EditorMode>(() => loadAppSettings().editorMode);
   const [topMenu, setTopMenu] = useState<TopMenu>(null);
   const [theme, setTheme] = useState<AppTheme>(getInitialTheme);
   const [settings, setSettings] = useState<AppSettings>(loadAppSettings);
@@ -992,6 +1047,7 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
+  const [appDialog, setAppDialog] = useState<AppDialogState | null>(null);
   const [findPanelMode, setFindPanelMode] = useState<FindPanelMode>("find");
   const [findQuery, setFindQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
@@ -1000,6 +1056,9 @@ export function App() {
   const [workspaceSearchGroups, setWorkspaceSearchGroups] = useState<
     WorkspaceSearchGroup[]
   >([]);
+  const [documentReloadTokens, setDocumentReloadTokens] = useState<
+    Record<string, number>
+  >({});
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [fileExplorerView, setFileExplorerView] =
@@ -1032,12 +1091,19 @@ export function App() {
   const workspaceSearchInputRef = useRef<HTMLInputElement | null>(null);
   const pendingWorkspaceSearchRevealRef = useRef<WorkspaceSearchReveal | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const appDialogResolverRef = useRef<((confirmed: boolean) => void) | null>(
+    null,
+  );
+  const externalConflictPathsRef = useRef(new Set<string>());
   const savedFileContentByPathRef = useRef(
     new Map(
       workspace.documents
         .filter((document) => document.filePath)
         .map((document) => [document.filePath!, document.content]),
     ),
+  );
+  const internalFileWritesRef = useRef(
+    new Map<string, { content: string; expiresAt: number }>(),
   );
 
   const activeDocument = useMemo(
@@ -1159,6 +1225,29 @@ export function App() {
   }, [workspace.workspacePath, workspaceSearchQuery]);
 
   useEffect(() => {
+    if (!workspace.workspacePath || !window.desktop?.watchWorkspaceDirectory) {
+      void window.desktop?.unwatchWorkspaceDirectory?.();
+      return;
+    }
+
+    void window.desktop.watchWorkspaceDirectory(workspace.workspacePath);
+
+    return () => {
+      void window.desktop?.unwatchWorkspaceDirectory?.();
+    };
+  }, [workspace.workspacePath]);
+
+  useEffect(() => {
+    if (!window.desktop?.onWorkspaceFileChanged) {
+      return;
+    }
+
+    return window.desktop.onWorkspaceFileChanged((payload) => {
+      void handleWorkspaceFileChange(payload);
+    });
+  }, [activeDocument, workspace.documents, workspace.workspacePath]);
+
+  useEffect(() => {
     const filePaths = recentDocuments
       .map((document) => document.filePath)
       .filter((filePath): filePath is string => Boolean(filePath));
@@ -1241,6 +1330,11 @@ export function App() {
       ...current,
       [key]: value,
     }));
+  }
+
+  function updateEditorMode(nextMode: EditorMode) {
+    setMode(nextMode);
+    updateSetting("editorMode", nextMode);
   }
 
   function startSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1369,34 +1463,176 @@ export function App() {
   }, [isActionsOpen, topMenu]);
 
   useEffect(() => {
-    function isFormControl(target: EventTarget | null) {
-      return (
+    function shouldIgnoreAppShortcutTarget(target: EventTarget | null) {
+      if (!(target instanceof Element)) {
+        return false;
+      }
+
+      if (target instanceof HTMLTextAreaElement) {
+        return target !== editorRef.current;
+      }
+
+      if (
         target instanceof HTMLInputElement ||
         target instanceof HTMLSelectElement
+      ) {
+        return true;
+      }
+
+      return Boolean(
+        target.closest("[contenteditable='true']") &&
+          !target.closest(".ProseMirror"),
       );
     }
 
+    function isEditorShortcutTarget(target: EventTarget | null) {
+      return (
+        target instanceof Element &&
+        (target === editorRef.current || Boolean(target.closest(".ProseMirror")))
+      );
+    }
+
+    function getShortcutDigit(event: KeyboardEvent) {
+      if (/^Digit[0-9]$/.test(event.code)) {
+        return event.code.slice("Digit".length);
+      }
+
+      return /^[0-9]$/.test(event.key) ? event.key : "";
+    }
+
     function handleGlobalEditShortcuts(event: KeyboardEvent) {
-      if (isCreateFileOpen || isSettingsOpen || isFormControl(event.target)) {
+      if (
+        event.isComposing ||
+        isCreateFileOpen ||
+        isSettingsOpen ||
+        shouldIgnoreAppShortcutTarget(event.target)
+      ) {
         return;
       }
 
-      if (event.ctrlKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === "n") {
+      const usesAppModifier = isAppShortcutModifier(event);
+      const key = event.key.toLowerCase();
+
+      if (usesAppModifier && event.shiftKey && !event.altKey && key === "n") {
         event.preventDefault();
         openNewWindow();
         return;
       }
 
-      if (event.ctrlKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === "s") {
+      if (usesAppModifier && event.shiftKey && !event.altKey && key === "s") {
         event.preventDefault();
         void saveActiveDocumentAs();
         return;
       }
 
-      if (event.ctrlKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "s") {
+      if (usesAppModifier && !event.shiftKey && !event.altKey && key === "s") {
         event.preventDefault();
         void saveNow();
         return;
+      }
+
+      if (usesAppModifier && !event.shiftKey && !event.altKey && key === "n") {
+        event.preventDefault();
+        createNewDocument();
+        return;
+      }
+
+      if (usesAppModifier && !event.shiftKey && !event.altKey && key === "o") {
+        event.preventDefault();
+        void openMarkdownFile();
+        return;
+      }
+
+      if (
+        usesAppModifier &&
+        !event.shiftKey &&
+        !event.altKey &&
+        (event.key === "," || event.code === "Comma")
+      ) {
+        event.preventDefault();
+        setIsSettingsOpen(true);
+        setTopMenu(null);
+        return;
+      }
+
+      if (usesAppModifier && event.shiftKey && !event.altKey && key === "l") {
+        event.preventDefault();
+        setIsSidebarCollapsed((current) => !current);
+        setTopMenu(null);
+        return;
+      }
+
+      if (usesAppModifier && event.shiftKey && !event.altKey) {
+        const digit = getShortcutDigit(event);
+
+        if (digit === "1") {
+          event.preventDefault();
+          setSidebarTab("current");
+          setIsSidebarCollapsed(false);
+          setTopMenu(null);
+          return;
+        }
+
+        if (digit === "2") {
+          event.preventDefault();
+          setIsHomeOpen(true);
+          setTopMenu(null);
+          return;
+        }
+
+        if (digit === "3") {
+          event.preventDefault();
+          setSidebarTab("files");
+          setIsSidebarCollapsed(false);
+          setTopMenu(null);
+          return;
+        }
+      }
+
+      if (
+        usesAppModifier &&
+        !event.shiftKey &&
+        !event.altKey &&
+        isEditorShortcutTarget(event.target)
+      ) {
+        switch (key) {
+          case "z":
+            event.preventDefault();
+            void runEditCommand("undo");
+            return;
+          case "y":
+            event.preventDefault();
+            void runEditCommand("redo");
+            return;
+          case "x":
+            event.preventDefault();
+            void runEditCommand("cut");
+            return;
+          case "c":
+            event.preventDefault();
+            void runEditCommand("copy");
+            return;
+          case "v":
+            event.preventDefault();
+            void runEditCommand("paste");
+            return;
+        }
+      }
+
+      if (
+        !usesAppModifier &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        isEditorShortcutTarget(event.target)
+      ) {
+        if (event.key === "Tab") {
+          event.preventDefault();
+          runParagraphCommand({
+            type: event.shiftKey ? "outdentList" : "indentList",
+          });
+          return;
+        }
       }
 
       const action = getEditorShortcutAction(event);
@@ -1426,10 +1662,10 @@ export function App() {
       }
     }
 
-    window.addEventListener("keydown", handleGlobalEditShortcuts);
+    window.addEventListener("keydown", handleGlobalEditShortcuts, true);
 
     return () => {
-      window.removeEventListener("keydown", handleGlobalEditShortcuts);
+      window.removeEventListener("keydown", handleGlobalEditShortcuts, true);
     };
   }, [activeDocument, isCreateFileOpen, isSettingsOpen, mode]);
 
@@ -1479,6 +1715,7 @@ export function App() {
           (document) =>
             isWritableTextDocument(document) &&
             document.filePath &&
+            !externalConflictPathsRef.current.has(normalizeFilePathKey(document.filePath)) &&
             savedFileContentByPathRef.current.get(document.filePath) !== document.content,
         );
 
@@ -1488,16 +1725,17 @@ export function App() {
         }
 
         void Promise.all(
-          writableDocuments.map((document) =>
-            window.desktop!.writeMarkdownFile({
+          writableDocuments.map((document) => {
+            rememberInternalFileWrite(document.filePath!, document.content);
+            return window.desktop!.writeMarkdownFile({
               content: document.content,
               filePath: document.filePath!,
-            }),
-          ),
+            });
+          }),
         )
           .then(() => {
             writableDocuments.forEach((document) => {
-              savedFileContentByPathRef.current.set(document.filePath!, document.content);
+              acknowledgeSavedFileContent(document.filePath!, document.content);
             });
             setSaveState("saved");
             void loadDirectoryTree();
@@ -1945,6 +2183,227 @@ export function App() {
       isSheetDocument(document) ||
       isDrawingDocument(document)
     );
+  }
+
+  function isDocumentDirty(document: MarkdownDocument) {
+    return Boolean(
+      document.filePath &&
+        isWritableTextDocument(document) &&
+        savedFileContentByPathRef.current.get(document.filePath) !== document.content,
+    );
+  }
+
+  function pruneExpiredInternalFileWrites(now = Date.now()) {
+    internalFileWritesRef.current.forEach((snapshot, fileKey) => {
+      if (snapshot.expiresAt <= now) {
+        internalFileWritesRef.current.delete(fileKey);
+      }
+    });
+  }
+
+  function rememberInternalFileWrite(filePath: string, content: string) {
+    const fileKey = normalizeFilePathKey(filePath);
+
+    if (!fileKey) {
+      return;
+    }
+
+    const now = Date.now();
+    pruneExpiredInternalFileWrites(now);
+    internalFileWritesRef.current.set(fileKey, {
+      content,
+      expiresAt: now + internalFileWriteGraceMs,
+    });
+  }
+
+  function isMatchingInternalFileWrite(filePath: string, content: string) {
+    const fileKey = normalizeFilePathKey(filePath);
+
+    if (!fileKey) {
+      return false;
+    }
+
+    pruneExpiredInternalFileWrites();
+    return internalFileWritesRef.current.get(fileKey)?.content === content;
+  }
+
+  function acknowledgeSavedFileContent(filePath: string, content: string) {
+    const fileKey = normalizeFilePathKey(filePath);
+    const knownDocumentPath = workspace.documents.find(
+      (document) => normalizeFilePathKey(document.filePath) === fileKey,
+    )?.filePath;
+
+    savedFileContentByPathRef.current.set(filePath, content);
+    if (knownDocumentPath && knownDocumentPath !== filePath) {
+      savedFileContentByPathRef.current.set(knownDocumentPath, content);
+    }
+    externalConflictPathsRef.current.delete(fileKey);
+  }
+
+  function openAppDialog(dialog: AppDialogState) {
+    return new Promise<boolean>((resolve) => {
+      appDialogResolverRef.current?.(false);
+      appDialogResolverRef.current = resolve;
+      setAppDialog(dialog);
+    });
+  }
+
+  function closeAppDialog(confirmed: boolean) {
+    appDialogResolverRef.current?.(confirmed);
+    appDialogResolverRef.current = null;
+    setAppDialog(null);
+  }
+
+  function showAppAlert(dialog: Omit<AppDialogState, "type" | "cancelLabel">) {
+    return openAppDialog({
+      ...dialog,
+      type: "alert",
+    });
+  }
+
+  function showAppConfirm(dialog: Omit<AppDialogState, "type">) {
+    return openAppDialog({
+      ...dialog,
+      type: "confirm",
+    });
+  }
+
+  function bumpDocumentReloadToken(documentId: string) {
+    setDocumentReloadTokens((current) => ({
+      ...current,
+      [documentId]: (current[documentId] ?? 0) + 1,
+    }));
+  }
+
+  async function handleWorkspaceFileChange(payload: {
+    event: "add" | "change" | "unlink";
+    filePath: string;
+    updatedAt?: string;
+  }) {
+    const fileKey = normalizeFilePathKey(payload.filePath);
+    const changedDocument = workspace.documents.find(
+      (document) => normalizeFilePathKey(document.filePath) === fileKey,
+    );
+    const isCurrentDocument =
+      normalizeFilePathKey(activeDocument?.filePath) === fileKey;
+
+    void loadDirectoryTree();
+
+    if (payload.event === "add") {
+      return;
+    }
+
+    if (!changedDocument) {
+      return;
+    }
+
+    if (payload.event === "unlink") {
+      setRecentFileAvailability((current) => ({
+        ...current,
+        [payload.filePath]: false,
+      }));
+
+      if (isCurrentDocument) {
+        externalConflictPathsRef.current.add(fileKey);
+        void showAppAlert({
+          confirmLabel: "知道了",
+          description:
+            "编辑器会暂时保留当前内容。再次保存时会弹出保存位置，你可以沿用原文件名重新保存。",
+          detail: payload.filePath,
+          title: "当前文件已在外部被删除",
+          tone: "danger",
+        });
+      }
+
+      return;
+    }
+
+    let localFile: LocalMarkdownFile | null = null;
+
+    try {
+      localFile = (await window.desktop?.readMarkdownFile?.(payload.filePath)) ?? null;
+    } catch {
+      setRecentFileAvailability((current) => ({
+        ...current,
+        [payload.filePath]: false,
+      }));
+      return;
+    }
+
+    if (!localFile) {
+      return;
+    }
+
+    const diskDocument = createDocumentFromLocalFile(localFile);
+
+    if (isMatchingInternalFileWrite(payload.filePath, diskDocument.content)) {
+      acknowledgeSavedFileContent(payload.filePath, diskDocument.content);
+      setRecentFileAvailability((current) => ({
+        ...current,
+        [payload.filePath]: true,
+      }));
+      setWorkspace((current) => {
+        const currentDocument = current.documents.find(
+          (document) => normalizeFilePathKey(document.filePath) === fileKey,
+        );
+
+        if (!currentDocument || currentDocument.content !== diskDocument.content) {
+          return current;
+        }
+
+        return {
+          ...current,
+          documents: mergeDocumentByFilePath(current.documents, diskDocument),
+        };
+      });
+      return;
+    }
+
+    const hasLocalChanges = isDocumentDirty(changedDocument);
+
+    if (diskDocument.content === changedDocument.content) {
+      acknowledgeSavedFileContent(payload.filePath, diskDocument.content);
+      setWorkspace((current) => ({
+        ...current,
+        documents: mergeDocumentByFilePath(current.documents, diskDocument),
+      }));
+      return;
+    }
+
+    if (hasLocalChanges) {
+      externalConflictPathsRef.current.add(fileKey);
+
+      if (!isCurrentDocument) {
+        return;
+      }
+
+      const shouldReload = await showAppConfirm({
+        cancelLabel: "保留当前内容",
+        confirmLabel: "重新加载",
+        description:
+          "重新加载会使用磁盘上的最新内容，并丢弃编辑器中尚未保存的内容；保留当前内容则会暂停该文件的自动保存，直到你手动保存或重新加载。",
+        detail: payload.filePath,
+        title: "当前文件已在外部修改",
+        tone: "warning",
+      });
+
+      if (!shouldReload) {
+        return;
+      }
+    }
+
+    acknowledgeSavedFileContent(payload.filePath, diskDocument.content);
+    if (isCurrentDocument) {
+      bumpDocumentReloadToken(changedDocument.id);
+    }
+    setRecentFileAvailability((current) => ({
+      ...current,
+      [payload.filePath]: true,
+    }));
+    setWorkspace((current) => ({
+      ...current,
+      documents: mergeDocumentByFilePath(current.documents, diskDocument),
+    }));
   }
 
   function openReactFlowEditor(target: ReactFlowEditTarget, code?: string) {
@@ -2670,14 +3129,23 @@ export function App() {
         activeDocument?.filePath &&
         window.desktop?.writeMarkdownFile
       ) {
+        const activeFileKey = normalizeFilePathKey(activeDocument.filePath);
+        const isExternallyDeleted =
+          externalConflictPathsRef.current.has(activeFileKey) &&
+          window.desktop?.pathExists &&
+          !(await window.desktop.pathExists(activeDocument.filePath));
+
+        if (isExternallyDeleted) {
+          await saveActiveDocumentAs();
+          return;
+        }
+
+        rememberInternalFileWrite(activeDocument.filePath, activeDocument.content);
         await window.desktop.writeMarkdownFile({
           content: activeDocument.content,
           filePath: activeDocument.filePath,
         });
-        savedFileContentByPathRef.current.set(
-          activeDocument.filePath,
-          activeDocument.content,
-        );
+        acknowledgeSavedFileContent(activeDocument.filePath, activeDocument.content);
       }
 
       setSaveState("saved");
@@ -2717,7 +3185,8 @@ export function App() {
         updatedAt: savedFile.updatedAt,
       };
 
-      savedFileContentByPathRef.current.set(savedFile.filePath, savedFile.content);
+      rememberInternalFileWrite(savedFile.filePath, savedFile.content);
+      acknowledgeSavedFileContent(savedFile.filePath, savedFile.content);
       rememberRecentDirectory(getDirectoryPath(savedFile.filePath));
       setWorkspace((current) => ({
         ...updateDocument(current, document),
@@ -2773,34 +3242,6 @@ export function App() {
       }
     } catch {
       window.alert(format === "pdf" ? "导出 PDF 失败。" : "导出 HTML 失败。");
-    }
-  }
-
-  async function saveAllNow() {
-    try {
-      saveWorkspace(workspace);
-
-      const writableDocuments = workspace.documents.filter(
-        (document) => isWritableTextDocument(document) && document.filePath,
-      );
-
-      if (window.desktop?.writeMarkdownFile) {
-        await Promise.all(
-          writableDocuments.map((document) =>
-            window.desktop!.writeMarkdownFile({
-              content: document.content,
-              filePath: document.filePath!,
-            }),
-          ),
-        );
-        writableDocuments.forEach((document) => {
-          savedFileContentByPathRef.current.set(document.filePath!, document.content);
-        });
-      }
-
-      setSaveState("saved");
-    } catch {
-      setSaveState("failed");
     }
   }
 
@@ -3027,7 +3468,6 @@ export function App() {
               disabled={!isMarkdownDocument(activeDocument)}
               onSelect={() => runTopMenuAction(() => void saveActiveDocumentAs())}
             />
-            <MenuItem label="保存全部打开的文件..." onSelect={() => runTopMenuAction(() => void saveAllNow())} />
             <MenuSeparator />
             <MenuSubmenu label="导出">
               <MenuItem
@@ -3281,7 +3721,9 @@ export function App() {
                         }
                       }}
                     >
-                      {renderMenubarDropdown(item.key)}
+                      <div className="menubar-dropdown-scroll">
+                        {renderMenubarDropdown(item.key)}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -3666,6 +4108,8 @@ export function App() {
                 />
               ) : isWordDocument(activeDocument) ? (
                 <WordDocumentViewer document={activeDocument} />
+              ) : isExcelDocument(activeDocument) ? (
+                <ExcelDocumentViewer document={activeDocument} />
               ) : isSheetDocument(activeDocument) ? (
                 <section className="standalone-document-viewer standalone-sheet-viewer">
                   <UniverSheetPreview
@@ -3696,6 +4140,7 @@ export function App() {
                 <div className={`editor-layout editor-layout-${mode}`}>
                   {mode === "typora" && (
                     <TyporaEditor
+                      key={`${activeDocument.id}:${documentReloadTokens[activeDocument.id] ?? 0}`}
                       ref={typoraEditorRef}
                       documentId={activeDocument.id}
                       filePath={activeDocument.filePath}
@@ -3760,11 +4205,13 @@ export function App() {
                   ? "PDF preview"
                   : isWordDocument(activeDocument)
                     ? "Word preview"
-                    : isSheetDocument(activeDocument)
-                      ? "Sheet"
-                      : isDrawingDocument(activeDocument)
-                        ? "Excalidraw"
-                        : `${activeDocument ? activeDocumentWordCount : 0} 词`}
+                    : isExcelDocument(activeDocument)
+                      ? "Excel preview"
+                      : isSheetDocument(activeDocument)
+                        ? "Sheet"
+                        : isDrawingDocument(activeDocument)
+                          ? "Excalidraw"
+                          : `${activeDocument ? activeDocumentWordCount : 0} 词`}
             </span>
           </footer>
         </section>
@@ -4116,6 +4563,72 @@ export function App() {
           </Dialog.Portal>
         </Dialog.Root>
 
+        <Dialog.Root
+          open={Boolean(appDialog)}
+          onOpenChange={(open) => {
+            if (!open) {
+              closeAppDialog(false);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="dialog-overlay app-dialog-overlay" />
+            <Dialog.Content
+              className={`app-dialog app-dialog-${appDialog?.tone ?? "info"}`}
+            >
+              {appDialog ? (
+                <>
+                  <div className="app-dialog-header">
+                    <span className="app-dialog-icon" aria-hidden="true">
+                      <AlertTriangle size={18} />
+                    </span>
+                    <div>
+                      <Dialog.Title className="app-dialog-title">
+                        {appDialog.title}
+                      </Dialog.Title>
+                      <Dialog.Description className="app-dialog-description">
+                        {appDialog.description}
+                      </Dialog.Description>
+                    </div>
+                    <button
+                      className="icon-button app-dialog-close"
+                      type="button"
+                      aria-label="关闭"
+                      onClick={() => closeAppDialog(false)}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  {appDialog.detail ? (
+                    <div className="app-dialog-detail" title={appDialog.detail}>
+                      {appDialog.detail}
+                    </div>
+                  ) : null}
+                  <div className="dialog-actions app-dialog-actions">
+                    {appDialog.type === "confirm" ? (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => closeAppDialog(false)}
+                      >
+                        {appDialog.cancelLabel ?? "取消"}
+                      </button>
+                    ) : null}
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => closeAppDialog(true)}
+                    >
+                      <Check size={16} />
+                      {appDialog.confirmLabel}
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
         <Dialog.Root open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
           <Dialog.Portal>
             <Dialog.Overlay className="dialog-overlay" />
@@ -4138,7 +4651,7 @@ export function App() {
                   aria-label="编辑模式"
                   onValueChange={(nextMode) => {
                     if (nextMode) {
-                      setMode(nextMode as EditorMode);
+                      updateEditorMode(nextMode as EditorMode);
                     }
                   }}
                 >

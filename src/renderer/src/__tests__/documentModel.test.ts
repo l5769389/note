@@ -25,6 +25,9 @@ describe("document model helpers", () => {
     expect(getDocumentTypeFromPath("D:/notes/page.htm")).toBe("html");
     expect(getDocumentTypeFromPath("D:/notes/manual.pdf")).toBe("pdf");
     expect(getDocumentTypeFromPath("D:/notes/spec.docx")).toBe("word");
+    expect(getDocumentTypeFromPath("D:/notes/report.xlsx")).toBe("excel");
+    expect(getDocumentTypeFromPath("D:/notes/legacy.xls")).toBe("excel");
+    expect(getDocumentTypeFromPath("D:/notes/macro.xlsm")).toBe("excel");
     expect(getDocumentTypeFromPath("D:/notes/page.md")).toBe("markdown");
   });
 
@@ -49,6 +52,11 @@ describe("document model helpers", () => {
         document({ documentType: "word", fileExtension: ".docx", title: "draft" }),
       ),
     ).toBe("draft.docx");
+    expect(
+      getDocumentDisplayName(
+        document({ documentType: "excel", fileExtension: ".xlsx", title: "budget" }),
+      ),
+    ).toBe("budget.xlsx");
   });
 
   it("merges opened files by path while preserving the existing document id", () => {

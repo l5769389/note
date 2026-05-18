@@ -271,6 +271,7 @@ function createDocumentSearchLines(
   if (
     documentType === "pdf" ||
     documentType === "word" ||
+    documentType === "excel" ||
     documentType === "sheet" ||
     documentType === "drawing"
   ) {

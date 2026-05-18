@@ -1,9 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions, SaveDialogOptions } from "electron";
+import chokidar, { type FSWatcher } from "chokidar";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,25 +12,6 @@ const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 const appName = "Markdown Studio";
 const appUserModelId = "com.local.markdownstudio";
 const localPreviewProtocol = "typora-local";
-const require = createRequire(import.meta.url);
-const mammoth = require("mammoth") as {
-  convertToHtml: (
-    input: { path: string },
-    options?: {
-      convertImage?: unknown;
-      includeDefaultStyleMap?: boolean;
-      styleMap?: string[];
-    },
-  ) => Promise<{ messages: Array<{ message: string; type: string }>; value: string }>;
-  images: {
-    imgElement: (
-      callback: (image: {
-        contentType: string;
-        read: (encoding: string) => Promise<string>;
-      }) => Promise<{ src: string }>,
-    ) => unknown;
-  };
-};
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -45,6 +26,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+const workspaceWatchers = new Map<number, FSWatcher>();
 const ignoredDirectoryNames = new Set([
   "build",
   "dist",
@@ -56,11 +38,12 @@ const markdownExtensions = new Set([".md", ".markdown", ".mdown"]);
 const htmlExtensions = new Set([".html", ".htm"]);
 const pdfExtensions = new Set([".pdf"]);
 const wordExtensions = new Set([".docx"]);
+const excelExtensions = new Set([".xlsx", ".xls", ".xlsm", ".xlsb"]);
 const sheetExtensions = new Set([".univer"]);
 const drawingExtensions = new Set([".excalidraw"]);
 const maxDirectoryTreeDepth = 8;
 
-type DocumentFileType = "markdown" | "html" | "pdf" | "word" | "sheet" | "drawing";
+type DocumentFileType = "markdown" | "html" | "pdf" | "word" | "excel" | "sheet" | "drawing";
 
 type DirectoryTreeItem = {
   children?: DirectoryTreeItem[];
@@ -73,6 +56,12 @@ type ExportDocumentPayload = {
   filePath?: string;
   html: string;
   title: string;
+};
+
+type WorkspaceFileChangePayload = {
+  event: "add" | "change" | "unlink";
+  filePath: string;
+  updatedAt?: string;
 };
 
 function getWorkspaceLabel(directoryPath: string) {
@@ -167,6 +156,10 @@ function getDocumentFileType(filePath: string): DocumentFileType | null {
     return "word";
   }
 
+  if (excelExtensions.has(extension)) {
+    return "excel";
+  }
+
   if (sheetExtensions.has(extension)) {
     return "sheet";
   }
@@ -180,6 +173,40 @@ function getDocumentFileType(filePath: string): DocumentFileType | null {
 
 function isSupportedDocumentFile(filePath: string) {
   return getDocumentFileType(filePath) !== null;
+}
+
+function closeWorkspaceWatcher(webContentsId: number) {
+  const watcher = workspaceWatchers.get(webContentsId);
+
+  if (!watcher) {
+    return;
+  }
+
+  workspaceWatchers.delete(webContentsId);
+  void watcher.close();
+}
+
+function shouldIgnoreWatchPath(path: string) {
+  return path
+    .split(/[\\/]/)
+    .some((segment) => segment.startsWith(".") || ignoredDirectoryNames.has(segment));
+}
+
+async function createWorkspaceFileChangePayload(
+  event: WorkspaceFileChangePayload["event"],
+  filePath: string,
+): Promise<WorkspaceFileChangePayload> {
+  if (event === "unlink") {
+    return { event, filePath };
+  }
+
+  try {
+    const fileStat = await stat(filePath);
+
+    return { event, filePath, updatedAt: fileStat.mtime.toISOString() };
+  } catch {
+    return { event, filePath };
+  }
 }
 
 function getDefaultExportPath(payload: ExportDocumentPayload, extension: "html" | "pdf") {
@@ -233,37 +260,6 @@ async function readMarkdownFile(filePath: string) {
     fileExtension: extname(filePath).toLowerCase(),
     title: titleFromFilePath(filePath),
     updatedAt: fileStat.mtime.toISOString(),
-  };
-}
-
-async function renderWordDocument(filePath: string) {
-  if (!wordExtensions.has(extname(filePath).toLowerCase())) {
-    throw new Error(`Unsupported Word document: ${filePath}`);
-  }
-
-  const result = await mammoth.convertToHtml(
-    { path: filePath },
-    {
-      convertImage: mammoth.images.imgElement(async (image) => ({
-        src: `data:${image.contentType};base64,${await image.read("base64")}`,
-      })),
-      includeDefaultStyleMap: true,
-      styleMap: [
-        "p[style-name='Title'] => h1:fresh",
-        "p[style-name='Subtitle'] => p.subtitle:fresh",
-        "p[style-name='Heading 1'] => h1:fresh",
-        "p[style-name='Heading 2'] => h2:fresh",
-        "p[style-name='Heading 3'] => h3:fresh",
-      ],
-    },
-  );
-
-  return {
-    html: result.value,
-    messages: result.messages.map((message) => ({
-      message: message.message,
-      type: message.type,
-    })),
   };
 }
 
@@ -486,11 +482,12 @@ function registerFileIpc() {
   ipcMain.handle("workspace:select-markdown-file", async () => {
     const options: OpenDialogOptions = {
       filters: [
-        { name: "Documents", extensions: ["md", "markdown", "mdown", "html", "htm", "pdf", "docx", "univer", "excalidraw"] },
+        { name: "Documents", extensions: ["md", "markdown", "mdown", "html", "htm", "pdf", "docx", "xlsx", "xls", "xlsm", "xlsb", "univer", "excalidraw"] },
         { name: "Markdown", extensions: ["md", "markdown", "mdown"] },
         { name: "HTML", extensions: ["html", "htm"] },
         { name: "PDF", extensions: ["pdf"] },
         { name: "Word", extensions: ["docx"] },
+        { name: "Excel", extensions: ["xlsx", "xls", "xlsm", "xlsb"] },
         { name: "Univer Sheet", extensions: ["univer"] },
         { name: "Excalidraw", extensions: ["excalidraw"] },
       ],
@@ -579,8 +576,20 @@ function registerFileIpc() {
     return readMarkdownFile(filePath);
   });
 
-  ipcMain.handle("workspace:render-word-document", async (_, filePath: string) => {
-    return renderWordDocument(filePath);
+  ipcMain.handle("workspace:read-word-document", async (_, filePath: string) => {
+    if (!wordExtensions.has(extname(filePath).toLowerCase())) {
+      throw new Error(`Unsupported Word document: ${filePath}`);
+    }
+
+    return (await readFile(filePath)).toString("base64");
+  });
+
+  ipcMain.handle("workspace:read-excel-document", async (_, filePath: string) => {
+    if (!excelExtensions.has(extname(filePath).toLowerCase())) {
+      throw new Error(`Unsupported Excel document: ${filePath}`);
+    }
+
+    return (await readFile(filePath)).toString("base64");
   });
 
   ipcMain.handle("workspace:path-exists", async (_, filePath: string) => {
@@ -593,6 +602,55 @@ function registerFileIpc() {
 
   ipcMain.handle("workspace:read-directory-tree", async (_, directoryPath: string) => {
     return readDirectoryTree(directoryPath || app.getPath("desktop"));
+  });
+
+  ipcMain.handle("workspace:watch-directory", async (event, directoryPath?: string) => {
+    const webContents = event.sender;
+    const webContentsId = webContents.id;
+
+    closeWorkspaceWatcher(webContentsId);
+
+    if (!directoryPath || !(await pathExists(directoryPath))) {
+      return false;
+    }
+
+    const watcher = chokidar.watch(directoryPath, {
+      awaitWriteFinish: {
+        pollInterval: 100,
+        stabilityThreshold: 250,
+      },
+      depth: maxDirectoryTreeDepth,
+      ignoreInitial: true,
+      ignored: (targetPath) => shouldIgnoreWatchPath(targetPath),
+    });
+
+    const sendChange = async (
+      changeEvent: WorkspaceFileChangePayload["event"],
+      filePath: string,
+    ) => {
+      if (!isSupportedDocumentFile(filePath) || webContents.isDestroyed()) {
+        return;
+      }
+
+      webContents.send(
+        "workspace:file-change",
+        await createWorkspaceFileChangePayload(changeEvent, filePath),
+      );
+    };
+
+    watcher
+      .on("add", (filePath) => void sendChange("add", filePath))
+      .on("change", (filePath) => void sendChange("change", filePath))
+      .on("unlink", (filePath) => void sendChange("unlink", filePath));
+
+    webContents.once("destroyed", () => closeWorkspaceWatcher(webContentsId));
+    workspaceWatchers.set(webContentsId, watcher);
+
+    return true;
+  });
+
+  ipcMain.handle("workspace:unwatch-directory", (event) => {
+    closeWorkspaceWatcher(event.sender.id);
   });
 
   ipcMain.handle("workspace:show-in-folder", async (_, targetPath: string) => {
@@ -720,5 +778,11 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
+  }
+});
+
+app.on("before-quit", () => {
+  for (const webContentsId of workspaceWatchers.keys()) {
+    closeWorkspaceWatcher(webContentsId);
   }
 });

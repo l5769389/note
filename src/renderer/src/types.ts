@@ -4,6 +4,7 @@ export type DocumentType =
   | "html"
   | "pdf"
   | "word"
+  | "excel"
   | "sheet"
   | "drawing";
 

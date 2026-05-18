@@ -200,35 +200,35 @@ const exportStyles = `
     color: var(--alert-text);
   }
 
-  .markdown-export-document .markdown-alert-note {
+  .markdown-export-document blockquote.markdown-alert.markdown-alert-note {
     --alert-accent: #3b82f6;
     --alert-bg: #eff6ff;
     --alert-border: #bfdbfe;
     --alert-title: #1d4ed8;
   }
 
-  .markdown-export-document .markdown-alert-tip {
+  .markdown-export-document blockquote.markdown-alert.markdown-alert-tip {
     --alert-accent: #10b981;
     --alert-bg: #ecfdf5;
     --alert-border: #a7f3d0;
     --alert-title: #047857;
   }
 
-  .markdown-export-document .markdown-alert-important {
+  .markdown-export-document blockquote.markdown-alert.markdown-alert-important {
     --alert-accent: #8b5cf6;
     --alert-bg: #f5f3ff;
     --alert-border: #ddd6fe;
     --alert-title: #6d28d9;
   }
 
-  .markdown-export-document .markdown-alert-warning {
+  .markdown-export-document blockquote.markdown-alert.markdown-alert-warning {
     --alert-accent: #f59e0b;
     --alert-bg: #fffbeb;
     --alert-border: #fde68a;
     --alert-title: #b45309;
   }
 
-  .markdown-export-document .markdown-alert-caution {
+  .markdown-export-document blockquote.markdown-alert.markdown-alert-caution {
     --alert-accent: #ef4444;
     --alert-bg: #fef2f2;
     --alert-border: #fecaca;

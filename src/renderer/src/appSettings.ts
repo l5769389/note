@@ -17,6 +17,7 @@ export type AppSettings = {
   editorFontFamily: string;
   editorFontSize: string;
   editorLineHeight: string;
+  editorMode: "typora" | "source" | "split" | "preview";
 };
 
 export const appSettingsStorageKey = "typora-like-settings";
@@ -27,6 +28,7 @@ export const defaultAppSettings: AppSettings = {
   editorFontFamily: "system",
   editorFontSize: "15px",
   editorLineHeight: "1.78",
+  editorMode: "typora",
 };
 
 export const themeOptions: Array<{ label: string; value: AppTheme }> = [
@@ -125,6 +127,13 @@ export const editorContentWidthOptions: SelectOption[] = [
   { label: "全宽", value: "100%" },
 ];
 
+const editorModeOptions = [
+  { label: "Typora", value: "typora" },
+  { label: "Source", value: "source" },
+  { label: "Split", value: "split" },
+  { label: "Preview", value: "preview" },
+] as const;
+
 function getBrowserStorage() {
   return typeof window === "undefined" ? undefined : window.localStorage;
 }
@@ -138,7 +147,7 @@ export function getInitialTheme(storage = getBrowserStorage()): AppTheme {
 }
 
 function getAllowedValue(
-  options: SelectOption[],
+  options: readonly SelectOption[],
   value: unknown,
   fallback: string,
 ) {
@@ -192,6 +201,11 @@ export function normalizeAppSettings(settings: unknown): AppSettings {
       source.editorLineHeight,
       defaultAppSettings.editorLineHeight,
     ),
+    editorMode: getAllowedValue(
+      editorModeOptions,
+      source.editorMode,
+      defaultAppSettings.editorMode,
+    ) as AppSettings["editorMode"],
   };
 }
 

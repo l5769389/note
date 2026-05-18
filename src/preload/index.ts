@@ -1,4 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { IpcRendererEvent } from "electron";
+
+type WorkspaceFileChangePayload = {
+  event: "add" | "change" | "unlink";
+  filePath: string;
+  updatedAt?: string;
+};
 
 contextBridge.exposeInMainWorld("desktop", {
   createDocumentFile: (payload: {
@@ -19,6 +26,19 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("workspace:list-markdown-files", directoryPath),
   newWindow: () =>
     ipcRenderer.invoke("window:new"),
+  onWorkspaceFileChanged: (
+    callback: (payload: WorkspaceFileChangePayload) => void,
+  ) => {
+    const listener = (_: IpcRendererEvent, payload: WorkspaceFileChangePayload) => {
+      callback(payload);
+    };
+
+    ipcRenderer.on("workspace:file-change", listener);
+
+    return () => {
+      ipcRenderer.removeListener("workspace:file-change", listener);
+    };
+  },
   openWorkspaceDirectory: () =>
     ipcRenderer.invoke("workspace:open-directory"),
   openPath: (targetPath: string) =>
@@ -29,8 +49,10 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("workspace:read-directory-tree", directoryPath),
   readMarkdownFile: (filePath: string) =>
     ipcRenderer.invoke("workspace:read-markdown-file", filePath),
-  renderWordDocument: (filePath: string) =>
-    ipcRenderer.invoke("workspace:render-word-document", filePath),
+  readWordDocument: (filePath: string) =>
+    ipcRenderer.invoke("workspace:read-word-document", filePath),
+  readExcelDocument: (filePath: string) =>
+    ipcRenderer.invoke("workspace:read-excel-document", filePath),
   saveMarkdownFileAs: (payload: { content: string; filePath?: string; title: string }) =>
     ipcRenderer.invoke("workspace:save-markdown-file-as", payload),
   selectMarkdownFile: () =>
@@ -39,6 +61,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("workspace:select-directory"),
   showInFolder: (targetPath: string) =>
     ipcRenderer.invoke("workspace:show-in-folder", targetPath),
+  unwatchWorkspaceDirectory: () =>
+    ipcRenderer.invoke("workspace:unwatch-directory"),
   platform: process.platform,
   versions: {
     chrome: process.versions.chrome,
@@ -46,6 +70,8 @@ contextBridge.exposeInMainWorld("desktop", {
   },
   windowControl: (action: "close" | "maximize" | "minimize") =>
     ipcRenderer.invoke(`window:${action}`),
+  watchWorkspaceDirectory: (directoryPath: string) =>
+    ipcRenderer.invoke("workspace:watch-directory", directoryPath),
   writeMarkdownFile: (payload: { content: string; filePath: string }) =>
     ipcRenderer.invoke("workspace:write-markdown-file", payload),
 });
