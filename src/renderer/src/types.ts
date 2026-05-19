@@ -12,6 +12,7 @@ export type DrawingAsset = {
   id: string;
   name: string;
   dataUrl: string;
+  sceneReference?: string;
   sceneJSON: string;
   createdAt: string;
 };

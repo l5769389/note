@@ -5,6 +5,7 @@ import {
   cloneElement,
   isValidElement,
   type ComponentPropsWithoutRef,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import {
@@ -50,6 +51,7 @@ const safeEmbeddedImagePattern =
   /^data:image\/(?:png|jpe?g|gif|webp);base64,/i;
 const localPreviewUrlPattern = /^typora-local:\/\//i;
 const languagePattern = /language-(\S+)/;
+const videoControlsSafeZone = 44;
 
 const markdownAlertIcons: Record<TyporaAlertKind, LucideIcon> = {
   caution: OctagonAlert,
@@ -214,11 +216,13 @@ function stripAlertMarkerFromNode(node: ReactNode): ReactNode {
 
 function PreRenderer({
   children,
+  filePath,
   onEditMindMap,
   onEditReactFlow,
   onEditUniverSheet,
 }: {
   children?: ReactNode;
+  filePath?: string;
   onEditMindMap?: (code: string) => void;
   onEditReactFlow?: (code: string) => void;
   onEditUniverSheet?: (code: string) => void;
@@ -247,7 +251,13 @@ function PreRenderer({
 
     if (language && isUniverSheetLanguage(language)) {
       const code = String(child.props.children ?? "").replace(/\n$/, "");
-      return <UniverSheetPreview code={code} onEdit={onEditUniverSheet} />;
+      return (
+        <UniverSheetPreview
+          code={code}
+          filePath={filePath}
+          onEdit={onEditUniverSheet}
+        />
+      );
     }
   }
 
@@ -277,6 +287,52 @@ function MarkdownImageRenderer({
       />
     </span>
   );
+}
+
+function MarkdownVideoRenderer({
+  filePath,
+  poster,
+  src,
+  style,
+  ...props
+}: ComponentPropsWithoutRef<"video"> & { filePath?: string }) {
+  function togglePlayback(event: MouseEvent<HTMLVideoElement>) {
+    const video = event.currentTarget;
+    const rect = video.getBoundingClientRect();
+
+    if (event.clientY >= rect.bottom - videoControlsSafeZone) {
+      return;
+    }
+
+    if (video.paused) {
+      void video.play();
+    } else {
+      video.pause();
+    }
+  }
+
+  return (
+    <video
+      {...props}
+      className={["markdown-video-player", props.className]
+        .filter(Boolean)
+        .join(" ")}
+      controls={props.controls ?? true}
+      onClick={togglePlayback}
+      poster={getRenderedResourceUrl(poster, filePath)}
+      preload={props.preload ?? "metadata"}
+      src={getRenderedResourceUrl(src, filePath)}
+      style={style}
+    />
+  );
+}
+
+function MarkdownSourceRenderer({
+  filePath,
+  src,
+  ...props
+}: ComponentPropsWithoutRef<"source"> & { filePath?: string }) {
+  return <source {...props} src={getRenderedResourceUrl(src, filePath)} />;
 }
 
 function BlockquoteRenderer({ children }: { children?: ReactNode }) {
@@ -322,8 +378,15 @@ export function MarkdownRenderer({
         img: ({ src, ...props }: ComponentPropsWithoutRef<"img">) => (
           <MarkdownImageRenderer {...props} filePath={filePath} src={src} />
         ),
+        source: ({ src, ...props }: ComponentPropsWithoutRef<"source">) => (
+          <MarkdownSourceRenderer {...props} filePath={filePath} src={src} />
+        ),
+        video: ({ src, ...props }: ComponentPropsWithoutRef<"video">) => (
+          <MarkdownVideoRenderer {...props} filePath={filePath} src={src} />
+        ),
         pre: ({ children: preChildren }: { children?: ReactNode }) => (
           <PreRenderer
+            filePath={filePath}
             onEditMindMap={onEditMindMap}
             onEditReactFlow={onEditReactFlow}
             onEditUniverSheet={onEditUniverSheet}
@@ -350,6 +413,12 @@ export function InlineMarkdownRenderer({ children, filePath }: MarkdownRendererP
         ),
         img: ({ src, ...props }: ComponentPropsWithoutRef<"img">) => (
           <MarkdownImageRenderer {...props} filePath={filePath} src={src} />
+        ),
+        source: ({ src, ...props }: ComponentPropsWithoutRef<"source">) => (
+          <MarkdownSourceRenderer {...props} filePath={filePath} src={src} />
+        ),
+        video: ({ src, ...props }: ComponentPropsWithoutRef<"video">) => (
+          <MarkdownVideoRenderer {...props} filePath={filePath} src={src} />
         ),
         p: ({ children: paragraphChildren }: { children?: ReactNode }) => (
           <>{paragraphChildren}</>

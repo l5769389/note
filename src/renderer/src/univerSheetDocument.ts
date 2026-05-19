@@ -13,6 +13,13 @@ export type UniverSheetData = {
   workbook: IWorkbookData;
 };
 
+export type UniverSheetAssetReference = {
+  assetPath: string;
+  title: string;
+  updatedAt?: string;
+  version: 1;
+};
+
 export type UniverSheetEditTarget =
   | { kind: "insert" }
   | { kind: "document" }
@@ -180,6 +187,43 @@ export function parseUniverSheetData(source: string): UniverSheetData {
   throw new Error("Univer sheet data must contain a workbook snapshot.");
 }
 
+export function parseUniverSheetAssetReference(
+  source: string,
+): UniverSheetAssetReference | null {
+  try {
+    const parsed = JSON.parse(source) as unknown;
+
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const record = parsed as Record<string, unknown>;
+
+    if (typeof record.assetPath !== "string" || !record.assetPath.trim()) {
+      return null;
+    }
+
+    return {
+      assetPath: record.assetPath.trim(),
+      title:
+        typeof record.title === "string" && record.title.trim()
+          ? record.title.trim()
+          : "在线表格",
+      updatedAt:
+        typeof record.updatedAt === "string" && record.updatedAt.trim()
+          ? record.updatedAt.trim()
+          : undefined,
+      version: 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function isUniverSheetAssetReference(source: string) {
+  return parseUniverSheetAssetReference(source) !== null;
+}
+
 export function serializeUniverSheetData(data: UniverSheetData) {
   return JSON.stringify(
     {
@@ -196,10 +240,39 @@ export function createUniverSheetMarkdown(data: UniverSheetData) {
   return `\n\`\`\`univer-sheet\n${serializeUniverSheetData(data)}\n\`\`\`\n`;
 }
 
+export function createUniverSheetAssetMarkdown(
+  data: Pick<UniverSheetData, "title">,
+  assetPath: string,
+  updatedAt = new Date().toISOString(),
+) {
+  return `\n\`\`\`univer-sheet\n${JSON.stringify(
+    {
+      title: data.title || "在线表格",
+      updatedAt,
+      version: 1,
+      assetPath,
+    },
+    null,
+    2,
+  )}\n\`\`\`\n`;
+}
+
 export function replaceUniverSheetMarkdownBlock(
   content: string,
   targetCode: string,
   nextData: UniverSheetData,
+) {
+  return replaceUniverSheetMarkdownBlockWithContent(
+    content,
+    targetCode,
+    serializeUniverSheetData(nextData),
+  );
+}
+
+export function replaceUniverSheetMarkdownBlockWithContent(
+  content: string,
+  targetCode: string,
+  nextCode: string,
 ) {
   let didReplace = false;
 
@@ -209,7 +282,7 @@ export function replaceUniverSheetMarkdownBlock(
     }
 
     didReplace = true;
-    return `\`\`\`univer-sheet\n${serializeUniverSheetData(nextData)}\n\`\`\``;
+    return `\`\`\`univer-sheet\n${nextCode}\n\`\`\``;
   });
 }
 

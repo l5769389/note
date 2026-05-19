@@ -17,6 +17,21 @@ describe("createHtmlPreviewDocument", () => {
     const preview = createHtmlPreviewDocument(html, "D:/notes/site/index.html");
 
     expect(preview.match(/<base\s/gi)).toHaveLength(1);
-    expect(preview).toContain("data-react-flow-runtime");
+    expect(preview).not.toContain("data-react-flow-runtime");
+    expect(preview).not.toContain("data-mindmap-runtime");
+  });
+
+  it("injects diagram runtimes only when matching markers exist", () => {
+    const reactFlowPreview = createHtmlPreviewDocument(
+      '<html><head></head><body><script type="application/json" data-react-flow>{}</script></body></html>',
+    );
+    const mindMapPreview = createHtmlPreviewDocument(
+      '<html><head></head><body><script type="application/json" data-mindmap>{}</script></body></html>',
+    );
+
+    expect(reactFlowPreview).toContain("data-react-flow-runtime");
+    expect(reactFlowPreview).not.toContain("data-mindmap-runtime");
+    expect(mindMapPreview).not.toContain("data-react-flow-runtime");
+    expect(mindMapPreview).toContain("data-mindmap-runtime");
   });
 });

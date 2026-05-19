@@ -32,7 +32,17 @@ export function replaceExcalidrawImagePreview(
       return match;
     }
 
-    const nextTitle = title?.trim() || `excalidraw:${asset.id} align=left`;
+    let nextTitle = title?.trim() || `excalidraw:${asset.id} align=left`;
+
+    if (asset.sceneReference) {
+      nextTitle = /(?:^|\s)scene=[^\s"]+(?=\s|$)/i.test(nextTitle)
+        ? nextTitle.replace(
+            /(?:^|\s)scene=[^\s"]+(?=\s|$)/i,
+            ` scene=${asset.sceneReference}`,
+          )
+        : `${nextTitle} scene=${asset.sceneReference}`;
+      nextTitle = nextTitle.replace(/\s+/g, " ").trim();
+    }
 
     return `![${alt || asset.name}](${asset.dataUrl} "${nextTitle}")`;
   });

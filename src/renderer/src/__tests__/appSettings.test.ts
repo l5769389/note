@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   appSettingsStorageKey,
+  appSettingsVersion,
   appThemeValues,
   defaultAppSettings,
   getEditorCodeFontFamily,
+  getEditorContentWidth,
   getEditorFontFamily,
+  getEditorFontSize,
+  getEditorLineHeight,
   getInitialTheme,
   loadAppSettings,
   themeOptions,
@@ -46,6 +50,7 @@ describe("loadAppSettings", () => {
               editorFontSize: "16px",
               editorLineHeight: "2",
               editorMode: "split",
+              settingsVersion: appSettingsVersion,
               imageUploadEndpoint: "https://example.com/upload",
               remoteServerUrl: "https://example.com/sync",
             })
@@ -59,6 +64,7 @@ describe("loadAppSettings", () => {
       editorFontSize: "16px",
       editorLineHeight: "2",
       editorMode: "split",
+      settingsVersion: appSettingsVersion,
     });
   });
 
@@ -77,11 +83,39 @@ describe("loadAppSettings", () => {
 
     expect(loadAppSettings(storage)).toEqual(defaultAppSettings);
   });
+
+  it("migrates legacy default typography to theme-backed defaults", () => {
+    const storage = {
+      getItem: () =>
+        JSON.stringify({
+          editorCodeFontFamily: "mono",
+          editorContentWidth: "860px",
+          editorFontFamily: "system",
+          editorFontSize: "15px",
+          editorLineHeight: "1.78",
+          editorMode: "typora",
+        }),
+    } as unknown as Storage;
+
+    expect(loadAppSettings(storage)).toEqual(defaultAppSettings);
+  });
 });
 
 describe("editor font helpers", () => {
   it("returns CSS font stacks for editor font settings", () => {
     expect(getEditorFontFamily("serif")).toContain("Georgia");
     expect(getEditorCodeFontFamily("consolas")).toContain("Consolas");
+  });
+
+  it("resolves theme-backed typography settings to CSS variables", () => {
+    expect(getEditorFontFamily("theme")).toBe("var(--theme-editor-font-family)");
+    expect(getEditorCodeFontFamily("theme")).toBe(
+      "var(--theme-editor-code-font-family)",
+    );
+    expect(getEditorFontSize("theme")).toBe("var(--theme-editor-font-size)");
+    expect(getEditorLineHeight("theme")).toBe("var(--theme-editor-line-height)");
+    expect(getEditorContentWidth("theme")).toBe(
+      "var(--theme-editor-content-width)",
+    );
   });
 });

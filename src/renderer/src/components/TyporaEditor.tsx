@@ -41,6 +41,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -97,6 +98,10 @@ import { isUniverSheetLanguage } from "../univerSheetDocument";
 import { MindMapDiagram } from "./MindMapDiagram";
 import { ReactFlowDiagram } from "./ReactFlowDiagram";
 import { UniverSheetPreview } from "./UniverSheetPreview";
+import {
+  createAssetFileName,
+  isLocalAssetReference,
+} from "../assetManager";
 import type {
   ImageAlignment,
   TyporaAlertKind,
@@ -107,8 +112,10 @@ import type {
 import {
   clampImageWidth,
   getExcalidrawDrawingId,
+  getExcalidrawSceneReference,
   minImageWidth,
   parseImageMeta,
+  patchExcalidrawSceneReference,
   patchImageMetaTitle,
   type ImageMeta,
 } from "../imageMeta";
@@ -143,6 +150,7 @@ type TyporaEditorProps = {
   onChange: (value: string) => void;
   onEditDrawing?: (drawingId: string) => void;
   onEditUniverSheet?: (code: string) => void;
+  onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
   onPaste: (event: ClipboardEvent<HTMLElement>) => void;
   value: string;
 };
@@ -189,6 +197,7 @@ function createTyporaAlertTitle(kind: TyporaAlertKind, title: string) {
 }
 
 const rawHtmlImagePattern = /^\s*<img\b[\s\S]*\/?>\s*$/i;
+const videoControlsSafeZone = 44;
 
 function getRawHtmlImageSource(node: ProseMirrorNode) {
   if (node.type.name !== "html") {
@@ -236,6 +245,34 @@ function createRenderedHtmlPreview(
     if (resolvedHref) {
       element.setAttribute("href", resolvedHref);
     }
+  });
+
+  wrapper.querySelectorAll("video").forEach((element) => {
+    if (!(element instanceof HTMLVideoElement)) {
+      return;
+    }
+
+    if (!element.hasAttribute("controls")) {
+      element.setAttribute("controls", "");
+    }
+
+    if (!element.hasAttribute("preload")) {
+      element.setAttribute("preload", "metadata");
+    }
+
+    element.addEventListener("click", (event) => {
+      const rect = element.getBoundingClientRect();
+
+      if (event.clientY >= rect.bottom - videoControlsSafeZone) {
+        return;
+      }
+
+      if (element.paused) {
+        void element.play();
+      } else {
+        element.pause();
+      }
+    });
   });
 
   return wrapper;
@@ -671,6 +708,60 @@ function placeCursorInsideCodeBlock(view: EditorView, pos: number) {
   view.focus();
 }
 
+function isBlankMarkdown(value: string) {
+  return value.trim().length === 0;
+}
+
+function focusDocumentStart(view: EditorView, scrollIntoView = true) {
+  const transaction = view.state.tr.setSelection(Selection.atStart(view.state.doc));
+
+  view.dispatch(scrollIntoView ? transaction.scrollIntoView() : transaction);
+  view.focus();
+}
+
+function focusDocumentEnd(view: EditorView, scrollIntoView = true) {
+  const transaction = view.state.tr.setSelection(Selection.atEnd(view.state.doc));
+
+  view.dispatch(scrollIntoView ? transaction.scrollIntoView() : transaction);
+  view.focus();
+}
+
+function isNonEditorControl(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        "button, input, textarea, select, [contenteditable='false'], .milkdown-image-toolbar, .milkdown-table-toolbar",
+      ),
+    )
+  );
+}
+
+function shouldFocusDocumentEndOnMouseDown(
+  event: ReactMouseEvent<HTMLElement>,
+  root: HTMLElement,
+) {
+  if (event.button !== 0 || isNonEditorControl(event.target)) {
+    return false;
+  }
+
+  const target =
+    event.target instanceof Element ? event.target : root;
+  const proseMirror = root.querySelector<HTMLElement>(".ProseMirror");
+
+  if (!proseMirror || !proseMirror.contains(target)) {
+    return true;
+  }
+
+  const lastChild = Array.from(proseMirror.children)
+    .filter((child) => child instanceof HTMLElement)
+    .at(-1) as HTMLElement | undefined;
+
+  return Boolean(
+    lastChild && event.clientY > lastChild.getBoundingClientRect().bottom,
+  );
+}
+
 function focusEmptyCodeBlock(view: EditorView, pos: number) {
   const node = view.state.doc.nodeAt(pos);
 
@@ -1099,6 +1190,7 @@ function findUniverSheetBlockRange(
 
 function createUniverSheetBlockDecoration(
   onEditUniverSheetRef: MutableRefObject<TyporaEditorProps["onEditUniverSheet"]>,
+  filePathRef: MutableRefObject<string | undefined>,
 ) {
   return $prose(
     () =>
@@ -1153,6 +1245,7 @@ function createUniverSheetBlockDecoration(
                     root.render(
                       <UniverSheetPreview
                         code={node.textContent}
+                        filePath={filePathRef.current}
                         onEdit={(code) => onEditUniverSheetRef.current?.(code)}
                       />,
                     );
@@ -1691,6 +1784,35 @@ function isBeforeOrEqual(source: Element, target: Element) {
   );
 }
 
+function findRenderedHeadingLineIndex(
+  markdown: string,
+  headings: Element[],
+  activeHeading: Element,
+) {
+  const activeIndex = headings.indexOf(activeHeading);
+
+  if (activeIndex < 0) {
+    return -1;
+  }
+
+  const level = Number(activeHeading.tagName.slice(1));
+  const title = normalizeHeadingTitle(activeHeading.textContent ?? "");
+  let occurrence = 0;
+
+  for (let index = 0; index <= activeIndex; index += 1) {
+    const heading = headings[index];
+
+    if (
+      Number(heading.tagName.slice(1)) === level &&
+      normalizeHeadingTitle(heading.textContent ?? "") === title
+    ) {
+      occurrence += 1;
+    }
+  }
+
+  return findHeadingLineIndex(markdown, level, title, occurrence || 1);
+}
+
 function appendMarkdown(currentValue: string, markdown: string) {
   const separator = currentValue.length > 0 && !currentValue.endsWith("\n") ? "\n" : "";
 
@@ -1911,7 +2033,13 @@ function applyImageMetaPatch(
   return true;
 }
 
-function applyImageNamePatch(view: EditorView, pos: number, name: string) {
+function applyImageNamePatch(
+  view: EditorView,
+  pos: number,
+  name: string,
+  src?: string,
+  title?: string,
+) {
   const node = view.state.doc.nodeAt(pos);
 
   if (!node || node.type.name !== "image") {
@@ -1922,9 +2050,18 @@ function applyImageNamePatch(view: EditorView, pos: number, name: string) {
     view.state.tr.setNodeMarkup(pos, undefined, {
       ...node.attrs,
       alt: name,
+      ...(src ? { src } : {}),
+      ...(title ? { title } : {}),
     }),
   );
   return true;
+}
+
+function createExcalidrawSceneFileName(imageFileName: string) {
+  const extension = imageFileName.match(/\.[^.\\/]+$/)?.[0] ?? "";
+  const baseName = imageFileName.slice(0, imageFileName.length - extension.length);
+
+  return `${baseName || imageFileName}.excalidraw.json`;
 }
 
 function setCurrentBlockType(
@@ -2179,6 +2316,8 @@ function MilkdownRuntime({
     pos: number;
     startWidth: number;
     startX: number;
+    pendingWidth: number | null;
+    frameId: number | null;
   } | null>(null);
 
   function publishActiveHeading(lineIndex: number) {
@@ -2384,26 +2523,143 @@ function MilkdownRuntime({
     updateImageMeta(pos, { width: undefined });
   }
 
-  function renameImage(pos: number, name: string) {
+  async function renameImage(pos: number, name: string) {
     const editor = get();
 
     if (!editor) {
       return;
     }
 
+    const selectedImageRef: {
+      current: { node: ProseMirrorNode; view: EditorView } | null;
+    } = { current: null };
+
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
+      const node = view.state.doc.nodeAt(pos);
 
-      if (!applyImageNamePatch(view, pos, name)) {
+      if (node) {
+        selectedImageRef.current = { node, view };
+      }
+    });
+
+    const selectedImage = selectedImageRef.current;
+
+    if (!selectedImage || selectedImage.node.type.name !== "image") {
+      setImageToolbar({ visible: false });
+      return;
+    }
+
+    const node = selectedImage.node;
+    const nextImageFileName = createAssetFileName(name, getImageDisplayName(node));
+    let nextSrc =
+      typeof node.attrs.src === "string" ? node.attrs.src : undefined;
+    let nextTitle =
+      typeof node.attrs.title === "string" ? node.attrs.title : undefined;
+
+    if (
+      nextSrc &&
+      filePathRef.current &&
+      isLocalAssetReference(nextSrc) &&
+      window.desktop?.renameAsset
+    ) {
+      try {
+        const renamedAsset = await window.desktop.renameAsset({
+          documentFilePath: filePathRef.current,
+          nextName: nextImageFileName,
+          reference: nextSrc,
+        });
+
+        nextSrc = renamedAsset.reference;
+      } catch {
+        nextSrc = typeof node.attrs.src === "string" ? node.attrs.src : undefined;
+      }
+    }
+
+    const sceneReference = getExcalidrawSceneReference(nextTitle);
+
+    if (
+      sceneReference &&
+      filePathRef.current &&
+      isLocalAssetReference(sceneReference) &&
+      window.desktop?.renameAsset
+    ) {
+      try {
+        const renamedScene = await window.desktop.renameAsset({
+          documentFilePath: filePathRef.current,
+          nextName: createExcalidrawSceneFileName(nextImageFileName),
+          reference: sceneReference,
+        });
+
+        nextTitle = patchExcalidrawSceneReference(nextTitle, renamedScene.reference);
+      } catch {
+        nextTitle = typeof node.attrs.title === "string" ? node.attrs.title : undefined;
+      }
+    }
+
+    editor.action((ctx) => {
+      const nextView = ctx.get(editorViewCtx);
+
+      if (!applyImageNamePatch(nextView, pos, name, nextSrc, nextTitle)) {
         setImageToolbar({ visible: false });
         return;
       }
 
-      requestAnimationFrame(() => updateImageToolbarFromView(view));
+      requestAnimationFrame(() => updateImageToolbarFromView(nextView));
     });
   }
 
-  function stopImageResize() {
+  function flushPendingImageResize() {
+    const resizeState = imageResizeRef.current;
+
+    if (!resizeState || resizeState.pendingWidth === null) {
+      return;
+    }
+
+    const nextWidth = resizeState.pendingWidth;
+
+    if (resizeState.frameId !== null) {
+      window.cancelAnimationFrame(resizeState.frameId);
+      resizeState.frameId = null;
+    }
+
+    resizeState.pendingWidth = null;
+    updateImageMeta(resizeState.pos, { width: nextWidth });
+  }
+
+  function scheduleImageResize(width: number) {
+    const resizeState = imageResizeRef.current;
+
+    if (!resizeState) {
+      return;
+    }
+
+    resizeState.pendingWidth = width;
+
+    if (resizeState.frameId !== null) {
+      return;
+    }
+
+    resizeState.frameId = window.requestAnimationFrame(() => {
+      const currentResizeState = imageResizeRef.current;
+
+      if (!currentResizeState || currentResizeState.pendingWidth === null) {
+        return;
+      }
+
+      const nextWidth = currentResizeState.pendingWidth;
+      currentResizeState.pendingWidth = null;
+      currentResizeState.frameId = null;
+      updateImageMeta(currentResizeState.pos, { width: nextWidth });
+    });
+  }
+
+  function stopImageResize(event?: PointerEvent) {
+    if (event) {
+      resizeSelectedImage(event);
+    }
+
+    flushPendingImageResize();
     imageResizeRef.current = null;
     window.removeEventListener("pointermove", resizeSelectedImage);
     window.removeEventListener("pointerup", stopImageResize);
@@ -2416,9 +2672,7 @@ function MilkdownRuntime({
       return;
     }
 
-    updateImageMeta(resizeState.pos, {
-      width: resizeState.startWidth + event.clientX - resizeState.startX,
-    });
+    scheduleImageResize(resizeState.startWidth + event.clientX - resizeState.startX);
   }
 
   function startImageResize(
@@ -2432,6 +2686,8 @@ function MilkdownRuntime({
       pos: state.pos,
       startWidth: state.displayWidth,
       startX: event.clientX,
+      pendingWidth: null,
+      frameId: null,
     };
     window.addEventListener("pointermove", resizeSelectedImage);
     window.addEventListener("pointerup", stopImageResize);
@@ -2513,7 +2769,13 @@ function MilkdownRuntime({
           .mounted((mountedCtx) => {
             requestAnimationFrame(() => {
               const view = mountedCtx.get(editorViewCtx);
-              view.dom.blur();
+
+              if (isBlankMarkdown(markdownRef.current)) {
+                focusDocumentStart(view, false);
+              } else {
+                view.dom.blur();
+              }
+
               updateImageToolbarFromView(view);
               updateTableToolbarFromView(view);
             });
@@ -2540,7 +2802,7 @@ function MilkdownRuntime({
       .use(createBlankCodeBlockBehavior(applyingExternalValueRef))
       .use(emptyCodeBlockSelection)
       .use(mermaidBlockDecoration)
-      .use(createUniverSheetBlockDecoration(onEditUniverSheetRef))
+      .use(createUniverSheetBlockDecoration(onEditUniverSheetRef, filePathRef))
       .use(createRawHtmlPreviewDecoration(filePathRef))
       .use(markdownAlertDecoration)
       .use(markdownSyntaxDecoration)
@@ -2574,17 +2836,11 @@ function MilkdownRuntime({
       return;
     }
 
-    const level = Number(activeHeading.tagName.slice(1));
-    const title = normalizeHeadingTitle(activeHeading.textContent ?? "");
-    const occurrence =
-      headings
-        .slice(0, headings.indexOf(activeHeading) + 1)
-        .filter(
-          (heading) =>
-            Number(heading.tagName.slice(1)) === level &&
-            normalizeHeadingTitle(heading.textContent ?? "") === title,
-        ).length || 1;
-    const lineIndex = findHeadingLineIndex(markdownRef.current, level, title, occurrence);
+    const lineIndex = findRenderedHeadingLineIndex(
+      markdownRef.current,
+      headings,
+      activeHeading,
+    );
 
     if (lineIndex >= 0) {
       publishActiveHeading(lineIndex);
@@ -2618,17 +2874,11 @@ function MilkdownRuntime({
       break;
     }
 
-    const level = Number(activeHeading.tagName.slice(1));
-    const title = normalizeHeadingTitle(activeHeading.textContent ?? "");
-    const occurrence =
-      headings
-        .slice(0, headings.indexOf(activeHeading) + 1)
-        .filter(
-          (heading) =>
-            Number(heading.tagName.slice(1)) === level &&
-            normalizeHeadingTitle(heading.textContent ?? "") === title,
-        ).length || 1;
-    const lineIndex = findHeadingLineIndex(markdownRef.current, level, title, occurrence);
+    const lineIndex = findRenderedHeadingLineIndex(
+      markdownRef.current,
+      headings,
+      activeHeading,
+    );
 
     if (lineIndex >= 0) {
       publishActiveHeading(lineIndex);
@@ -2651,7 +2901,11 @@ function MilkdownRuntime({
           const view = ctx.get(editorViewCtx);
 
           requestAnimationFrame(() => {
-            view.dom.blur();
+            if (isBlankMarkdown(value)) {
+              focusDocumentStart(view, false);
+            } else {
+              view.dom.blur();
+            }
           });
         });
       }
@@ -2667,7 +2921,11 @@ function MilkdownRuntime({
         const view = ctx.get(editorViewCtx);
 
         requestAnimationFrame(() => {
-          view.dom.blur();
+          if (isBlankMarkdown(value)) {
+            focusDocumentStart(view, false);
+          } else {
+            view.dom.blur();
+          }
         });
       }
     });
@@ -3081,6 +3339,25 @@ function MilkdownRuntime({
           requestAnimationFrame(refreshTableToolbar);
         }
       }}
+      onMouseDown={(event) => {
+        const root = rootRef.current;
+
+        const editor = get();
+
+        if (
+          !root ||
+          !editor ||
+          !(
+            isBlankMarkdown(markdownRef.current) ||
+            shouldFocusDocumentEndOnMouseDown(event, root)
+          )
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+        editor.action((ctx) => focusDocumentEnd(ctx.get(editorViewCtx), false));
+      }}
       onKeyUp={() => {
         reportActiveHeading();
         requestAnimationFrame(refreshImageToolbar);
@@ -3109,6 +3386,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
       filePath,
       onActiveLineChange,
       onChange,
+      onContextMenu,
       onEditDrawing,
       onEditUniverSheet,
       onPaste,
@@ -3120,10 +3398,30 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
     const controllerRef = useRef<TyporaEditorHandle | null>(null);
     const markdownRef = useRef(value);
     const onChangeRef = useRef(onChange);
+    const onPasteRef = useRef(onPaste);
     const valueRef = useRef(value);
 
     onChangeRef.current = onChange;
+    onPasteRef.current = onPaste;
     valueRef.current = value;
+
+    useEffect(() => {
+      const root = rootRef.current;
+
+      if (!root) {
+        return undefined;
+      }
+
+      const listener = (event: globalThis.ClipboardEvent) => {
+        onPasteRef.current(event as unknown as ClipboardEvent<HTMLElement>);
+      };
+
+      root.addEventListener("paste", listener, true);
+
+      return () => {
+        root.removeEventListener("paste", listener, true);
+      };
+    }, []);
 
     useImperativeHandle(
       ref,
@@ -3165,6 +3463,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
         aria-label="Milkdown markdown editor"
         autoCapitalize="off"
         autoCorrect="off"
+        onContextMenu={onContextMenu}
         onDoubleClick={(event) => {
           if (!onEditDrawing || !(event.target instanceof Element)) {
             return;
@@ -3182,7 +3481,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
           event.preventDefault();
           onEditDrawing(drawingId);
         }}
-        onPaste={onPaste}
+        onPasteCapture={onPaste}
         spellCheck={false}
       >
         <MilkdownProvider>

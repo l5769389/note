@@ -1,6 +1,12 @@
 import type { DocumentType, MarkdownDocument, WorkspaceSnapshot } from "./types";
+import {
+  getMigratedStorageItem,
+  legacyNoteDockStorageKeys,
+  noteDockStorageKeys,
+  removeLegacyStorageItem,
+} from "./storageKeys";
 
-const STORAGE_KEY = "typora-like-editor:workspace:v1";
+const STORAGE_KEY = noteDockStorageKeys.workspace;
 
 const now = () => new Date().toISOString();
 
@@ -127,7 +133,11 @@ function serializeDocument(document: MarkdownDocument): MarkdownDocument {
 }
 
 export function loadWorkspace(): WorkspaceSnapshot {
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const raw = getMigratedStorageItem(
+    localStorage,
+    STORAGE_KEY,
+    legacyNoteDockStorageKeys.workspace,
+  );
 
   if (!raw) {
     return createInitialWorkspace();
@@ -159,6 +169,7 @@ export function saveWorkspace(snapshot: WorkspaceSnapshot) {
       updatedAt: now(),
     }),
   );
+  removeLegacyStorageItem(localStorage, legacyNoteDockStorageKeys.workspace);
 }
 
 export function renameFromMarkdown(markdown: string, fallback: string) {

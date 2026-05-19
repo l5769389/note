@@ -1,16 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, shell } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions, SaveDialogOptions } from "electron";
 import chokidar, { type FSWatcher } from "chokidar";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const devServerUrl = process.env.ELECTRON_RENDERER_URL;
-const appName = "Markdown Studio";
-const appUserModelId = "com.local.markdownstudio";
+const appName = "noteDock";
+const appUserModelId = "com.local.notedock";
 const localPreviewProtocol = "typora-local";
 
 protocol.registerSchemesAsPrivileged([
@@ -42,6 +42,22 @@ const excelExtensions = new Set([".xlsx", ".xls", ".xlsm", ".xlsb"]);
 const sheetExtensions = new Set([".univer"]);
 const drawingExtensions = new Set([".excalidraw"]);
 const maxDirectoryTreeDepth = 8;
+const workspaceAssetsDirectoryName = ".assets";
+const localSchemePattern = /^[a-z][a-z\d+.-]*:/i;
+const clipboardMediaMimeTypes = new Map<string, string>([
+  [".gif", "image/gif"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".m4v", "video/mp4"],
+  [".mov", "video/quicktime"],
+  [".mp4", "video/mp4"],
+  [".mpeg", "video/mpeg"],
+  [".mpg", "video/mpeg"],
+  [".png", "image/png"],
+  [".svg", "image/svg+xml"],
+  [".webm", "video/webm"],
+  [".webp", "image/webp"],
+]);
 
 type DocumentFileType = "markdown" | "html" | "pdf" | "word" | "excel" | "sheet" | "drawing";
 
@@ -63,6 +79,163 @@ type WorkspaceFileChangePayload = {
   filePath: string;
   updatedAt?: string;
 };
+
+type SaveWorkspaceAssetPayload = {
+  content: string;
+  documentFilePath: string;
+  encoding: "dataUrl" | "utf-8";
+  fileName: string;
+};
+
+type CopyWorkspaceAssetFromFilePayload = {
+  documentFilePath: string;
+  fileName: string;
+  sourceFilePath: string;
+};
+
+type ClipboardMediaFile = {
+  fileName: string;
+  filePath: string;
+  mimeType: string;
+  size: number;
+};
+
+type ReadWorkspaceAssetPayload = {
+  documentFilePath: string;
+  reference: string;
+};
+
+type WriteWorkspaceTextAssetPayload = ReadWorkspaceAssetPayload & {
+  content: string;
+};
+
+type RenameWorkspaceAssetPayload = ReadWorkspaceAssetPayload & {
+  nextName: string;
+};
+
+type CheckWorkspaceAssetReferencesPayload = {
+  documentFilePath: string;
+  references: string[];
+};
+
+function createTimestampedFileName(prefix: string, extension: string) {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-")
+    .replace("T", "-")
+    .slice(0, 19);
+
+  return `${prefix}-${timestamp}.${extension}`;
+}
+
+function getClipboardMediaMimeType(filePath: string) {
+  return clipboardMediaMimeTypes.get(extname(filePath).toLowerCase()) ?? null;
+}
+
+function bufferToDataUrl(buffer: Buffer, mimeType: string) {
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+function splitClipboardPathText(value: string) {
+  return value
+    .split(/\0|\r?\n/)
+    .map((item) => item.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean);
+}
+
+function normalizeClipboardFilePathCandidate(candidate: string) {
+  const value = candidate.trim().replace(/^"|"$/g, "");
+
+  if (!value) {
+    return null;
+  }
+
+  if (/^file:\/\//i.test(value)) {
+    try {
+      return fileURLToPath(value);
+    } catch {
+      return null;
+    }
+  }
+
+  if (process.platform === "win32" && /^\/[a-zA-Z]:[\\/]/.test(value)) {
+    return value.slice(1);
+  }
+
+  return isAbsolute(value) ? value : null;
+}
+
+function extractClipboardFileUrls(value: string) {
+  return Array.from(value.matchAll(/file:\/\/(?:\/|localhost\/)?[^\s"'<>]+/gi)).map(
+    (match) => match[0] ?? "",
+  );
+}
+
+function readClipboardPathFormat(format: string, encoding: BufferEncoding) {
+  const buffer = clipboard.readBuffer(format);
+
+  if (!buffer.length) {
+    return [];
+  }
+
+  return splitClipboardPathText(buffer.toString(encoding).replace(/\0+$/g, ""));
+}
+
+function getClipboardFilePathCandidates() {
+  const formats = new Set(clipboard.availableFormats());
+  const candidates = [
+    ...splitClipboardPathText(clipboard.readText()),
+    ...extractClipboardFileUrls(clipboard.readHTML()),
+    ...(formats.has("FileNameW") ? readClipboardPathFormat("FileNameW", "utf16le") : []),
+    ...(formats.has("FileName") ? readClipboardPathFormat("FileName", "utf-8") : []),
+  ];
+  const seen = new Set<string>();
+
+  return candidates
+    .map((candidate) => normalizeClipboardFilePathCandidate(candidate))
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .filter((candidate) => {
+      const key = candidate.toLowerCase();
+
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+}
+
+async function getClipboardMediaFiles(): Promise<ClipboardMediaFile[]> {
+  const mediaFiles = await Promise.all(
+    getClipboardFilePathCandidates().map(async (filePath) => {
+      const mimeType = getClipboardMediaMimeType(filePath);
+
+      if (!mimeType || !(await pathExists(filePath))) {
+        return null;
+      }
+
+      try {
+        const fileStat = await stat(filePath);
+
+        if (!fileStat.isFile()) {
+          return null;
+        }
+
+        return {
+          fileName: basename(filePath),
+          filePath,
+          mimeType,
+          size: fileStat.size,
+        } satisfies ClipboardMediaFile;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  return mediaFiles.filter((file): file is ClipboardMediaFile => Boolean(file));
+}
 
 function getWorkspaceLabel(directoryPath: string) {
   return basename(directoryPath) || directoryPath;
@@ -88,6 +261,15 @@ function normalizeDocumentName(name: string, extension: string) {
     .replace(/\s+/g, " ");
 
   return baseName || "Untitled";
+}
+
+function normalizeAssetFileName(name: string) {
+  const safeName = basename(name || "asset")
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
+    .replace(/\s+/g, " ");
+
+  return safeName || "asset";
 }
 
 async function pathExists(filePath: string) {
@@ -131,6 +313,85 @@ async function createUniqueDocumentPath(
 
     index += 1;
   }
+}
+
+async function createUniqueWorkspaceAssetPath(directoryPath: string, fileName: string) {
+  const safeFileName = normalizeAssetFileName(fileName);
+  const extension = extname(safeFileName);
+  const baseName = basename(safeFileName, extension) || "asset";
+  let index = 0;
+
+  while (true) {
+    const suffix = index === 0 ? "" : `-${index + 1}`;
+    const candidate = join(directoryPath, `${baseName}${suffix}${extension}`);
+
+    if (!(await pathExists(candidate))) {
+      return candidate;
+    }
+
+    index += 1;
+  }
+}
+
+function getWorkspaceAssetDirectory(documentFilePath: string) {
+  return join(dirname(documentFilePath), workspaceAssetsDirectoryName);
+}
+
+function getWorkspaceAssetReference(documentFilePath: string, assetFilePath: string) {
+  return relative(dirname(documentFilePath), assetFilePath).replace(/\\/g, "/");
+}
+
+function decodeDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:([^,]*),(.*)$/s);
+
+  if (!match) {
+    throw new Error("Invalid data URL.");
+  }
+
+  const metadata = match[1] ?? "";
+  const body = match[2] ?? "";
+
+  return metadata.includes(";base64")
+    ? Buffer.from(body, "base64")
+    : Buffer.from(decodeURIComponent(body), "utf-8");
+}
+
+function normalizeWorkspaceReference(reference: string) {
+  return reference
+    .trim()
+    .replace(/^<|>$/g, "")
+    .split(/[?#]/)[0]!
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "");
+}
+
+function resolveWorkspaceReference(documentFilePath: string, reference: string) {
+  const cleanReference = normalizeWorkspaceReference(reference);
+  const referenceSegments = cleanReference.split("/").filter(Boolean);
+
+  if (
+    !cleanReference ||
+    isAbsolute(cleanReference) ||
+    localSchemePattern.test(cleanReference) ||
+    !referenceSegments.includes(workspaceAssetsDirectoryName) ||
+    referenceSegments.some((segment) => segment === "." || segment === "..")
+  ) {
+    throw new Error("Invalid workspace asset reference.");
+  }
+
+  const documentDirectoryPath = resolve(dirname(documentFilePath));
+  const assetFilePath = resolve(documentDirectoryPath, cleanReference);
+  const relativeAssetPath = relative(documentDirectoryPath, assetFilePath);
+
+  if (
+    !relativeAssetPath ||
+    relativeAssetPath.startsWith("..") ||
+    isAbsolute(relativeAssetPath)
+  ) {
+    throw new Error("Workspace asset reference points outside the document directory.");
+  }
+
+  return assetFilePath;
 }
 
 function titleFromFilePath(filePath: string) {
@@ -458,6 +719,44 @@ if (process.platform === "win32") {
 }
 
 function registerFileIpc() {
+  ipcMain.handle("clipboard:read-image", () => {
+    const image = clipboard.readImage();
+
+    if (image.isEmpty()) {
+      return null;
+    }
+
+    return {
+      dataUrl: image.toDataURL(),
+      fileName: createTimestampedFileName("screenshot", "png"),
+      mimeType: "image/png",
+    };
+  });
+
+  ipcMain.handle("clipboard:list-media-files", () => getClipboardMediaFiles());
+
+  ipcMain.handle("clipboard:read-media-files", async () => {
+    const mediaFiles = await Promise.all(
+      (await getClipboardMediaFiles()).map(async (file) => {
+        try {
+          const buffer = await readFile(file.filePath);
+
+          return {
+            dataUrl: bufferToDataUrl(buffer, file.mimeType),
+            fileName: file.fileName,
+            mimeType: file.mimeType,
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    return mediaFiles.filter(Boolean);
+  });
+
+  ipcMain.handle("clipboard:read-text", () => clipboard.readText());
+
   ipcMain.handle("workspace:get-default-directory", () => app.getPath("desktop"));
 
   ipcMain.handle("workspace:select-directory", async () => {
@@ -533,7 +832,7 @@ function registerFileIpc() {
     await mkdir(directoryPath, { recursive: true });
 
     const filePath = await createUniqueMarkdownPath(directoryPath, title);
-    const content = `# ${title}\n\n`;
+    const content = "";
 
     await writeFile(filePath, content, "utf-8");
 
@@ -564,6 +863,197 @@ function registerFileIpc() {
       await writeFile(filePath, payload.content, "utf-8");
 
       return readMarkdownFile(filePath);
+    },
+  );
+
+  ipcMain.handle("workspace:duplicate-document-file", async (_, filePath: string) => {
+    if (!getDocumentFileType(filePath)) {
+      throw new Error(`Unsupported document file: ${filePath}`);
+    }
+
+    const fileStat = await stat(filePath);
+
+    if (!fileStat.isFile()) {
+      throw new Error(`Cannot duplicate a directory: ${filePath}`);
+    }
+
+    const extension = extname(filePath).toLowerCase();
+    const title = normalizeDocumentName(`${titleFromFilePath(filePath)} copy`, extension);
+    const targetPath = await createUniqueDocumentPath(dirname(filePath), title, extension);
+
+    await copyFile(filePath, targetPath);
+
+    return readMarkdownFile(targetPath);
+  });
+
+  ipcMain.handle("workspace:delete-document-file", async (_, filePath: string) => {
+    if (!getDocumentFileType(filePath)) {
+      throw new Error(`Unsupported document file: ${filePath}`);
+    }
+
+    const fileStat = await stat(filePath);
+
+    if (!fileStat.isFile()) {
+      throw new Error(`Cannot delete a directory: ${filePath}`);
+    }
+
+    await rm(filePath, { force: true });
+
+    return true;
+  });
+
+  ipcMain.handle(
+    "workspace:save-asset",
+    async (_, payload: SaveWorkspaceAssetPayload) => {
+      if (!payload.documentFilePath) {
+        throw new Error("A document file path is required to save assets.");
+      }
+
+      const assetDirectoryPath = getWorkspaceAssetDirectory(payload.documentFilePath);
+      await mkdir(assetDirectoryPath, { recursive: true });
+
+      const assetFilePath = await createUniqueWorkspaceAssetPath(
+        assetDirectoryPath,
+        payload.fileName,
+      );
+
+      if (payload.encoding === "dataUrl") {
+        await writeFile(assetFilePath, decodeDataUrl(payload.content));
+      } else {
+        await writeFile(assetFilePath, payload.content, "utf-8");
+      }
+
+      return {
+        assetFilePath,
+        reference: getWorkspaceAssetReference(payload.documentFilePath, assetFilePath),
+      };
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:copy-asset-from-file",
+    async (_, payload: CopyWorkspaceAssetFromFilePayload) => {
+      if (!payload.documentFilePath) {
+        throw new Error("A document file path is required to save assets.");
+      }
+
+      if (!payload.sourceFilePath || !(await pathExists(payload.sourceFilePath))) {
+        throw new Error("Source media file does not exist.");
+      }
+
+      const sourceStat = await stat(payload.sourceFilePath);
+
+      if (!sourceStat.isFile()) {
+        throw new Error("Source media path is not a file.");
+      }
+
+      const assetDirectoryPath = getWorkspaceAssetDirectory(payload.documentFilePath);
+      await mkdir(assetDirectoryPath, { recursive: true });
+
+      const assetFilePath = await createUniqueWorkspaceAssetPath(
+        assetDirectoryPath,
+        payload.fileName || basename(payload.sourceFilePath),
+      );
+
+      await copyFile(payload.sourceFilePath, assetFilePath);
+
+      return {
+        assetFilePath,
+        reference: getWorkspaceAssetReference(payload.documentFilePath, assetFilePath),
+      };
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:read-text-asset",
+    async (_, payload: ReadWorkspaceAssetPayload) => {
+      const assetFilePath = resolveWorkspaceReference(
+        payload.documentFilePath,
+        payload.reference,
+      );
+
+      return readFile(assetFilePath, "utf-8");
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:write-text-asset",
+    async (_, payload: WriteWorkspaceTextAssetPayload) => {
+      const assetFilePath = resolveWorkspaceReference(
+        payload.documentFilePath,
+        payload.reference,
+      );
+
+      await mkdir(dirname(assetFilePath), { recursive: true });
+      await writeFile(assetFilePath, payload.content, "utf-8");
+
+      return {
+        assetFilePath,
+        reference: getWorkspaceAssetReference(payload.documentFilePath, assetFilePath),
+      };
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:rename-asset",
+    async (_, payload: RenameWorkspaceAssetPayload) => {
+      const currentAssetFilePath = resolveWorkspaceReference(
+        payload.documentFilePath,
+        payload.reference,
+      );
+      const currentExtension = extname(currentAssetFilePath);
+      const requestedName = normalizeAssetFileName(payload.nextName);
+      const requestedExtension = extname(requestedName);
+      const nextFileName = requestedExtension
+        ? requestedName
+        : `${requestedName}${currentExtension}`;
+      const nextDirectoryPath = dirname(currentAssetFilePath);
+      const preferredAssetFilePath = join(nextDirectoryPath, nextFileName);
+
+      if (preferredAssetFilePath.toLowerCase() === currentAssetFilePath.toLowerCase()) {
+        return {
+          assetFilePath: currentAssetFilePath,
+          reference: getWorkspaceAssetReference(payload.documentFilePath, currentAssetFilePath),
+        };
+      }
+
+      const nextAssetFilePath = await createUniqueWorkspaceAssetPath(
+        nextDirectoryPath,
+        nextFileName,
+      );
+
+      await rename(currentAssetFilePath, nextAssetFilePath);
+
+      return {
+        assetFilePath: nextAssetFilePath,
+        reference: getWorkspaceAssetReference(payload.documentFilePath, nextAssetFilePath),
+      };
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:check-asset-references",
+    async (_, payload: CheckWorkspaceAssetReferencesPayload) => {
+      const missing: string[] = [];
+
+      await Promise.all(
+        payload.references.map(async (reference) => {
+          try {
+            const assetFilePath = resolveWorkspaceReference(
+              payload.documentFilePath,
+              reference,
+            );
+
+            if (!(await pathExists(assetFilePath))) {
+              missing.push(reference);
+            }
+          } catch {
+            missing.push(reference);
+          }
+        }),
+      );
+
+      return missing.sort((first, second) => first.localeCompare(second));
     },
   );
 
@@ -754,6 +1244,39 @@ function registerWindowIpc() {
 
     window.maximize();
     return true;
+  });
+
+  ipcMain.handle("window:toggle-fullscreen", (event) => {
+    const window = getSenderWindow(event);
+
+    if (!window) {
+      return false;
+    }
+
+    const nextFullScreenState = !window.isFullScreen();
+    window.setFullScreen(nextFullScreenState);
+    return nextFullScreenState;
+  });
+
+  ipcMain.handle("window:toggle-always-on-top", (event) => {
+    const window = getSenderWindow(event);
+
+    if (!window) {
+      return false;
+    }
+
+    const nextAlwaysOnTopState = !window.isAlwaysOnTop();
+    window.setAlwaysOnTop(nextAlwaysOnTopState);
+    return nextAlwaysOnTopState;
+  });
+
+  ipcMain.handle("window:get-state", (event) => {
+    const window = getSenderWindow(event);
+
+    return {
+      alwaysOnTop: Boolean(window?.isAlwaysOnTop()),
+      fullScreen: Boolean(window?.isFullScreen()),
+    };
   });
 
   ipcMain.handle("window:close", (event) => {

@@ -1,5 +1,10 @@
+import {
+  getMigratedStorageItem,
+  legacyNoteDockStorageKeys,
+  noteDockStorageKeys,
+} from "./storageKeys";
+
 export const appThemeValues = [
-  "light",
   "paper",
   "github",
   "newsprint",
@@ -18,21 +23,34 @@ export type AppSettings = {
   editorFontSize: string;
   editorLineHeight: string;
   editorMode: "typora" | "source" | "split" | "preview";
+  settingsVersion: number;
 };
 
-export const appSettingsStorageKey = "typora-like-settings";
+export const appSettingsStorageKey = noteDockStorageKeys.appSettings;
+export const appThemeStorageKey = noteDockStorageKeys.theme;
+export const appSettingsVersion = 2;
 
-export const defaultAppSettings: AppSettings = {
+const themeValue = "theme";
+
+const legacyDefaultSettings = {
   editorCodeFontFamily: "mono",
   editorContentWidth: "860px",
   editorFontFamily: "system",
   editorFontSize: "15px",
   editorLineHeight: "1.78",
+};
+
+export const defaultAppSettings: AppSettings = {
+  editorCodeFontFamily: themeValue,
+  editorContentWidth: themeValue,
+  editorFontFamily: themeValue,
+  editorFontSize: themeValue,
+  editorLineHeight: themeValue,
   editorMode: "typora",
+  settingsVersion: appSettingsVersion,
 };
 
 export const themeOptions: Array<{ label: string; value: AppTheme }> = [
-  { label: "Light", value: "light" },
   { label: "Paper", value: "paper" },
   { label: "Github", value: "github" },
   { label: "Newsprint", value: "newsprint" },
@@ -52,6 +70,11 @@ type FontOption = SelectOption & {
 };
 
 export const editorFontOptions: FontOption[] = [
+  {
+    label: "跟随主题",
+    value: themeValue,
+    cssFamily: "var(--theme-editor-font-family)",
+  },
   {
     label: "系统默认",
     value: "system",
@@ -83,6 +106,11 @@ export const editorFontOptions: FontOption[] = [
 
 export const editorCodeFontOptions: FontOption[] = [
   {
+    label: "跟随主题",
+    value: themeValue,
+    cssFamily: "var(--theme-editor-code-font-family)",
+  },
+  {
     label: "系统等宽",
     value: "mono",
     cssFamily:
@@ -107,6 +135,7 @@ export const editorCodeFontOptions: FontOption[] = [
 ];
 
 export const editorFontSizeOptions: SelectOption[] = [
+  { label: "跟随主题", value: themeValue },
   { label: "小 · 14px", value: "14px" },
   { label: "默认 · 15px", value: "15px" },
   { label: "舒适 · 16px", value: "16px" },
@@ -114,12 +143,14 @@ export const editorFontSizeOptions: SelectOption[] = [
 ];
 
 export const editorLineHeightOptions: SelectOption[] = [
+  { label: "跟随主题", value: themeValue },
   { label: "紧凑 · 1.55", value: "1.55" },
   { label: "默认 · 1.78", value: "1.78" },
   { label: "宽松 · 2.0", value: "2" },
 ];
 
 export const editorContentWidthOptions: SelectOption[] = [
+  { label: "跟随主题", value: themeValue },
   { label: "窄 · 760px", value: "760px" },
   { label: "默认 · 860px", value: "860px" },
   { label: "宽 · 980px", value: "980px" },
@@ -139,7 +170,11 @@ function getBrowserStorage() {
 }
 
 export function getInitialTheme(storage = getBrowserStorage()): AppTheme {
-  const storedTheme = storage?.getItem("typora-like-theme");
+  const storedTheme = getMigratedStorageItem(
+    storage,
+    appThemeStorageKey,
+    legacyNoteDockStorageKeys.theme,
+  );
 
   return themeOptions.some((option) => option.value === storedTheme)
     ? (storedTheme as AppTheme)
@@ -169,49 +204,93 @@ export function getEditorCodeFontFamily(value: string) {
   return getFontFamily(editorCodeFontOptions, value);
 }
 
+function getThemeBackedValue(value: string, cssVariable: string) {
+  return value === themeValue ? `var(${cssVariable})` : value;
+}
+
+export function getEditorFontSize(value: string) {
+  return getThemeBackedValue(value, "--theme-editor-font-size");
+}
+
+export function getEditorLineHeight(value: string) {
+  return getThemeBackedValue(value, "--theme-editor-line-height");
+}
+
+export function getEditorContentWidth(value: string) {
+  return getThemeBackedValue(value, "--theme-editor-content-width");
+}
+
+function normalizeTypographyValue(
+  options: readonly SelectOption[],
+  value: unknown,
+  legacyDefault: string,
+) {
+  if (value === legacyDefault) {
+    return themeValue;
+  }
+
+  return getAllowedValue(options, value, themeValue);
+}
+
 export function normalizeAppSettings(settings: unknown): AppSettings {
   const source =
     settings && typeof settings === "object"
       ? (settings as Partial<AppSettings>)
       : {};
+  const hasCurrentVersion = source.settingsVersion === appSettingsVersion;
 
   return {
-    editorCodeFontFamily: getAllowedValue(
-      editorCodeFontOptions,
-      source.editorCodeFontFamily,
-      defaultAppSettings.editorCodeFontFamily,
-    ),
-    editorContentWidth: getAllowedValue(
-      editorContentWidthOptions,
-      source.editorContentWidth,
-      defaultAppSettings.editorContentWidth,
-    ),
-    editorFontFamily: getAllowedValue(
-      editorFontOptions,
-      source.editorFontFamily,
-      defaultAppSettings.editorFontFamily,
-    ),
-    editorFontSize: getAllowedValue(
-      editorFontSizeOptions,
-      source.editorFontSize,
-      defaultAppSettings.editorFontSize,
-    ),
-    editorLineHeight: getAllowedValue(
-      editorLineHeightOptions,
-      source.editorLineHeight,
-      defaultAppSettings.editorLineHeight,
-    ),
+    editorCodeFontFamily: hasCurrentVersion
+      ? getAllowedValue(editorCodeFontOptions, source.editorCodeFontFamily, themeValue)
+      : normalizeTypographyValue(
+          editorCodeFontOptions,
+          source.editorCodeFontFamily,
+          legacyDefaultSettings.editorCodeFontFamily,
+        ),
+    editorContentWidth: hasCurrentVersion
+      ? getAllowedValue(editorContentWidthOptions, source.editorContentWidth, themeValue)
+      : normalizeTypographyValue(
+          editorContentWidthOptions,
+          source.editorContentWidth,
+          legacyDefaultSettings.editorContentWidth,
+        ),
+    editorFontFamily: hasCurrentVersion
+      ? getAllowedValue(editorFontOptions, source.editorFontFamily, themeValue)
+      : normalizeTypographyValue(
+          editorFontOptions,
+          source.editorFontFamily,
+          legacyDefaultSettings.editorFontFamily,
+        ),
+    editorFontSize: hasCurrentVersion
+      ? getAllowedValue(editorFontSizeOptions, source.editorFontSize, themeValue)
+      : normalizeTypographyValue(
+          editorFontSizeOptions,
+          source.editorFontSize,
+          legacyDefaultSettings.editorFontSize,
+        ),
+    editorLineHeight: hasCurrentVersion
+      ? getAllowedValue(editorLineHeightOptions, source.editorLineHeight, themeValue)
+      : normalizeTypographyValue(
+          editorLineHeightOptions,
+          source.editorLineHeight,
+          legacyDefaultSettings.editorLineHeight,
+        ),
     editorMode: getAllowedValue(
       editorModeOptions,
       source.editorMode,
       defaultAppSettings.editorMode,
     ) as AppSettings["editorMode"],
+    settingsVersion: appSettingsVersion,
   };
 }
 
 export function loadAppSettings(storage = getBrowserStorage()): AppSettings {
   try {
-    const storedSettings = storage?.getItem(appSettingsStorageKey);
+    const storedSettings = getMigratedStorageItem(
+      storage,
+      appSettingsStorageKey,
+      legacyNoteDockStorageKeys.appSettings,
+    );
 
     if (!storedSettings) {
       return defaultAppSettings;

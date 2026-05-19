@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   createDefaultUniverSheetData,
+  createUniverSheetAssetMarkdown,
   createUniverSheetMarkdown,
   createUniverSheetPreviewRows,
   isUniverSheetLanguage,
+  parseUniverSheetAssetReference,
   parseUniverSheetData,
   replaceUniverSheetMarkdownBlock,
+  replaceUniverSheetMarkdownBlockWithContent,
   serializeUniverSheetData,
 } from "../univerSheetDocument";
 
@@ -44,6 +47,25 @@ describe("univerSheetDocument", () => {
         next,
       ),
     ).toContain('"销售计划"');
+  });
+
+  it("supports lightweight asset references for embedded sheets", () => {
+    const initial = createDefaultUniverSheetData();
+    const markdown = createUniverSheetAssetMarkdown(
+      initial,
+      ".assets/project.univer.json",
+    );
+    const originalCode = markdown.replace(/^\n?```univer-sheet\n|\n```\n?$/g, "");
+    const reference = parseUniverSheetAssetReference(originalCode);
+
+    expect(reference?.assetPath).toBe(".assets/project.univer.json");
+    expect(
+      replaceUniverSheetMarkdownBlockWithContent(
+        markdown,
+        originalCode,
+        JSON.stringify({ title: "Next", version: 1, assetPath: ".assets/next.json" }),
+      ),
+    ).toContain(".assets/next.json");
   });
 
   it("creates compact preview rows from workbook cells", () => {

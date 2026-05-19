@@ -8,6 +8,19 @@ type WorkspaceFileChangePayload = {
 };
 
 contextBridge.exposeInMainWorld("desktop", {
+  listClipboardMediaFiles: () => ipcRenderer.invoke("clipboard:list-media-files"),
+  readClipboardImage: () => ipcRenderer.invoke("clipboard:read-image"),
+  readClipboardMediaFiles: () => ipcRenderer.invoke("clipboard:read-media-files"),
+  readClipboardText: () => ipcRenderer.invoke("clipboard:read-text"),
+  checkAssetReferences: (payload: {
+    documentFilePath: string;
+    references: string[];
+  }) => ipcRenderer.invoke("workspace:check-asset-references", payload),
+  copyAssetFromFile: (payload: {
+    documentFilePath: string;
+    fileName: string;
+    sourceFilePath: string;
+  }) => ipcRenderer.invoke("workspace:copy-asset-from-file", payload),
   createDocumentFile: (payload: {
     content: string;
     directoryPath: string;
@@ -16,6 +29,10 @@ contextBridge.exposeInMainWorld("desktop", {
   }) => ipcRenderer.invoke("workspace:create-document-file", payload),
   createMarkdownFile: (payload: { directoryPath: string; title: string }) =>
     ipcRenderer.invoke("workspace:create-markdown-file", payload),
+  deleteDocumentFile: (filePath: string) =>
+    ipcRenderer.invoke("workspace:delete-document-file", filePath),
+  duplicateDocumentFile: (filePath: string) =>
+    ipcRenderer.invoke("workspace:duplicate-document-file", filePath),
   exportHtmlFile: (payload: { filePath?: string; html: string; title: string }) =>
     ipcRenderer.invoke("export:html", payload),
   exportPdfFile: (payload: { filePath?: string; html: string; title: string }) =>
@@ -26,6 +43,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("workspace:list-markdown-files", directoryPath),
   newWindow: () =>
     ipcRenderer.invoke("window:new"),
+  getWindowState: () =>
+    ipcRenderer.invoke("window:get-state"),
   onWorkspaceFileChanged: (
     callback: (payload: WorkspaceFileChangePayload) => void,
   ) => {
@@ -49,16 +68,29 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("workspace:read-directory-tree", directoryPath),
   readMarkdownFile: (filePath: string) =>
     ipcRenderer.invoke("workspace:read-markdown-file", filePath),
+  readTextAsset: (payload: { documentFilePath: string; reference: string }) =>
+    ipcRenderer.invoke("workspace:read-text-asset", payload),
   readWordDocument: (filePath: string) =>
     ipcRenderer.invoke("workspace:read-word-document", filePath),
   readExcelDocument: (filePath: string) =>
     ipcRenderer.invoke("workspace:read-excel-document", filePath),
+  renameAsset: (payload: {
+    documentFilePath: string;
+    nextName: string;
+    reference: string;
+  }) => ipcRenderer.invoke("workspace:rename-asset", payload),
   saveMarkdownFileAs: (payload: { content: string; filePath?: string; title: string }) =>
     ipcRenderer.invoke("workspace:save-markdown-file-as", payload),
   selectMarkdownFile: () =>
     ipcRenderer.invoke("workspace:select-markdown-file"),
   selectWorkspaceDirectory: () =>
     ipcRenderer.invoke("workspace:select-directory"),
+  saveAsset: (payload: {
+    content: string;
+    documentFilePath: string;
+    encoding: "dataUrl" | "utf-8";
+    fileName: string;
+  }) => ipcRenderer.invoke("workspace:save-asset", payload),
   showInFolder: (targetPath: string) =>
     ipcRenderer.invoke("workspace:show-in-folder", targetPath),
   unwatchWorkspaceDirectory: () =>
@@ -70,8 +102,17 @@ contextBridge.exposeInMainWorld("desktop", {
   },
   windowControl: (action: "close" | "maximize" | "minimize") =>
     ipcRenderer.invoke(`window:${action}`),
+  toggleAlwaysOnTop: () =>
+    ipcRenderer.invoke("window:toggle-always-on-top"),
+  toggleFullScreen: () =>
+    ipcRenderer.invoke("window:toggle-fullscreen"),
   watchWorkspaceDirectory: (directoryPath: string) =>
     ipcRenderer.invoke("workspace:watch-directory", directoryPath),
   writeMarkdownFile: (payload: { content: string; filePath: string }) =>
     ipcRenderer.invoke("workspace:write-markdown-file", payload),
+  writeTextAsset: (payload: {
+    content: string;
+    documentFilePath: string;
+    reference: string;
+  }) => ipcRenderer.invoke("workspace:write-text-asset", payload),
 });

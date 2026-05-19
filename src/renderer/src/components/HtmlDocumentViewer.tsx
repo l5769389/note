@@ -24,7 +24,10 @@ function getFileBaseHref(filePath?: string) {
 
 export function createHtmlPreviewDocument(content: string, filePath?: string) {
   const baseHref = getFileBaseHref(filePath);
-  const runtime = `${createReactFlowHtmlRuntime()}${createMindMapHtmlRuntime()}`;
+  const runtime = [
+    /\bdata-react-flow\b/i.test(content) ? createReactFlowHtmlRuntime() : "",
+    /\bdata-mindmap\b/i.test(content) ? createMindMapHtmlRuntime() : "",
+  ].join("");
   const htmlWithBase =
     !baseHref || /<base\s/i.test(content)
       ? content
@@ -39,6 +42,10 @@ export function createHtmlPreviewDocument(content: string, filePath?: string) {
               `<html$1><head><base href="${escapeHtmlAttribute(baseHref)}"></head>`,
             )
           : `<!doctype html><html><head><base href="${escapeHtmlAttribute(baseHref)}"></head><body>${content}</body></html>`;
+
+  if (!runtime) {
+    return htmlWithBase;
+  }
 
   if (/<\/head>/i.test(htmlWithBase)) {
     return htmlWithBase.replace(/<\/head>/i, `${runtime}</head>`);

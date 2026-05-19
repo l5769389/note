@@ -60,7 +60,7 @@ function Draw-FittedImage {
 function New-CroppedLogoImage {
   param([System.Drawing.Image]$Source)
 
-  $cropSize = [int]([Math]::Min($Source.Width, $Source.Height) * 0.78)
+  $cropSize = [int]([Math]::Min($Source.Width, $Source.Height))
   $cropX = [int](($Source.Width - $cropSize) / 2)
   $cropY = [int](($Source.Height - $cropSize) / 2)
   $bitmap = [System.Drawing.Bitmap]::new($cropSize, $cropSize, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
@@ -170,8 +170,8 @@ function Save-InstallerHeader {
 
   $titleFont = [System.Drawing.Font]::new("Segoe UI", 10, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
   $metaFont = [System.Drawing.Font]::new("Segoe UI", 7, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-  $graphics.DrawString("Markdown Studio", $titleFont, [System.Drawing.SolidBrush]::new((New-Color "#111827")), 56, 13)
-  $graphics.DrawString("Clean Markdown writing", $metaFont, [System.Drawing.SolidBrush]::new((New-Color "#5f6b7a")), 57, 30)
+  $graphics.DrawString("noteDock", $titleFont, [System.Drawing.SolidBrush]::new((New-Color "#111827")), 56, 13)
+  $graphics.DrawString("Notes and documents", $metaFont, [System.Drawing.SolidBrush]::new((New-Color "#5f6b7a")), 57, 30)
 
   $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Bmp)
   $graphics.Dispose()
@@ -194,8 +194,7 @@ function Save-InstallerSidebar {
   $metaFont = [System.Drawing.Font]::new("Segoe UI", 9, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
   $center = [System.Drawing.StringFormat]::new()
   $center.Alignment = [System.Drawing.StringAlignment]::Center
-  $graphics.DrawString("Markdown", $titleFont, [System.Drawing.SolidBrush]::new((New-Color "#111827")), [System.Drawing.RectangleF]::new(12, 171, 140, 24), $center)
-  $graphics.DrawString("Studio", $titleFont, [System.Drawing.SolidBrush]::new((New-Color "#111827")), [System.Drawing.RectangleF]::new(12, 193, 140, 24), $center)
+  $graphics.DrawString("noteDock", $titleFont, [System.Drawing.SolidBrush]::new((New-Color "#111827")), [System.Drawing.RectangleF]::new(12, 178, 140, 24), $center)
   $graphics.DrawString($Subtitle, $metaFont, [System.Drawing.SolidBrush]::new((New-Color "#5f6b7a")), [System.Drawing.RectangleF]::new(14, 228, 136, 34), $center)
 
   $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Bmp)

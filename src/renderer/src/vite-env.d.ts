@@ -13,6 +13,36 @@ type WorkspaceFileChangePayload = {
 };
 
 type DesktopApi = {
+  listClipboardMediaFiles: () => Promise<
+    Array<{
+      fileName: string;
+      filePath: string;
+      mimeType: string;
+      size: number;
+    }>
+  >;
+  readClipboardImage: () => Promise<{
+    dataUrl: string;
+    fileName: string;
+    mimeType: string;
+  } | null>;
+  readClipboardMediaFiles: () => Promise<
+    Array<{
+      dataUrl: string;
+      fileName: string;
+      mimeType: string;
+    }>
+  >;
+  readClipboardText: () => Promise<string>;
+  checkAssetReferences: (payload: {
+    documentFilePath: string;
+    references: string[];
+  }) => Promise<string[]>;
+  copyAssetFromFile: (payload: {
+    documentFilePath: string;
+    fileName: string;
+    sourceFilePath: string;
+  }) => Promise<{ assetFilePath: string; reference: string }>;
   createDocumentFile: (payload: {
     content: string;
     directoryPath: string;
@@ -23,6 +53,8 @@ type DesktopApi = {
     directoryPath: string;
     title: string;
   }) => Promise<LocalMarkdownFile>;
+  deleteDocumentFile: (filePath: string) => Promise<boolean>;
+  duplicateDocumentFile: (filePath: string) => Promise<LocalMarkdownFile>;
   exportHtmlFile: (payload: {
     filePath?: string;
     html: string;
@@ -34,6 +66,10 @@ type DesktopApi = {
     title: string;
   }) => Promise<string | null>;
   getDefaultWorkspaceDirectory: () => Promise<string>;
+  getWindowState: () => Promise<{
+    alwaysOnTop: boolean;
+    fullScreen: boolean;
+  }>;
   listMarkdownFiles: (directoryPath: string) => Promise<LocalMarkdownFile[]>;
   newWindow: () => Promise<void>;
   onWorkspaceFileChanged: (
@@ -46,7 +82,16 @@ type DesktopApi = {
   readDirectoryTree: (directoryPath: string) => Promise<DirectoryTreeItem>;
   readExcelDocument: (filePath: string) => Promise<string>;
   readMarkdownFile: (filePath: string) => Promise<LocalMarkdownFile>;
+  readTextAsset: (payload: {
+    documentFilePath: string;
+    reference: string;
+  }) => Promise<string>;
   readWordDocument: (filePath: string) => Promise<string>;
+  renameAsset: (payload: {
+    documentFilePath: string;
+    nextName: string;
+    reference: string;
+  }) => Promise<{ assetFilePath: string; reference: string }>;
   saveMarkdownFileAs: (payload: {
     content: string;
     filePath?: string;
@@ -54,6 +99,12 @@ type DesktopApi = {
   }) => Promise<LocalMarkdownFile | null>;
   selectMarkdownFile: () => Promise<LocalMarkdownFile | null>;
   selectWorkspaceDirectory: () => Promise<string | null>;
+  saveAsset: (payload: {
+    content: string;
+    documentFilePath: string;
+    encoding: "dataUrl" | "utf-8";
+    fileName: string;
+  }) => Promise<{ assetFilePath: string; reference: string }>;
   showInFolder: (targetPath: string) => Promise<void>;
   unwatchWorkspaceDirectory: () => Promise<void>;
   versions: {
@@ -61,11 +112,18 @@ type DesktopApi = {
     electron: string;
   };
   windowControl: (action: "close" | "maximize" | "minimize") => Promise<boolean | void>;
+  toggleAlwaysOnTop: () => Promise<boolean>;
+  toggleFullScreen: () => Promise<boolean>;
   watchWorkspaceDirectory: (directoryPath: string) => Promise<boolean>;
   writeMarkdownFile: (payload: {
     content: string;
     filePath: string;
   }) => Promise<LocalMarkdownFile>;
+  writeTextAsset: (payload: {
+    content: string;
+    documentFilePath: string;
+    reference: string;
+  }) => Promise<{ assetFilePath: string; reference: string }>;
 };
 
 declare global {

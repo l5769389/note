@@ -1,7 +1,7 @@
 {
-  "name": "typora-like-editor",
+  "name": "notedock",
   "version": "0.1.0",
-  "description": "A clean Typora-style Markdown writing app.",
+  "description": "noteDock is a Typora-style Markdown notes app and document reader.",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -18,8 +18,8 @@
     "preview": "electron-vite preview"
   },
   "build": {
-    "appId": "com.local.markdownstudio",
-    "productName": "Markdown Studio",
+    "appId": "com.local.notedock",
+    "productName": "noteDock",
     "directories": {
       "output": "release"
     },
@@ -45,7 +45,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Markdown Studio",
+      "shortcutName": "noteDock",
       "installerIcon": "resources/icon.ico",
       "uninstallerIcon": "resources/icon.ico",
       "installerHeader": "resources/installer-header.bmp",

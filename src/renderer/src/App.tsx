@@ -3,16 +3,20 @@ import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import {
   AlertTriangle,
   BookOpenText,
+  Bold,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ClipboardPaste,
   Code2,
+  Copy,
   ExternalLink,
   FilePlus2,
   FileText,
   Folder,
   FolderOpen,
+  Italic,
   ListTree,
   Minus,
   PanelRight,
@@ -20,14 +24,17 @@ import {
   RefreshCw,
   Rows3,
   Search,
+  Scissors,
   SplitSquareHorizontal,
   Square,
   Table2,
+  Trash2,
   X,
 } from "lucide-react";
 import {
   lazy,
   Suspense,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -35,33 +42,41 @@ import {
   type ClipboardEvent,
   type CSSProperties,
   type FocusEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
   type ReactNode,
 } from "react";
 import {
   appSettingsStorageKey,
+  appThemeStorageKey,
   editorCodeFontOptions,
   editorContentWidthOptions,
   editorFontOptions,
   editorFontSizeOptions,
   editorLineHeightOptions,
   getEditorCodeFontFamily,
+  getEditorContentWidth,
   getEditorFontFamily,
+  getEditorFontSize,
+  getEditorLineHeight,
   getInitialTheme,
   loadAppSettings,
   themeOptions,
   type AppSettings,
   type AppTheme,
 } from "./appSettings";
-import { ExcelDocumentViewer } from "./components/ExcelDocumentViewer";
-import { HtmlDocumentViewer } from "./components/HtmlDocumentViewer";
-import { MarkdownRenderer } from "./components/MarkdownRenderer";
-import { MindMapModal } from "./components/MindMapModal";
-import { PdfDocumentViewer } from "./components/PdfDocumentViewer";
-import { ReactFlowModal } from "./components/ReactFlowModal";
+import {
+  getMigratedStorageItem,
+  legacyNoteDockStorageKeys,
+  noteDockStorageKeys,
+  removeLegacyStorageItem,
+} from "./storageKeys";
+import {
+  createAssetFileName,
+  extractLocalAssetReferences,
+} from "./assetManager";
 import { UniverSheetPreview } from "./components/UniverSheetPreview";
-import { WordDocumentViewer } from "./components/WordDocumentViewer";
 import {
   TyporaEditor,
   type TyporaEditorHandle,
@@ -85,6 +100,12 @@ import {
   createWrappedSelectionEdit,
   findMarkdownLinkInRange,
 } from "./markdownEditing";
+import {
+  getExcalidrawDrawingId,
+  getExcalidrawSceneReference,
+  parseImageMeta,
+  serializeImageMeta,
+} from "./imageMeta";
 import {
   createDocumentFromLocalFile,
   getDocumentDisplayName,
@@ -126,9 +147,11 @@ import {
 } from "./reactFlowDocument";
 import {
   createDefaultUniverSheetData,
+  createUniverSheetAssetMarkdown,
   createUniverSheetMarkdown,
+  parseUniverSheetAssetReference,
   parseUniverSheetData,
-  replaceUniverSheetMarkdownBlock,
+  replaceUniverSheetMarkdownBlockWithContent,
   serializeUniverSheetData,
   type UniverSheetData,
   type UniverSheetEditTarget,
@@ -168,9 +191,51 @@ const DrawingModal = lazy(() =>
   })),
 );
 
+const ExcelDocumentViewer = lazy(() =>
+  import("./components/ExcelDocumentViewer").then((module) => ({
+    default: module.ExcelDocumentViewer,
+  })),
+);
+
+const HtmlDocumentViewer = lazy(() =>
+  import("./components/HtmlDocumentViewer").then((module) => ({
+    default: module.HtmlDocumentViewer,
+  })),
+);
+
+const MarkdownRenderer = lazy(() =>
+  import("./components/MarkdownRenderer").then((module) => ({
+    default: module.MarkdownRenderer,
+  })),
+);
+
+const MindMapModal = lazy(() =>
+  import("./components/MindMapModal").then((module) => ({
+    default: module.MindMapModal,
+  })),
+);
+
+const PdfDocumentViewer = lazy(() =>
+  import("./components/PdfDocumentViewer").then((module) => ({
+    default: module.PdfDocumentViewer,
+  })),
+);
+
+const ReactFlowModal = lazy(() =>
+  import("./components/ReactFlowModal").then((module) => ({
+    default: module.ReactFlowModal,
+  })),
+);
+
 const UniverSheetModal = lazy(() =>
   import("./components/UniverSheetModal").then((module) => ({
     default: module.UniverSheetModal,
+  })),
+);
+
+const WordDocumentViewer = lazy(() =>
+  import("./components/WordDocumentViewer").then((module) => ({
+    default: module.WordDocumentViewer,
   })),
 );
 
@@ -196,7 +261,7 @@ const maxSidebarWidth = 560;
 const homeRecentDocumentLimit = 3;
 const sidebarRecentDirectoryLimit = 5;
 const storedRecentDirectoryLimit = 12;
-const recentDirectoryStorageKey = "typora-like-editor:recent-directories:v1";
+const recentDirectoryStorageKey = noteDockStorageKeys.recentDirectories;
 const internalFileWriteGraceMs = 8000;
 
 type FindPanelMode = "find" | "replace";
@@ -224,6 +289,27 @@ type AppDialogState = {
   cancelLabel?: string;
   tone: AppDialogTone;
   type: "alert" | "confirm";
+};
+
+type AppContextMenuItem =
+  | {
+      type: "separator";
+    }
+  | {
+      danger?: boolean;
+      disabled?: boolean;
+      icon?: ReactNode;
+      label: string;
+      onSelect: () => void | Promise<void>;
+      shortcut?: string;
+      type?: "item";
+    };
+
+type AppContextMenuState = {
+  items: AppContextMenuItem[];
+  width: number;
+  x: number;
+  y: number;
 };
 
 function createDefaultExcalidrawScene() {
@@ -254,6 +340,50 @@ function createDrawingAssetFromDocument(document: MarkdownDocument): DrawingAsse
   };
 }
 
+function findExcalidrawMarkdownImage(content: string, drawingId: string) {
+  const imagePattern = /!\[([^\]]*)]\((\S+?)(?:\s+"([^"]*)")?\)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = imagePattern.exec(content))) {
+    const title = match[3];
+
+    if (getExcalidrawDrawingId(title) === drawingId) {
+      return {
+        alt: match[1] ?? "",
+        src: match[2] ?? "",
+        title,
+        sceneReference: getExcalidrawSceneReference(title),
+      };
+    }
+  }
+
+  return null;
+}
+
+function createExcalidrawImageTitle(
+  drawingId: string,
+  sceneReference: string | null,
+  previousTitle?: string,
+) {
+  const meta = parseImageMeta(previousTitle);
+  const titleText = [
+    meta.titleText
+      .replace(/(?:^|\s)excalidraw:[^\s"]+(?=\s|$)/gi, " ")
+      .replace(/(?:^|\s)scene=[^\s"]+(?=\s|$)/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+    `excalidraw:${drawingId}`,
+    sceneReference ? `scene=${sceneReference}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return serializeImageMeta({
+    ...meta,
+    titleText,
+  });
+}
+
 const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
   { key: "file", label: "文件(F)" },
   { key: "edit", label: "编辑(E)" },
@@ -266,6 +396,21 @@ const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
 
 const now = () => new Date().toISOString();
 
+const clipboardMediaMimeTypes = new Map<string, string>([
+  [".gif", "image/gif"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".m4v", "video/mp4"],
+  [".mov", "video/quicktime"],
+  [".mp4", "video/mp4"],
+  [".mpeg", "video/mpeg"],
+  [".mpg", "video/mpeg"],
+  [".png", "image/png"],
+  [".svg", "image/svg+xml"],
+  [".webm", "video/webm"],
+  [".webp", "image/webp"],
+]);
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -277,6 +422,36 @@ type TableSize = {
 
 function readFileInput(fileInput: HTMLInputElement | null) {
   fileInput?.click();
+}
+
+function getFileExtension(name: string) {
+  const match = name.match(/\.[^.\\/]+$/);
+
+  return match?.[0]?.toLowerCase() ?? "";
+}
+
+function getClipboardMediaMimeType(name: string) {
+  return clipboardMediaMimeTypes.get(getFileExtension(name)) ?? "";
+}
+
+function isClipboardMediaFile(file: File, kind: "image" | "video") {
+  const mimeType = file.type || getClipboardMediaMimeType(file.name);
+
+  return mimeType.startsWith(`${kind}/`);
+}
+
+function normalizeDataUrlMimeType(dataUrl: string, mimeType: string) {
+  if (!mimeType || dataUrl.startsWith(`data:${mimeType}`)) {
+    return dataUrl;
+  }
+
+  return dataUrl.replace(/^data:[^;,]*(?=[;,])/, `data:${mimeType}`);
+}
+
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
 }
 
 function createMarkdownTable({ columns, rows }: TableSize) {
@@ -432,12 +607,29 @@ function MenuSubmenu({
   const [isOpen, setIsOpen] = useState(false);
   const submenuRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({
     left: -9999,
     top: -9999,
   });
 
+  function clearCloseTimer() {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }
+
+  function scheduleClose() {
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => {
+      setIsOpen(false);
+      closeTimerRef.current = null;
+    }, 220);
+  }
+
   function openSubmenu() {
+    clearCloseTimer();
     const rect = submenuRef.current?.getBoundingClientRect();
 
     if (rect) {
@@ -445,12 +637,21 @@ function MenuSubmenu({
       const maxTop = Math.max(8, window.innerHeight - panelHeight - 8);
 
       setPanelStyle({
-        left: rect.right + 4,
+        left: rect.right - 2,
         top: Math.min(Math.max(8, rect.top - 8), maxTop),
       });
     }
 
     setIsOpen(true);
+  }
+
+  function closeWhenPointerLeaves(event: ReactPointerEvent<HTMLDivElement>) {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    scheduleClose();
   }
 
   function closeWhenFocusLeaves(event: FocusEvent<HTMLDivElement>) {
@@ -459,6 +660,8 @@ function MenuSubmenu({
       setIsOpen(false);
     }
   }
+
+  useEffect(() => () => clearCloseTimer(), []);
 
   return (
     <div
@@ -469,7 +672,7 @@ function MenuSubmenu({
       onBlur={closeWhenFocusLeaves}
       onFocus={openSubmenu}
       onPointerEnter={openSubmenu}
-      onPointerLeave={() => setIsOpen(false)}
+      onPointerLeave={closeWhenPointerLeaves}
     >
       <button
         aria-expanded={isOpen}
@@ -489,6 +692,8 @@ function MenuSubmenu({
         className={["menubar-submenu-panel", panelClassName ?? ""]
           .filter(Boolean)
           .join(" ")}
+        onPointerEnter={openSubmenu}
+        onPointerLeave={scheduleClose}
         role="menu"
         style={panelStyle}
       >
@@ -585,7 +790,11 @@ function normalizeDirectoryKey(path?: string) {
 
 function loadRecentDirectoryPaths() {
   try {
-    const raw = window.localStorage.getItem(recentDirectoryStorageKey);
+    const raw = getMigratedStorageItem(
+      window.localStorage,
+      recentDirectoryStorageKey,
+      legacyNoteDockStorageKeys.recentDirectories,
+    );
     const parsed = raw ? (JSON.parse(raw) as unknown) : [];
 
     return Array.isArray(parsed)
@@ -613,6 +822,8 @@ function DirectoryTree({
   expandedPaths,
   item,
   level = 0,
+  onDirectoryContextMenu,
+  onFileContextMenu,
   onOpenFile,
   onToggleDirectory,
 }: {
@@ -621,6 +832,14 @@ function DirectoryTree({
   expandedPaths: Set<string>;
   item: DirectoryTreeItem;
   level?: number;
+  onDirectoryContextMenu?: (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    directoryPath: string,
+  ) => void;
+  onFileContextMenu?: (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    filePath: string,
+  ) => void;
   onOpenFile: (filePath: string) => void;
   onToggleDirectory: (directoryPath: string) => void;
 }) {
@@ -640,6 +859,7 @@ function DirectoryTree({
         style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
         type="button"
         onClick={() => onToggleDirectory(item.path)}
+        onContextMenu={(event) => onDirectoryContextMenu?.(event, item.path)}
       >
         {hasChildren ? (
           isExpanded ? (
@@ -660,6 +880,8 @@ function DirectoryTree({
           expandedPaths={expandedPaths}
           items={item.children ?? []}
           level={level + 1}
+          onDirectoryContextMenu={onDirectoryContextMenu}
+          onFileContextMenu={onFileContextMenu}
           onOpenFile={onOpenFile}
           onToggleDirectory={onToggleDirectory}
         />
@@ -674,6 +896,8 @@ function DirectoryTreeItems({
   expandedPaths,
   items,
   level,
+  onDirectoryContextMenu,
+  onFileContextMenu,
   onOpenFile,
   onToggleDirectory,
 }: {
@@ -682,6 +906,14 @@ function DirectoryTreeItems({
   expandedPaths: Set<string>;
   items: DirectoryTreeItem[];
   level: number;
+  onDirectoryContextMenu?: (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    directoryPath: string,
+  ) => void;
+  onFileContextMenu?: (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    filePath: string,
+  ) => void;
   onOpenFile: (filePath: string) => void;
   onToggleDirectory: (directoryPath: string) => void;
 }) {
@@ -696,6 +928,8 @@ function DirectoryTreeItems({
             item={child}
             key={child.path}
             level={level}
+            onDirectoryContextMenu={onDirectoryContextMenu}
+            onFileContextMenu={onFileContextMenu}
             onOpenFile={onOpenFile}
             onToggleDirectory={onToggleDirectory}
           />
@@ -710,6 +944,7 @@ function DirectoryTreeItems({
             style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
             type="button"
             onClick={() => onOpenFile(child.path)}
+            onContextMenu={(event) => onFileContextMenu?.(event, child.path)}
           >
             <span className="directory-tree-caret-placeholder" />
             <FileText size={17} />
@@ -817,10 +1052,32 @@ function collectDirectoryFiles(
       .map((document) => [normalizeFilePathKey(document.filePath), document]),
   );
 
+  return collectDirectoryFilesWithDocumentMap(
+    documentsByPath,
+    items,
+    workspacePath,
+  ).sort((left, right) =>
+    `${left.directoryLabel}/${left.name}`.localeCompare(
+      `${right.directoryLabel}/${right.name}`,
+      "zh-CN",
+      { numeric: true },
+    ),
+  );
+}
+
+function collectDirectoryFilesWithDocumentMap(
+  documentsByPath: Map<string, MarkdownDocument>,
+  items: DirectoryTreeItem[],
+  workspacePath?: string,
+): DirectoryFileListItem[] {
   return items
     .flatMap((item): DirectoryFileListItem[] =>
       item.type === "directory"
-        ? collectDirectoryFiles(documents, item.children ?? [], workspacePath)
+        ? collectDirectoryFilesWithDocumentMap(
+            documentsByPath,
+            item.children ?? [],
+            workspacePath,
+          )
         : [
             {
               directoryLabel: getDirectoryDisplayPath(item.path, workspacePath),
@@ -829,13 +1086,6 @@ function collectDirectoryFiles(
               path: item.path,
             },
           ],
-    )
-    .sort((left, right) =>
-      `${left.directoryLabel}/${left.name}`.localeCompare(
-        `${right.directoryLabel}/${right.name}`,
-        "zh-CN",
-        { numeric: true },
-      ),
     );
 }
 
@@ -843,12 +1093,17 @@ function DirectoryFileList({
   activeFilePath,
   documents,
   items,
+  onFileContextMenu,
   onOpenFile,
   workspacePath,
 }: {
   activeFilePath?: string;
   documents: MarkdownDocument[];
   items: DirectoryTreeItem[];
+  onFileContextMenu?: (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    filePath: string,
+  ) => void;
   onOpenFile: (filePath: string) => void;
   workspacePath?: string;
 }) {
@@ -876,6 +1131,7 @@ function DirectoryFileList({
             key={file.path}
             type="button"
             onClick={() => onOpenFile(file.path)}
+            onContextMenu={(event) => onFileContextMenu?.(event, file.path)}
           >
             <FileText size={17} />
             <span className="directory-file-list-text">
@@ -1026,6 +1282,8 @@ export function App() {
   const [topMenu, setTopMenu] = useState<TopMenu>(null);
   const [theme, setTheme] = useState<AppTheme>(getInitialTheme);
   const [settings, setSettings] = useState<AppSettings>(loadAppSettings);
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [isHomeOpen, setIsHomeOpen] = useState(true);
   const [isRecentExpanded, setIsRecentExpanded] = useState(false);
   const [, setSaveState] = useState<SaveState>("idle");
@@ -1048,14 +1306,12 @@ export function App() {
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [appDialog, setAppDialog] = useState<AppDialogState | null>(null);
+  const [contextMenu, setContextMenu] = useState<AppContextMenuState | null>(null);
   const [findPanelMode, setFindPanelMode] = useState<FindPanelMode>("find");
   const [findQuery, setFindQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
   const [findMatchIndex, setFindMatchIndex] = useState(0);
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
-  const [workspaceSearchGroups, setWorkspaceSearchGroups] = useState<
-    WorkspaceSearchGroup[]
-  >([]);
   const [documentReloadTokens, setDocumentReloadTokens] = useState<
     Record<string, number>
   >({});
@@ -1064,7 +1320,13 @@ export function App() {
   const [fileExplorerView, setFileExplorerView] =
     useState<FileExplorerView>("tree");
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const storedWidth = Number(window.localStorage.getItem("typora-like-sidebar-width"));
+    const storedWidth = Number(
+      getMigratedStorageItem(
+        window.localStorage,
+        noteDockStorageKeys.sidebarWidth,
+        legacyNoteDockStorageKeys.sidebarWidth,
+      ),
+    );
 
     return Number.isFinite(storedWidth)
       ? clamp(storedWidth, minSidebarWidth, maxSidebarWidth)
@@ -1079,6 +1341,7 @@ export function App() {
   const [recentFileAvailability, setRecentFileAvailability] = useState<
     Record<string, boolean>
   >({});
+  const [missingAssetReferences, setMissingAssetReferences] = useState<string[]>([]);
   const [recentDirectoryPaths, setRecentDirectoryPaths] = useState(
     loadRecentDirectoryPaths,
   );
@@ -1088,6 +1351,7 @@ export function App() {
   const [activeEditorLineIndex, setActiveEditorLineIndex] = useState(0);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const typoraEditorRef = useRef<TyporaEditorHandle | null>(null);
+  const mediaImportIdRef = useRef(0);
   const workspaceSearchInputRef = useRef<HTMLInputElement | null>(null);
   const pendingWorkspaceSearchRevealRef = useRef<WorkspaceSearchReveal | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -1095,6 +1359,7 @@ export function App() {
     null,
   );
   const externalConflictPathsRef = useRef(new Set<string>());
+  const internalFileDeletesRef = useRef(new Set<string>());
   const savedFileContentByPathRef = useRef(
     new Map(
       workspace.documents
@@ -1105,6 +1370,24 @@ export function App() {
   const internalFileWritesRef = useRef(
     new Map<string, { content: string; expiresAt: number }>(),
   );
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    const close = () => setContextMenu(null);
+
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", close);
+    window.addEventListener("blur", close);
+
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [contextMenu]);
 
   const activeDocument = useMemo(
     () =>
@@ -1130,6 +1413,17 @@ export function App() {
             new Date(first.updatedAt).getTime(),
         ),
     [workspace.documents],
+  );
+  const recentDocumentFilePaths = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          recentDocuments
+            .map((document) => document.filePath)
+            .filter((filePath): filePath is string => Boolean(filePath)),
+        ),
+      ),
+    [recentDocuments],
   );
   const recentDirectories = useMemo(() => {
     const currentDirectoryKey = normalizeDirectoryKey(workspace.workspacePath);
@@ -1178,6 +1472,16 @@ export function App() {
         : 0,
     [activeDocument],
   );
+  const deferredWorkspaceSearchQuery = useDeferredValue(workspaceSearchQuery);
+  const workspaceSearchGroups = useMemo(
+    () =>
+      getWorkspaceSearchGroups(
+        workspace.documents,
+        deferredWorkspaceSearchQuery,
+        workspace.workspacePath,
+      ),
+    [workspace.documents, workspace.workspacePath, deferredWorkspaceSearchQuery],
+  );
   const workspaceSearchMatchCount = useMemo(
     () => getWorkspaceSearchMatchCount(workspaceSearchGroups),
     [workspaceSearchGroups],
@@ -1194,6 +1498,13 @@ export function App() {
     [activeDocument, activeDocument?.content, findQuery],
   );
   const activeFindMatch = findMatches[findMatchIndex] ?? null;
+  const activeAssetReferences = useMemo(
+    () =>
+      isMarkdownDocument(activeDocument)
+        ? extractLocalAssetReferences(activeDocument!.content)
+        : [],
+    [activeDocument],
+  );
   const visibleFindResultStart = Math.max(
     0,
     Math.min(Math.max(findMatchIndex - 3, 0), Math.max(findMatches.length - 8, 0)),
@@ -1210,19 +1521,39 @@ export function App() {
   }, [hasMoreRecentDocuments, isRecentExpanded]);
 
   useEffect(() => {
-    if (!workspaceSearchQuery.trim()) {
-      setWorkspaceSearchGroups([]);
-      return;
+    if (
+      !activeDocument?.filePath ||
+      !activeAssetReferences.length ||
+      !window.desktop?.checkAssetReferences
+    ) {
+      setMissingAssetReferences([]);
+      return undefined;
     }
 
-    setWorkspaceSearchGroups(
-      getWorkspaceSearchGroups(
-        workspace.documents,
-        workspaceSearchQuery,
-        workspace.workspacePath,
-      ),
-    );
-  }, [workspace.workspacePath, workspaceSearchQuery]);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void window.desktop
+        ?.checkAssetReferences?.({
+          documentFilePath: activeDocument.filePath!,
+          references: activeAssetReferences.map((reference) => reference.reference),
+        })
+        .then((missing) => {
+          if (!cancelled) {
+            setMissingAssetReferences(missing);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setMissingAssetReferences([]);
+          }
+        });
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeAssetReferences, activeDocument?.filePath]);
 
   useEffect(() => {
     if (!workspace.workspacePath || !window.desktop?.watchWorkspaceDirectory) {
@@ -1248,11 +1579,7 @@ export function App() {
   }, [activeDocument, workspace.documents, workspace.workspacePath]);
 
   useEffect(() => {
-    const filePaths = recentDocuments
-      .map((document) => document.filePath)
-      .filter((filePath): filePath is string => Boolean(filePath));
-
-    if (!filePaths.length || !window.desktop?.pathExists) {
+    if (!recentDocumentFilePaths.length || !window.desktop?.pathExists) {
       setRecentFileAvailability({});
       return;
     }
@@ -1260,7 +1587,7 @@ export function App() {
     let isStale = false;
 
     void Promise.all(
-      filePaths.map(async (filePath) => [
+      recentDocumentFilePaths.map(async (filePath) => [
         filePath,
         await window.desktop!.pathExists(filePath),
       ] as const),
@@ -1275,12 +1602,30 @@ export function App() {
     return () => {
       isStale = true;
     };
-  }, [recentDocuments]);
+  }, [recentDocumentFilePaths]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem("typora-like-theme", theme);
+    window.localStorage.setItem(appThemeStorageKey, theme);
+    removeLegacyStorageItem(window.localStorage, legacyNoteDockStorageKeys.theme);
   }, [theme]);
+
+  useEffect(() => {
+    let isStale = false;
+
+    void window.desktop?.getWindowState?.().then((state) => {
+      if (isStale || !state) {
+        return;
+      }
+
+      setIsFullScreen(state.fullScreen);
+      setIsAlwaysOnTop(state.alwaysOnTop);
+    });
+
+    return () => {
+      isStale = true;
+    };
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(appSettingsStorageKey, JSON.stringify(settings));
@@ -1296,13 +1641,23 @@ export function App() {
       "--editor-code-font-family",
       getEditorCodeFontFamily(settings.editorCodeFontFamily),
     );
-    style.setProperty("--editor-font-size", settings.editorFontSize);
-    style.setProperty("--editor-line-height", settings.editorLineHeight);
-    style.setProperty("--editor-content-width", settings.editorContentWidth);
+    style.setProperty("--editor-font-size", getEditorFontSize(settings.editorFontSize));
+    style.setProperty(
+      "--editor-line-height",
+      getEditorLineHeight(settings.editorLineHeight),
+    );
+    style.setProperty(
+      "--editor-content-width",
+      getEditorContentWidth(settings.editorContentWidth),
+    );
   }, [settings]);
 
   useEffect(() => {
-    window.localStorage.setItem("typora-like-sidebar-width", String(sidebarWidth));
+    window.localStorage.setItem(noteDockStorageKeys.sidebarWidth, String(sidebarWidth));
+    removeLegacyStorageItem(
+      window.localStorage,
+      legacyNoteDockStorageKeys.sidebarWidth,
+    );
   }, [sidebarWidth]);
 
   useEffect(() => {
@@ -1325,7 +1680,10 @@ export function App() {
     }
   }, [findMatches.length, findQuery, isFindReplaceOpen]);
 
-  function updateSetting(key: keyof AppSettings, value: string) {
+  function updateSetting<K extends keyof AppSettings>(
+    key: K,
+    value: AppSettings[K],
+  ) {
     setSettings((current) => ({
       ...current,
       [key]: value,
@@ -1335,6 +1693,22 @@ export function App() {
   function updateEditorMode(nextMode: EditorMode) {
     setMode(nextMode);
     updateSetting("editorMode", nextMode);
+  }
+
+  async function toggleFullScreen() {
+    const nextFullScreenState = await window.desktop?.toggleFullScreen?.();
+
+    if (typeof nextFullScreenState === "boolean") {
+      setIsFullScreen(nextFullScreenState);
+    }
+  }
+
+  async function toggleAlwaysOnTop() {
+    const nextAlwaysOnTopState = await window.desktop?.toggleAlwaysOnTop?.();
+
+    if (typeof nextAlwaysOnTopState === "boolean") {
+      setIsAlwaysOnTop(nextAlwaysOnTopState);
+    }
   }
 
   function startSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1405,6 +1779,10 @@ export function App() {
     window.localStorage.setItem(
       recentDirectoryStorageKey,
       JSON.stringify(recentDirectoryPaths),
+    );
+    removeLegacyStorageItem(
+      window.localStorage,
+      legacyNoteDockStorageKeys.recentDirectories,
     );
   }, [recentDirectoryPaths]);
 
@@ -1513,6 +1891,19 @@ export function App() {
       const usesAppModifier = isAppShortcutModifier(event);
       const key = event.key.toLowerCase();
 
+      if (
+        event.key === "F11" &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey
+      ) {
+        event.preventDefault();
+        void toggleFullScreen();
+        setTopMenu(null);
+        return;
+      }
+
       if (usesAppModifier && event.shiftKey && !event.altKey && key === "n") {
         event.preventDefault();
         openNewWindow();
@@ -1614,7 +2005,7 @@ export function App() {
             return;
           case "v":
             event.preventDefault();
-            void runEditCommand("paste");
+            void pasteFromClipboardShortcut();
             return;
         }
       }
@@ -1791,7 +2182,7 @@ export function App() {
           : null;
       const document = localFile
         ? createDocumentFromLocalFile(localFile)
-        : createDocument(title, `# ${title}\n\n`);
+        : createDocument(title, "");
 
       if (document.filePath) {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
@@ -1860,7 +2251,7 @@ export function App() {
         : createDocument(title, content, undefined, "sheet", ".univer");
 
       activateCreatedDocument(document, directoryPath);
-      openUniverSheetEditor({ kind: "document" }, document.content);
+      void openUniverSheetEditor({ kind: "document" }, document.content);
 
       if (directoryPath) {
         await loadDirectoryTree(directoryPath);
@@ -1906,7 +2297,7 @@ export function App() {
     tree: DirectoryTreeItem | null,
   ) {
     const localDocuments = localFiles.map(createDocumentFromLocalFile);
-    const fallbackDocument = createDocument("Untitled", "# Untitled\n\n");
+    const fallbackDocument = createDocument("Untitled", "");
     const nextDocuments = localDocuments.length ? localDocuments : [fallbackDocument];
 
     localDocuments.forEach((document) => {
@@ -1937,7 +2328,13 @@ export function App() {
 
     try {
       if (window.desktop?.pathExists && !(await window.desktop.pathExists(directoryPath))) {
-        window.alert(`无法打开最近目录：\n${directoryPath}`);
+        void showAppAlert({
+          confirmLabel: "知道了",
+          description: "这个最近目录已经不存在，或当前应用没有权限访问。",
+          detail: directoryPath,
+          title: "无法打开最近目录",
+          tone: "warning",
+        });
         return;
       }
 
@@ -2024,6 +2421,99 @@ export function App() {
     setIsHomeOpen(false);
   }
 
+  async function duplicateDocumentFile(filePath: string) {
+    if (!window.desktop?.duplicateDocumentFile) {
+      await copyTextToClipboard(filePath);
+      return;
+    }
+
+    try {
+      const localFile = await window.desktop.duplicateDocumentFile(filePath);
+      const document = createDocumentFromLocalFile(localFile);
+
+      if (document.filePath) {
+        savedFileContentByPathRef.current.set(document.filePath, document.content);
+      }
+
+      setWorkspace((current) => ({
+        ...current,
+        activeDocumentId: document.id,
+        documents: mergeDocumentByFilePath(current.documents, document),
+        workspacePath:
+          current.workspacePath ||
+          getDirectoryPath(document.filePath) ||
+          current.workspacePath,
+      }));
+      rememberRecentDirectory(getDirectoryPath(document.filePath));
+      setIsHomeOpen(false);
+      await loadDirectoryTree(getDirectoryPath(document.filePath));
+    } catch {
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "复制文件时发生错误，请确认文件仍然存在且当前目录可写。",
+        detail: filePath,
+        title: "复制失败",
+        tone: "danger",
+      });
+    }
+  }
+
+  async function deleteDocumentFile(filePath: string) {
+    const confirmed = await showAppConfirm({
+      cancelLabel: "取消",
+      confirmLabel: "删除",
+      description: "文件会从磁盘中删除，此操作无法撤销。",
+      detail: filePath,
+      title: "删除这个文件？",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    const fileKey = normalizeFilePathKey(filePath);
+
+    try {
+      internalFileDeletesRef.current.add(fileKey);
+      await window.desktop?.deleteDocumentFile?.(filePath);
+      savedFileContentByPathRef.current.delete(filePath);
+      externalConflictPathsRef.current.delete(fileKey);
+
+      setWorkspace((current) => {
+        const deletedDocument = current.documents.find(
+          (document) => document.filePath === filePath,
+        );
+        const documents = current.documents.filter(
+          (document) => document.filePath !== filePath,
+        );
+
+        return {
+          ...current,
+          activeDocumentId:
+            deletedDocument?.id === current.activeDocumentId
+              ? ""
+              : current.activeDocumentId,
+          documents,
+        };
+      });
+      await loadDirectoryTree(getDirectoryPath(filePath));
+
+      if (activeDocument?.filePath === filePath) {
+        setIsHomeOpen(true);
+      }
+    } catch {
+      internalFileDeletesRef.current.delete(normalizeFilePathKey(filePath));
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "删除文件时发生错误，请确认文件仍然存在且当前目录可写。",
+        detail: filePath,
+        title: "删除失败",
+        tone: "danger",
+      });
+    }
+  }
+
   async function showWorkspaceInFolder() {
     const targetPath = workspace.workspacePath || activeDocument?.filePath;
 
@@ -2065,6 +2555,55 @@ export function App() {
     });
   }
 
+  async function saveDataUrlAssetForDocument(
+    document: MarkdownDocument,
+    fileName: string,
+    dataUrl: string,
+  ) {
+    if (!document.filePath || !window.desktop?.saveAsset) {
+      return dataUrl;
+    }
+
+    const savedAsset = await window.desktop.saveAsset({
+      content: dataUrl,
+      documentFilePath: document.filePath,
+      encoding: "dataUrl",
+      fileName: createAssetFileName(fileName, "asset"),
+    });
+
+    return savedAsset.reference;
+  }
+
+  async function saveTextAssetForDocument(
+    document: MarkdownDocument,
+    fileName: string,
+    content: string,
+    existingReference?: string,
+  ) {
+    if (!document.filePath || !window.desktop?.saveAsset) {
+      return null;
+    }
+
+    if (existingReference && window.desktop.writeTextAsset) {
+      const savedAsset = await window.desktop.writeTextAsset({
+        content,
+        documentFilePath: document.filePath,
+        reference: existingReference,
+      });
+
+      return savedAsset.reference;
+    }
+
+    const savedAsset = await window.desktop.saveAsset({
+      content,
+      documentFilePath: document.filePath,
+      encoding: "utf-8",
+      fileName: createAssetFileName(fileName, "asset.json"),
+    });
+
+    return savedAsset.reference;
+  }
+
   function openNewWindow() {
     void window.desktop?.newWindow?.();
   }
@@ -2085,7 +2624,13 @@ export function App() {
     }));
 
     if (!exists) {
-      window.alert(`文件不存在：\n${document.filePath}`);
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "这个最近文件已经不在原来的位置。",
+        detail: document.filePath,
+        title: "文件不存在",
+        tone: "warning",
+      });
       return;
     }
 
@@ -2116,7 +2661,13 @@ export function App() {
         ...current,
         [document.filePath!]: false,
       }));
-      window.alert(`无法打开最近文件：\n${document.filePath}`);
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "读取这个最近文件时发生错误，可以从文件菜单重新打开。",
+        detail: document.filePath,
+        title: "无法打开最近文件",
+        tone: "danger",
+      });
     }
   }
 
@@ -2167,9 +2718,40 @@ export function App() {
     setIsDrawingOpen(true);
   }
 
-  function openDrawingEditor(drawingId: string) {
-    if (!isMarkdownDocument(activeDocument) || !activeDocument?.drawings[drawingId]) {
+  async function openDrawingEditor(drawingId: string) {
+    const document = activeDocument;
+
+    if (!document || !isMarkdownDocument(document)) {
       return;
+    }
+
+    if (!document.drawings[drawingId]) {
+      const image = findExcalidrawMarkdownImage(document.content, drawingId);
+
+      if (!image?.sceneReference || !document.filePath || !window.desktop?.readTextAsset) {
+        return;
+      }
+
+      try {
+        const sceneJSON = await window.desktop.readTextAsset({
+          documentFilePath: document.filePath,
+          reference: image.sceneReference,
+        });
+        patchActiveDocument({
+          drawings: {
+            ...document.drawings,
+            [drawingId]: {
+              id: drawingId,
+              name: image.alt || "Excalidraw",
+              dataUrl: image.src,
+              sceneJSON,
+              createdAt: now(),
+            },
+          },
+        });
+      } catch {
+        return;
+      }
     }
 
     setEditingDrawingId(drawingId);
@@ -2268,6 +2850,182 @@ export function App() {
     });
   }
 
+  function openContextMenu(
+    event: ReactMouseEvent<HTMLElement>,
+    items: AppContextMenuItem[],
+    width = 236,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const visibleRows = items.filter((item) => item.type !== "separator").length;
+    const separators = items.length - visibleRows;
+    const estimatedHeight = Math.min(420, visibleRows * 38 + separators * 9 + 16);
+    const x = clamp(event.clientX, 8, Math.max(8, window.innerWidth - width - 8));
+    const y = clamp(
+      event.clientY,
+      8,
+      Math.max(8, window.innerHeight - estimatedHeight - 8),
+    );
+
+    setTopMenu(null);
+    setIsActionsOpen(false);
+    setContextMenu({ items, width, x, y });
+  }
+
+  function runContextMenuItem(item: AppContextMenuItem) {
+    if (item.type === "separator" || item.disabled) {
+      return;
+    }
+
+    setContextMenu(null);
+    void item.onSelect();
+  }
+
+  async function copyTextToClipboard(text: string) {
+    if (!text) {
+      return;
+    }
+
+    await navigator.clipboard?.writeText(text);
+  }
+
+  function openEditorContextMenu(event: ReactMouseEvent<HTMLElement>) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    openContextMenu(
+      event,
+      [
+        {
+          icon: <Scissors size={15} />,
+          label: "剪切",
+          onSelect: () => runEditCommand("cut"),
+          shortcut: "Ctrl+X",
+        },
+        {
+          icon: <Copy size={15} />,
+          label: "复制",
+          onSelect: () => runEditCommand("copy"),
+          shortcut: "Ctrl+C",
+        },
+        {
+          icon: <ClipboardPaste size={15} />,
+          label: "粘贴",
+          onSelect: () => runEditCommand("paste"),
+          shortcut: "Ctrl+V",
+        },
+        { type: "separator" },
+        {
+          icon: <Bold size={15} />,
+          label: "加粗",
+          onSelect: () => runFormatCommand({ type: "bold" }),
+          shortcut: "Ctrl+B",
+        },
+        {
+          icon: <Italic size={15} />,
+          label: "斜体",
+          onSelect: () => runFormatCommand({ type: "italic" }),
+          shortcut: "Ctrl+I",
+        },
+        {
+          icon: <Code2 size={15} />,
+          label: "行内代码",
+          onSelect: () => runFormatCommand({ type: "inlineCode" }),
+          shortcut: "Ctrl+Shift+`",
+        },
+        { type: "separator" },
+        {
+          danger: true,
+          icon: <Trash2 size={15} />,
+          label: "删除",
+          onSelect: () => runEditCommand("delete"),
+          shortcut: "Delete",
+        },
+      ],
+      246,
+    );
+  }
+
+  function openFileContextMenu(
+    event: ReactMouseEvent<HTMLElement>,
+    filePath: string,
+  ) {
+    const fileName = getPathLabel(filePath);
+    const canUseFileIpc = Boolean(window.desktop);
+
+    openContextMenu(
+      event,
+      [
+        {
+          icon: <FileText size={15} />,
+          label: "打开",
+          onSelect: () => void openFileFromTree(filePath),
+        },
+        {
+          disabled: !window.desktop?.duplicateDocumentFile,
+          icon: <Copy size={15} />,
+          label: "复制文件",
+          onSelect: () => void duplicateDocumentFile(filePath),
+        },
+        {
+          icon: <Copy size={15} />,
+          label: "复制路径",
+          onSelect: () => void copyTextToClipboard(filePath),
+        },
+        {
+          icon: <Copy size={15} />,
+          label: "复制文件名",
+          onSelect: () => void copyTextToClipboard(fileName),
+        },
+        { type: "separator" },
+        {
+          disabled: !canUseFileIpc,
+          icon: <ExternalLink size={15} />,
+          label: "在资源管理器中显示",
+          onSelect: () => void window.desktop?.showInFolder?.(filePath),
+        },
+        { type: "separator" },
+        {
+          danger: true,
+          disabled: !window.desktop?.deleteDocumentFile,
+          icon: <Trash2 size={15} />,
+          label: "删除文件",
+          onSelect: () => void deleteDocumentFile(filePath),
+        },
+      ],
+      258,
+    );
+  }
+
+  function openDirectoryContextMenu(
+    event: ReactMouseEvent<HTMLElement>,
+    directoryPath: string,
+  ) {
+    openContextMenu(
+      event,
+      [
+        {
+          icon: <FolderOpen size={15} />,
+          label: "打开文件夹",
+          onSelect: () => void openWorkspaceDirectoryPath(directoryPath),
+        },
+        {
+          icon: <ExternalLink size={15} />,
+          label: "在资源管理器中显示",
+          onSelect: () => void window.desktop?.showInFolder?.(directoryPath),
+        },
+        {
+          icon: <RefreshCw size={15} />,
+          label: "刷新",
+          onSelect: () => void loadDirectoryTree(directoryPath),
+        },
+      ],
+      246,
+    );
+  }
+
   function bumpDocumentReloadToken(documentId: string) {
     setDocumentReloadTokens((current) => ({
       ...current,
@@ -2298,6 +3056,10 @@ export function App() {
     }
 
     if (payload.event === "unlink") {
+      if (internalFileDeletesRef.current.delete(fileKey)) {
+        return;
+      }
+
       setRecentFileAvailability((current) => ({
         ...current,
         [payload.filePath]: false,
@@ -2504,12 +3266,21 @@ export function App() {
     }
   }
 
-  function openUniverSheetEditor(target: UniverSheetEditTarget, code?: string) {
+  async function openUniverSheetEditor(target: UniverSheetEditTarget, code?: string) {
     let initialData = createDefaultUniverSheetData();
 
     if (code) {
       try {
-        initialData = parseUniverSheetData(code);
+        const assetReference = parseUniverSheetAssetReference(code);
+        const source =
+          assetReference && activeDocument?.filePath && window.desktop?.readTextAsset
+            ? await window.desktop.readTextAsset({
+                documentFilePath: activeDocument.filePath,
+                reference: assetReference.assetPath,
+              })
+            : code;
+
+        initialData = parseUniverSheetData(source);
       } catch {
         initialData = createDefaultUniverSheetData();
       }
@@ -2524,32 +3295,63 @@ export function App() {
       return;
     }
 
-    openUniverSheetEditor({ kind: "insert" });
+    void openUniverSheetEditor({ kind: "insert" });
   }
 
-  function saveUniverSheet(data: UniverSheetData) {
-    if (!activeDocument || !univerSheetEditorState) {
+  async function createUniverSheetMarkdownForDocument(
+    document: MarkdownDocument,
+    data: UniverSheetData,
+    existingCode?: string,
+  ) {
+    const existingReference = existingCode
+      ? parseUniverSheetAssetReference(existingCode)?.assetPath
+      : undefined;
+    const reference = await saveTextAssetForDocument(
+      document,
+      `${data.title || "在线表格"}.univer.json`,
+      serializeUniverSheetData(data),
+      existingReference,
+    );
+
+    return reference
+      ? createUniverSheetAssetMarkdown(data, reference)
+      : createUniverSheetMarkdown(data);
+  }
+
+  async function saveUniverSheet(data: UniverSheetData) {
+    const document = activeDocument;
+
+    if (!document || !univerSheetEditorState) {
       return;
     }
 
     const { target } = univerSheetEditorState;
 
-    if (target.kind === "markdown" && isMarkdownDocument(activeDocument)) {
+    if (target.kind === "markdown" && isMarkdownDocument(document)) {
+      const markdown = await createUniverSheetMarkdownForDocument(
+        document,
+        data,
+        target.code,
+      );
       updateMarkdown(
-        replaceUniverSheetMarkdownBlock(activeDocument.content, target.code, data),
+        replaceUniverSheetMarkdownBlockWithContent(
+          document.content,
+          target.code,
+          markdown.replace(/^\n?```univer-sheet\n|\n```\n?$/g, ""),
+        ),
       );
       return;
     }
 
-    if (target.kind === "insert" && isMarkdownDocument(activeDocument)) {
-      insertMarkdown(createUniverSheetMarkdown(data));
+    if (target.kind === "insert" && isMarkdownDocument(document)) {
+      insertMarkdown(await createUniverSheetMarkdownForDocument(document, data));
       return;
     }
 
-    if (target.kind === "document" && isSheetDocument(activeDocument)) {
+    if (target.kind === "document" && isSheetDocument(document)) {
       patchActiveDocument({
         content: serializeUniverSheetData(data),
-        title: data.title || activeDocument.title,
+        title: data.title || document.title,
       });
     }
   }
@@ -2663,16 +3465,6 @@ export function App() {
           (document) => !isDocumentInsideWorkspace(document, targetWorkspacePath),
         );
         const nextDocuments = [...nextLocalDocuments, ...externalDocuments];
-
-        if (workspaceSearchQuery.trim()) {
-          setWorkspaceSearchGroups(
-            getWorkspaceSearchGroups(
-              nextDocuments,
-              workspaceSearchQuery,
-              targetWorkspacePath,
-            ),
-          );
-        }
 
         return {
           ...current,
@@ -3094,30 +3886,536 @@ export function App() {
     insertMarkdown(createMarkdownTable(size));
   }
 
-  async function handleImageFile(file: File) {
-    if (!isMarkdownDocument(activeDocument)) {
+  function createTimestampedMediaName(
+    mimeType: string,
+    fallbackExtension: string,
+    prefix: string,
+  ) {
+    const extension =
+      mimeType
+        .split("/")
+        .at(1)
+        ?.replace("jpeg", "jpg")
+        .replace("svg+xml", "svg")
+        .replace("quicktime", "mov")
+        .replace("x-matroska", "mkv")
+        .replace("ogg", "ogv") ||
+      fallbackExtension;
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .replace("T", "-")
+      .slice(0, 19);
+
+    return `${prefix}-${timestamp}.${extension}`;
+  }
+
+  function createTimestampedImageName(mimeType: string) {
+    return createTimestampedMediaName(mimeType, "png", "screenshot");
+  }
+
+  function createTimestampedVideoName(mimeType: string) {
+    return createTimestampedMediaName(mimeType, "webm", "recording");
+  }
+
+  function escapeHtmlAttribute(value: string) {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function createVideoMarkdown(fileName: string, reference: string) {
+    const title = escapeHtmlAttribute(fileName);
+    const src = escapeHtmlAttribute(reference);
+
+    return `<video controls preload="metadata" src="${src}" title="${title}"></video>\n\n`;
+  }
+
+  function createMediaImportPlaceholder(
+    importId: string,
+    fileName: string,
+    status: string,
+    progress?: number,
+  ) {
+    const progressLabel =
+      typeof progress === "number" ? `${Math.max(1, Math.round(progress * 100))}%` : "";
+    const safeId = escapeHtmlAttribute(importId);
+    const safeName = escapeHtmlAttribute(fileName || "video");
+    const safeStatus = escapeHtmlAttribute(status);
+
+    return [
+      `<div class="notedock-media-import" data-notedock-import-id="${safeId}">`,
+      `  <strong>正在导入视频</strong>`,
+      `  <span>${safeName}</span>`,
+      `  <em>${safeStatus}${progressLabel ? ` · ${progressLabel}` : ""}</em>`,
+      `</div>`,
+      "",
+      "",
+    ].join("\n");
+  }
+
+  function getMediaImportPattern(importId: string) {
+    const escapedId = importId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    return new RegExp(
+      `<div\\b(?=[^>]*data-notedock-import-id="${escapedId}")[^>]*>[\\s\\S]*?<\\/div>\\n{0,2}`,
+    );
+  }
+
+  function replaceMediaImportPlaceholder(
+    importId: string,
+    replacement: string,
+    options: { appendIfMissing?: boolean; documentId?: string | null } = {},
+  ) {
+    setWorkspace((current) => {
+      const targetDocumentId = options.documentId ?? current.activeDocumentId;
+      const currentDocument =
+        current.documents.find((item) => item.id === targetDocumentId) ?? null;
+
+      if (!currentDocument || !isMarkdownDocument(currentDocument)) {
+        return current;
+      }
+
+      let didReplace = false;
+      const nextContent = currentDocument.content.replace(
+        getMediaImportPattern(importId),
+        () => {
+          didReplace = true;
+          return replacement;
+        },
+      );
+      const content = didReplace
+        ? nextContent
+        : options.appendIfMissing
+          ? `${currentDocument.content.trimEnd()}\n\n${replacement}`
+          : currentDocument.content;
+
+      if (content === currentDocument.content) {
+        return current;
+      }
+
+      return updateDocument(current, {
+        ...currentDocument,
+        content,
+        title: renameFromMarkdown(content, currentDocument.title),
+        updatedAt: now(),
+      });
+    });
+  }
+
+  async function insertVideoImportPlaceholder(fileName: string) {
+    const importId = `video-${Date.now()}-${mediaImportIdRef.current++}`;
+    const documentId = activeDocument?.id ?? null;
+    const document = activeDocument && isMarkdownDocument(activeDocument) ? activeDocument : null;
+
+    insertMarkdown(createMediaImportPlaceholder(importId, fileName, "准备读取"));
+    await waitForNextPaint();
+
+    return { document, documentId, importId };
+  }
+
+  function updateVideoImportPlaceholder(
+    importId: string,
+    fileName: string,
+    status: string,
+    progress?: number,
+    documentId?: string | null,
+  ) {
+    replaceMediaImportPlaceholder(
+      importId,
+      createMediaImportPlaceholder(importId, fileName, status, progress),
+      { documentId },
+    );
+  }
+
+  async function handleImageDataUrl(fileName: string, dataUrl: string) {
+    const document = activeDocument;
+
+    if (!document || !isMarkdownDocument(document)) {
       return;
     }
 
     try {
-      const dataUrl = await fileToDataUrl(file);
-      insertMarkdown(`![${file.name}](${dataUrl} "align=left") `);
+      const reference = await saveDataUrlAssetForDocument(
+        document,
+        fileName,
+        dataUrl,
+      );
+      insertMarkdown(`![${fileName}](${reference} "align=left") `);
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
     }
   }
 
-  async function handlePaste(event: ClipboardEvent<HTMLElement>) {
-    const image = Array.from(event.clipboardData.files).find((file) =>
-      file.type.startsWith("image/"),
+  async function handleImageFile(file: File) {
+    await handleImageDataUrl(file.name, await fileToDataUrl(file));
+  }
+
+  async function saveFileAssetForDocument(
+    document: MarkdownDocument,
+    fileName: string,
+    sourceFilePath: string,
+  ) {
+    if (!document.filePath || !window.desktop?.copyAssetFromFile) {
+      return sourceFilePath;
+    }
+
+    const savedAsset = await window.desktop.copyAssetFromFile({
+      documentFilePath: document.filePath,
+      fileName: createAssetFileName(fileName, "recording.webm"),
+      sourceFilePath,
+    });
+
+    return savedAsset.reference;
+  }
+
+  async function handleVideoDataUrl(
+    fileName: string,
+    dataUrl: string,
+    importTarget?: {
+      document: MarkdownDocument | null;
+      documentId: string | null;
+      importId: string;
+    },
+  ) {
+    const document = importTarget?.document ?? activeDocument;
+
+    if (!document || !isMarkdownDocument(document)) {
+      return false;
+    }
+
+    try {
+      if (importTarget) {
+        updateVideoImportPlaceholder(
+          importTarget.importId,
+          fileName,
+          "正在写入 .assets",
+          undefined,
+          importTarget.documentId,
+        );
+      }
+
+      const reference = await saveDataUrlAssetForDocument(
+        document,
+        fileName,
+        dataUrl,
+      );
+
+      if (importTarget) {
+        replaceMediaImportPlaceholder(
+          importTarget.importId,
+          createVideoMarkdown(fileName, reference),
+          { appendIfMissing: true, documentId: importTarget.documentId },
+        );
+      } else {
+        insertMarkdown(createVideoMarkdown(fileName, reference));
+      }
+
+      return true;
+    } catch (error) {
+      if (importTarget) {
+        updateVideoImportPlaceholder(
+          importTarget.importId,
+          fileName,
+          "导入失败",
+          undefined,
+          importTarget.documentId,
+        );
+      }
+
+      setBackupMessage(error instanceof Error ? error.message : "视频处理失败");
+      return false;
+    }
+  }
+
+  async function handleVideoFile(file: File) {
+    const fileName = file.name || createTimestampedVideoName(file.type);
+    const mimeType = file.type || getClipboardMediaMimeType(fileName) || "video/webm";
+    const importTarget = await insertVideoImportPlaceholder(fileName);
+
+    try {
+      const dataUrl = normalizeDataUrlMimeType(
+        await fileToDataUrl(file, (progress) => {
+          updateVideoImportPlaceholder(
+            importTarget.importId,
+            fileName,
+            "正在读取剪贴板",
+            progress,
+            importTarget.documentId,
+          );
+        }),
+        mimeType,
+      );
+
+      return handleVideoDataUrl(fileName, dataUrl, importTarget);
+    } catch (error) {
+      updateVideoImportPlaceholder(importTarget.importId, fileName, "导入失败", undefined, importTarget.documentId);
+      setBackupMessage(error instanceof Error ? error.message : "视频处理失败");
+      return false;
+    }
+  }
+
+  async function handleVideoFilePath(file: {
+    fileName: string;
+    filePath: string;
+    mimeType: string;
+  }) {
+    const document = activeDocument;
+
+    if (!document || !isMarkdownDocument(document)) {
+      return false;
+    }
+
+    const importTarget = await insertVideoImportPlaceholder(file.fileName);
+
+    try {
+      updateVideoImportPlaceholder(
+        importTarget.importId,
+        file.fileName,
+        "正在复制到 .assets",
+        undefined,
+        importTarget.documentId,
+      );
+      const reference = await saveFileAssetForDocument(
+        document,
+        file.fileName,
+        file.filePath,
+      );
+      replaceMediaImportPlaceholder(
+        importTarget.importId,
+        createVideoMarkdown(file.fileName, reference),
+        { appendIfMissing: true, documentId: importTarget.documentId },
+      );
+
+      return true;
+    } catch (error) {
+      updateVideoImportPlaceholder(
+        importTarget.importId,
+        file.fileName,
+        "导入失败",
+        undefined,
+        importTarget.documentId,
+      );
+      setBackupMessage(error instanceof Error ? error.message : "视频处理失败");
+      return false;
+    }
+  }
+
+  function getClipboardImageFile(event: ClipboardEvent<HTMLElement>) {
+    const imageFile = Array.from(event.clipboardData.files).find((file) =>
+      isClipboardMediaFile(file, "image"),
     );
 
-    if (!image) {
+    if (imageFile) {
+      return imageFile;
+    }
+
+    const file =
+      Array.from(event.clipboardData.items)
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .find((item) => item ? isClipboardMediaFile(item, "image") : false) ?? null;
+
+    if (!file) {
+      return null;
+    }
+
+    return new File([file], file.name || createTimestampedImageName(file.type), {
+      type: file.type || "image/png",
+    });
+  }
+
+  function getClipboardVideoFile(event: ClipboardEvent<HTMLElement>) {
+    const videoFile = Array.from(event.clipboardData.files).find((file) =>
+      isClipboardMediaFile(file, "video"),
+    );
+
+    if (videoFile) {
+      return videoFile;
+    }
+
+    const file =
+      Array.from(event.clipboardData.items)
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .find((item) => item ? isClipboardMediaFile(item, "video") : false) ?? null;
+
+    if (!file) {
+      return null;
+    }
+
+    return new File([file], file.name || createTimestampedVideoName(file.type), {
+      type: file.type || "video/webm",
+    });
+  }
+
+  function clipboardHtmlLooksLikeMedia(event: ClipboardEvent<HTMLElement>) {
+    const html = event.clipboardData.getData("text/html");
+
+    return /<(?:img|video)\b|data:(?:image|video)\/|file:\/\//i.test(html);
+  }
+
+  function clipboardPlainTextLooksLikeMediaPath(event: ClipboardEvent<HTMLElement>) {
+    const plainText = event.clipboardData.getData("text/plain").trim();
+    const normalizedText = plainText.replace(/^"|"$/g, "");
+
+    if (!normalizedText) {
+      return false;
+    }
+
+    if (/^file:\/\//i.test(normalizedText)) {
+      return Boolean(getClipboardMediaMimeType(normalizedText));
+    }
+
+    if (!/^(?:[a-zA-Z]:[\\/]|\/[a-zA-Z]:[\\/])/.test(normalizedText)) {
+      return false;
+    }
+
+    return Boolean(getClipboardMediaMimeType(normalizedText));
+  }
+
+  function shouldTryClipboardMediaFallback(event: ClipboardEvent<HTMLElement>) {
+    const plainText = event.clipboardData.getData("text/plain");
+
+    return (
+      plainText.trim().length === 0 ||
+      clipboardHtmlLooksLikeMedia(event) ||
+      clipboardPlainTextLooksLikeMediaPath(event) ||
+      Array.from(event.clipboardData.files).some(
+        (file) =>
+          isClipboardMediaFile(file, "image") ||
+          isClipboardMediaFile(file, "video") ||
+          Boolean(getClipboardMediaMimeType(file.name)),
+      )
+    );
+  }
+
+  async function readBrowserClipboardMedia(kind: "image" | "video") {
+    if (!navigator.clipboard?.read) {
+      return null;
+    }
+
+    try {
+      const items = await navigator.clipboard.read();
+
+      for (const item of items) {
+        const mediaType = item.types.find((type) => type.startsWith(`${kind}/`));
+
+        if (!mediaType) {
+          continue;
+        }
+
+        const blob = await item.getType(mediaType);
+
+        return new File(
+          [blob],
+          kind === "image"
+            ? createTimestampedImageName(blob.type || mediaType)
+            : createTimestampedVideoName(blob.type || mediaType),
+          { type: blob.type || mediaType },
+        );
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  async function pasteClipboardMediaFallback() {
+    const nativeMediaFileRefs = await window.desktop?.listClipboardMediaFiles?.();
+    const nativeVideoFileRef = nativeMediaFileRefs?.find((file) =>
+      file.mimeType.startsWith("video/"),
+    );
+
+    if (nativeVideoFileRef) {
+      return handleVideoFilePath(nativeVideoFileRef);
+    }
+
+    const browserClipboardVideo = await readBrowserClipboardMedia("video");
+
+    if (browserClipboardVideo) {
+      await handleVideoFile(browserClipboardVideo);
+      return true;
+    }
+
+    const browserClipboardImage = await readBrowserClipboardMedia("image");
+
+    if (browserClipboardImage) {
+      await handleImageFile(browserClipboardImage);
+      return true;
+    }
+
+    const nativeMediaFiles = await window.desktop?.readClipboardMediaFiles?.();
+    const nativeVideo = nativeMediaFiles?.find((file) =>
+      file.mimeType.startsWith("video/"),
+    );
+
+    if (nativeVideo) {
+      await handleVideoDataUrl(nativeVideo.fileName, nativeVideo.dataUrl);
+      return true;
+    }
+
+    const nativeImageFile = nativeMediaFiles?.find((file) =>
+      file.mimeType.startsWith("image/"),
+    );
+
+    if (nativeImageFile) {
+      await handleImageDataUrl(nativeImageFile.fileName, nativeImageFile.dataUrl);
+      return true;
+    }
+
+    const nativeClipboardImage = await window.desktop?.readClipboardImage?.();
+
+    if (!nativeClipboardImage) {
+      return false;
+    }
+
+    await handleImageDataUrl(
+      nativeClipboardImage.fileName,
+      nativeClipboardImage.dataUrl,
+    );
+    return true;
+  }
+
+  async function pasteFromClipboardShortcut() {
+    if (activeDocument && isMarkdownDocument(activeDocument)) {
+      if (await pasteClipboardMediaFallback()) {
+        return;
+      }
+    }
+
+    await runEditCommand("paste");
+  }
+
+  async function handlePaste(event: ClipboardEvent<HTMLElement>) {
+    if (event.defaultPrevented || !activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    const image = getClipboardImageFile(event);
+    const video = getClipboardVideoFile(event);
+
+    if (image) {
+      event.preventDefault();
+      await handleImageFile(image);
+      return;
+    }
+
+    if (video) {
+      event.preventDefault();
+      await handleVideoFile(video);
+      return;
+    }
+
+    if (!shouldTryClipboardMediaFallback(event)) {
       return;
     }
 
     event.preventDefault();
-    await handleImageFile(image);
+    await pasteClipboardMediaFallback();
   }
 
   async function saveNow() {
@@ -3160,7 +4458,12 @@ export function App() {
     }
 
     if (!isMarkdownDocument(activeDocument)) {
-      window.alert("This file type is preview-only.");
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "当前文件类型只支持预览，不能另存为 Markdown。",
+        title: "这是只读预览文件",
+        tone: "info",
+      });
       return;
     }
 
@@ -3200,7 +4503,12 @@ export function App() {
       await loadDirectoryTree(getDirectoryPath(savedFile.filePath));
     } catch {
       setSaveState("failed");
-      window.alert("另存为失败，请确认目标路径可写。");
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "请确认目标路径可写，或换一个保存位置。",
+        title: "另存为失败",
+        tone: "danger",
+      });
     }
   }
 
@@ -3210,12 +4518,22 @@ export function App() {
     }
 
     if (!isMarkdownDocument(activeDocument)) {
-      window.alert("This file type is preview-only and cannot be exported from Markdown mode.");
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "当前文件类型只支持预览，不能从 Markdown 模式导出。",
+        title: "这是只读预览文件",
+        tone: "info",
+      });
       return;
     }
 
     if (!window.desktop?.exportHtmlFile || !window.desktop.exportPdfFile) {
-      window.alert("当前运行环境不支持导出。");
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "当前运行环境没有暴露导出能力，请在 Electron 桌面端中使用。",
+        title: "当前环境不支持导出",
+        tone: "warning",
+      });
       return;
     }
 
@@ -3241,7 +4559,12 @@ export function App() {
         await window.desktop.showInFolder?.(exportedFilePath);
       }
     } catch {
-      window.alert(format === "pdf" ? "导出 PDF 失败。" : "导出 HTML 失败。");
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "导出过程中发生错误，请稍后重试或检查文件路径权限。",
+        title: format === "pdf" ? "导出 PDF 失败" : "导出 HTML 失败",
+        tone: "danger",
+      });
     }
   }
 
@@ -3619,8 +4942,17 @@ export function App() {
             <MenuItem label="显示状态栏" checked disabled />
             <MenuItem label="字数统计窗口" disabled />
             <MenuSeparator />
-            <MenuItem label="切换全屏" shortcut="F11" disabled />
-            <MenuItem label="保持窗口在最前端" disabled />
+            <MenuItem
+              label="切换全屏"
+              shortcut="F11"
+              checked={isFullScreen}
+              onSelect={() => runTopMenuAction(() => void toggleFullScreen())}
+            />
+            <MenuItem
+              label="保持窗口在最前端"
+              checked={isAlwaysOnTop}
+              onSelect={() => runTopMenuAction(() => void toggleAlwaysOnTop())}
+            />
             <MenuSeparator />
             <MenuItem label="实际大小" shortcut="Ctrl+Shift+9" checked disabled />
             <MenuItem label="放大" shortcut="Ctrl+Shift+=" disabled />
@@ -3646,10 +4978,10 @@ export function App() {
         return (
           <>
             <MenuItem
-              label="关于 Typora Like"
+              label="关于 noteDock"
               onSelect={() =>
                 runTopMenuAction(() => {
-                  setBackupMessage("Markdown 编辑器 · Electron + Milkdown");
+                  setBackupMessage("noteDock · Electron + Milkdown");
                 })
               }
             />
@@ -3807,6 +5139,8 @@ export function App() {
                         expandedPaths={expandedDirectoryPaths}
                         items={directoryTree.children ?? []}
                         level={0}
+                        onDirectoryContextMenu={openDirectoryContextMenu}
+                        onFileContextMenu={openFileContextMenu}
                         onOpenFile={(filePath) => {
                           void openFileFromTree(filePath);
                         }}
@@ -3819,6 +5153,7 @@ export function App() {
                       documents={workspace.documents}
                       items={directoryTree.children ?? []}
                       workspacePath={workspace.workspacePath}
+                      onFileContextMenu={openFileContextMenu}
                       onOpenFile={(filePath) => {
                         void openFileFromTree(filePath);
                       }}
@@ -4034,9 +5369,9 @@ export function App() {
                   <img src={appLogoUrl} alt="" draggable={false} />
                 </div>
                 <h1>
-                  欢迎使用 <span>Markdown</span> 编辑器
+                  欢迎使用 <span>noteDock</span>
                 </h1>
-                <p>专注于写作与思考，让 Markdown 创作更高效优雅。</p>
+                <p>把 Markdown 写作、文档阅读和灵感整理收进同一个工作台。</p>
                 <WelcomeIllustration />
               </div>
 
@@ -4074,6 +5409,11 @@ export function App() {
                       key={document.id}
                       type="button"
                       onClick={() => void openRecentDocument(document)}
+                      onContextMenu={(event) => {
+                        if (document.filePath) {
+                          openFileContextMenu(event, document.filePath);
+                        }
+                      }}
                     >
                       <FileText size={16} />
                       <strong>{getDocumentDisplayName(document)}</strong>
@@ -4091,6 +5431,13 @@ export function App() {
             </section>
           ) : (
             <section className="editor-workspace">
+              <Suspense
+                fallback={
+                  <section className="standalone-document-viewer">
+                    <div className="drawing-loading">正在加载阅读器...</div>
+                  </section>
+                }
+              >
               {isHtmlDocument(activeDocument) ? (
                 <HtmlDocumentViewer
                   document={activeDocument}
@@ -4114,8 +5461,9 @@ export function App() {
                 <section className="standalone-document-viewer standalone-sheet-viewer">
                   <UniverSheetPreview
                     code={activeDocument.content}
+                    filePath={activeDocument.filePath}
                     onEdit={(code) =>
-                      openUniverSheetEditor({ kind: "document" }, code)
+                      void openUniverSheetEditor({ kind: "document" }, code)
                     }
                   />
                 </section>
@@ -4147,10 +5495,11 @@ export function App() {
                       value={activeDocument.content}
                       onChange={updateMarkdown}
                       onActiveLineChange={setActiveEditorLineIndex}
-                      onEditDrawing={openDrawingEditor}
+                      onEditDrawing={(drawingId) => void openDrawingEditor(drawingId)}
                       onEditUniverSheet={(code) =>
-                        openUniverSheetEditor({ code, kind: "markdown" }, code)
+                        void openUniverSheetEditor({ code, kind: "markdown" }, code)
                       }
+                      onContextMenu={openEditorContextMenu}
                       onPaste={handlePaste}
                     />
                   )}
@@ -4162,6 +5511,7 @@ export function App() {
                       spellCheck={false}
                       value={activeDocument.content}
                       onChange={(event) => updateMarkdown(event.target.value)}
+                      onContextMenu={openEditorContextMenu}
                       onPaste={handlePaste}
                     />
                   )}
@@ -4177,7 +5527,7 @@ export function App() {
                           openReactFlowEditor({ code, kind: "markdown" }, code)
                         }
                         onEditUniverSheet={(code) =>
-                          openUniverSheetEditor({ code, kind: "markdown" }, code)
+                          void openUniverSheetEditor({ code, kind: "markdown" }, code)
                         }
                       >
                         {activeDocument.content}
@@ -4186,6 +5536,7 @@ export function App() {
                   )}
                 </div>
               )}
+              </Suspense>
             </section>
           )}
           <footer className="workspace-statusbar">
@@ -4198,6 +5549,15 @@ export function App() {
               {isSidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
             </button>
             <span className="workspace-status-spacer" />
+            {missingAssetReferences.length > 0 && (
+              <span
+                className="workspace-asset-warning"
+                title={missingAssetReferences.join("\n")}
+              >
+                <AlertTriangle size={14} />
+                {missingAssetReferences.length} 个附件失效
+              </span>
+            )}
             <span className="workspace-word-count">
               {isHtmlDocument(activeDocument)
                 ? "HTML preview"
@@ -4230,6 +5590,48 @@ export function App() {
           }}
         />
 
+        {contextMenu ? (
+          <div
+            className="app-context-menu"
+            role="menu"
+            style={{
+              left: contextMenu.x,
+              top: contextMenu.y,
+              width: contextMenu.width,
+            }}
+            onContextMenu={(event) => event.preventDefault()}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            {contextMenu.items.map((item, index) =>
+              item.type === "separator" ? (
+                <div
+                  className="app-context-menu-separator"
+                  key={`separator-${index}`}
+                  role="separator"
+                />
+              ) : (
+                <button
+                  className={item.danger ? "app-context-menu-danger" : undefined}
+                  disabled={item.disabled}
+                  key={`${item.label}-${index}`}
+                  role="menuitem"
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => runContextMenuItem(item)}
+                >
+                  <span className="app-context-menu-icon" aria-hidden="true">
+                    {item.icon}
+                  </span>
+                  <span className="app-context-menu-label">{item.label}</span>
+                  {item.shortcut ? (
+                    <kbd className="app-context-menu-shortcut">{item.shortcut}</kbd>
+                  ) : null}
+                </button>
+              ),
+            )}
+          </div>
+        ) : null}
+
         <Dialog.Root open={isDrawingOpen} onOpenChange={setDrawingDialogOpen}>
           <Dialog.Portal>
             <Dialog.Overlay className="dialog-overlay" />
@@ -4250,31 +5652,64 @@ export function App() {
                     assetIndex={Object.keys(activeDocument.drawings).length + 1}
                     initialAsset={editingDrawingAsset ?? undefined}
                     onClose={() => setDrawingDialogOpen(false)}
-                    onInsert={(asset: DrawingAsset) => {
-                      if (isDrawingDocument(activeDocument)) {
+                    onInsert={async (asset: DrawingAsset) => {
+                      const document = activeDocument;
+
+                      if (!document) {
+                        return;
+                      }
+
+                      if (isDrawingDocument(document)) {
                         patchActiveDocument({
                           content: asset.sceneJSON,
-                          title: asset.name || activeDocument.title,
+                          title: asset.name || document.title,
                         });
                         return;
                       }
 
+                      if (!isMarkdownDocument(document)) {
+                        return;
+                      }
+
                       const shouldUpdatePreview = Boolean(editingDrawingAsset);
+                      const existingImage = shouldUpdatePreview
+                        ? findExcalidrawMarkdownImage(document.content, asset.id)
+                        : null;
+                      const sceneReference = await saveTextAssetForDocument(
+                        document,
+                        `${asset.name || "excalidraw"}.excalidraw.json`,
+                        asset.sceneJSON,
+                        existingImage?.sceneReference ?? undefined,
+                      );
+                      const previewReference = await saveDataUrlAssetForDocument(
+                        document,
+                        `${asset.name || "excalidraw"}.png`,
+                        asset.dataUrl,
+                      );
+                      const storedAsset: DrawingAsset = {
+                        ...asset,
+                        dataUrl: previewReference,
+                        sceneReference: sceneReference ?? undefined,
+                      };
                       const nextContent = shouldUpdatePreview
-                        ? replaceExcalidrawImagePreview(activeDocument.content, asset)
-                        : activeDocument.content;
+                        ? replaceExcalidrawImagePreview(document.content, storedAsset)
+                        : document.content;
 
                       patchActiveDocument({
                         content: nextContent,
                         drawings: {
-                          ...activeDocument.drawings,
-                          [asset.id]: asset,
+                          ...document.drawings,
+                          [storedAsset.id]: storedAsset,
                         },
-                        title: renameFromMarkdown(nextContent, activeDocument.title),
+                        title: renameFromMarkdown(nextContent, document.title),
                       });
                       if (!shouldUpdatePreview) {
+                        const title = createExcalidrawImageTitle(
+                          storedAsset.id,
+                          storedAsset.sceneReference ?? null,
+                        );
                         insertMarkdown(
-                          `![${asset.name}](${asset.dataUrl} "excalidraw:${asset.id} align=left") `,
+                          `![${storedAsset.name}](${storedAsset.dataUrl} "${title}") `,
                         );
                       }
                     }}
@@ -4505,11 +5940,13 @@ export function App() {
             <Dialog.Content className="drawing-dialog react-flow-dialog">
               <Dialog.Title className="sr-only">React Flow 图</Dialog.Title>
               {reactFlowEditorState && (
-                <ReactFlowModal
-                  initialData={reactFlowEditorState.initialData}
-                  onClose={() => setReactFlowEditorState(null)}
-                  onSave={saveReactFlowDiagram}
-                />
+                <Suspense fallback={<div className="drawing-loading">正在加载流程图编辑器...</div>}>
+                  <ReactFlowModal
+                    initialData={reactFlowEditorState.initialData}
+                    onClose={() => setReactFlowEditorState(null)}
+                    onSave={saveReactFlowDiagram}
+                  />
+                </Suspense>
               )}
             </Dialog.Content>
           </Dialog.Portal>
@@ -4528,11 +5965,13 @@ export function App() {
             <Dialog.Content className="drawing-dialog mindmap-dialog">
               <Dialog.Title className="sr-only">思维导图</Dialog.Title>
               {mindMapEditorState && (
-                <MindMapModal
-                  initialData={mindMapEditorState.initialData}
-                  onClose={() => setMindMapEditorState(null)}
-                  onSave={saveMindMapDiagram}
-                />
+                <Suspense fallback={<div className="drawing-loading">正在加载思维导图编辑器...</div>}>
+                  <MindMapModal
+                    initialData={mindMapEditorState.initialData}
+                    onClose={() => setMindMapEditorState(null)}
+                    onSave={saveMindMapDiagram}
+                  />
+                </Suspense>
               )}
             </Dialog.Content>
           </Dialog.Portal>

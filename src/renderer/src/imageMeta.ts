@@ -10,6 +10,7 @@ export type ImageMeta = {
 };
 
 const excalidrawTitlePattern = /(?:^|\s)excalidraw:([^\s"]+)(?=\s|$)/i;
+const excalidrawScenePattern = /(?:^|\s)scene=([^\s"]+)(?=\s|$)/i;
 
 export function clampImageWidth(width: number) {
   return Math.max(minImageWidth, Math.min(maxImageWidth, Math.round(width)));
@@ -43,6 +44,25 @@ export function serializeImageMeta(meta: ImageMeta) {
 
 export function getExcalidrawDrawingId(title?: string) {
   return parseImageMeta(title).titleText.match(excalidrawTitlePattern)?.[1] ?? null;
+}
+
+export function getExcalidrawSceneReference(title?: string) {
+  return parseImageMeta(title).titleText.match(excalidrawScenePattern)?.[1] ?? null;
+}
+
+export function patchExcalidrawSceneReference(
+  title: string | undefined,
+  sceneReference: string,
+) {
+  const currentMeta = parseImageMeta(title);
+  const titleText = currentMeta.titleText.match(excalidrawScenePattern)
+    ? currentMeta.titleText.replace(excalidrawScenePattern, ` scene=${sceneReference}`)
+    : `${currentMeta.titleText} scene=${sceneReference}`;
+
+  return serializeImageMeta({
+    ...currentMeta,
+    titleText: titleText.replace(/\s+/g, " ").trim(),
+  });
 }
 
 export function patchImageMetaTitle(

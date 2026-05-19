@@ -1,6 +1,5 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { MarkdownRenderer } from "./components/MarkdownRenderer";
 import type { MarkdownDocument } from "./types";
 
 type MarkdownExportOptions = {
@@ -466,6 +465,7 @@ async function waitForMermaid(container: HTMLElement) {
 }
 
 async function renderMarkdownToHtml(markdown: string, filePath?: string) {
+  const { MarkdownRenderer } = await import("./components/MarkdownRenderer");
   const container = document.createElement("div");
 
   container.style.position = "fixed";

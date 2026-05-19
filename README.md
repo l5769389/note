@@ -1,4 +1,4 @@
-# Typora Like Editor
+# noteDock
 
 一个本地优先的 Markdown 编辑器原型，提供 Markdown 编辑/预览、文档本地存储、Excalidraw 流程图插入、图片自动插入、PDF/Word 只读预览和 React Flow 图表嵌入。
 
