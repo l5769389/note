@@ -9,7 +9,25 @@ describe("createHtmlPreviewDocument", () => {
     );
 
     expect(preview).toContain('<base href="typora-local://file/D%3A/notes/site/">');
+    expect(preview).toContain("data-notedock-html-anchor-runtime");
+    expect(preview).toContain("data-notedock-html-outline-runtime");
+    expect(preview).toContain("data-notedock-html-annotation-runtime");
+    expect(preview).toContain("notedock-html-annotation-menu");
+    expect(preview).toContain("notedock-app-shortcut");
+    expect(preview).toContain("Ctrl+Alt+H");
     expect(preview).not.toContain("file:///D:/notes/site/");
+  });
+
+  it("injects an anchor runtime so hash links do not navigate away from srcDoc", () => {
+    const preview = createHtmlPreviewDocument(
+      '<html><head></head><body><nav><a href="#overview">Overview</a></nav><section id="overview"></section></body></html>',
+      "D:/notes/site/index.html",
+    );
+
+    expect(preview).toContain("data-notedock-html-anchor-runtime");
+    expect(preview).toContain("notedock-html-outline:scroll");
+    expect(preview).toContain('rawHref.startsWith("#")');
+    expect(preview).toContain("scrollIntoView");
   });
 
   it("does not duplicate an existing base tag", () => {

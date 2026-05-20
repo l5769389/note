@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getAppShortcutAction,
   getEditorShortcutAction,
   isAppShortcutModifier,
   type EditorShortcutEvent,
@@ -102,9 +103,7 @@ describe("getEditorShortcutAction", () => {
     });
     expect(
       getEditorShortcutAction(shortcut({ ctrlKey: true, key: "F", shiftKey: true })),
-    ).toEqual({
-      type: "find",
-    });
+    ).toBeNull();
   });
 
   it("ignores unrelated shortcuts", () => {
@@ -112,5 +111,108 @@ describe("getEditorShortcutAction", () => {
     expect(
       getEditorShortcutAction(shortcut({ ctrlKey: true, metaKey: true, key: "b" })),
     ).toBeNull();
+  });
+});
+
+describe("getAppShortcutAction", () => {
+  it.each([
+    ["Ctrl+N", { ctrlKey: true, key: "n" }, { command: "newMarkdownDocument", type: "file" }],
+    ["Ctrl+Shift+N", { ctrlKey: true, key: "N", shiftKey: true }, { command: "newWindow", type: "file" }],
+    ["Ctrl+O", { ctrlKey: true, key: "o" }, { command: "openDocument", type: "file" }],
+    ["Ctrl+S", { ctrlKey: true, key: "s" }, { command: "save", type: "file" }],
+    ["Ctrl+Shift+S", { ctrlKey: true, key: "S", shiftKey: true }, { command: "saveAs", type: "file" }],
+    ["Ctrl+,", { code: "Comma", ctrlKey: true, key: "," }, { command: "openSettings", type: "file" }],
+  ] as const)("maps file shortcut %s", (_, event, action) => {
+    expect(getAppShortcutAction(shortcut(event))).toEqual(action);
+  });
+
+  it.each([
+    ["F11", { key: "F11" }, { command: "toggleFullScreen", type: "view" }, {}],
+    ["Escape in fullscreen", { key: "Escape" }, { command: "exitFullScreen", type: "view" }, { isFullScreen: true }],
+    ["Ctrl+Shift+L", { ctrlKey: true, key: "L", shiftKey: true }, { command: "toggleSidebar", type: "view" }, {}],
+    ["Ctrl+Shift+1", { code: "Digit1", ctrlKey: true, key: "!", shiftKey: true }, { command: "showOutline", type: "view" }, {}],
+    ["Ctrl+Shift+2", { code: "Digit2", ctrlKey: true, key: "@", shiftKey: true }, { command: "showDocuments", type: "view" }, {}],
+    ["Ctrl+Shift+3", { code: "Digit3", ctrlKey: true, key: "#", shiftKey: true }, { command: "showFiles", type: "view" }, {}],
+    ["Ctrl+Shift+F", { ctrlKey: true, key: "F", shiftKey: true }, { command: "workspaceSearch", type: "view" }, {}],
+  ] as const)("maps view shortcut %s", (_, event, action, context) => {
+    expect(getAppShortcutAction(shortcut(event), context)).toEqual(action);
+  });
+
+  it.each([
+    ["Ctrl+F", { ctrlKey: true, key: "f" }, { type: "find" }],
+    ["Ctrl+H", { ctrlKey: true, key: "h" }, { replace: true, type: "find" }],
+  ] as const)("maps document find shortcut %s", (_, event, action) => {
+    expect(getAppShortcutAction(shortcut(event))).toEqual(action);
+  });
+
+  it.each([
+    ["Ctrl+Z", { ctrlKey: true, key: "z" }, { action: { command: "undo", type: "edit" }, type: "editor" }],
+    ["Ctrl+Y", { ctrlKey: true, key: "y" }, { action: { command: "redo", type: "edit" }, type: "editor" }],
+    ["Ctrl+X", { ctrlKey: true, key: "x" }, { action: { command: "cut", type: "edit" }, type: "editor" }],
+    ["Ctrl+C", { ctrlKey: true, key: "c" }, { action: { command: "copy", type: "edit" }, type: "editor" }],
+    ["Ctrl+B", { ctrlKey: true, key: "b" }, { action: { command: { type: "bold" }, type: "format" }, type: "editor" }],
+    ["Ctrl+I", { ctrlKey: true, key: "i" }, { action: { command: { type: "italic" }, type: "format" }, type: "editor" }],
+    ["Ctrl+U", { ctrlKey: true, key: "u" }, { action: { command: { type: "underline" }, type: "format" }, type: "editor" }],
+    ["Ctrl+K", { ctrlKey: true, key: "k" }, { action: { type: "createLink" }, type: "editor" }],
+    ["Ctrl+\\", { ctrlKey: true, key: "\\" }, { action: { command: { type: "clearStyle" }, type: "format" }, type: "editor" }],
+    ["Ctrl+Shift+`", { code: "Backquote", ctrlKey: true, key: "`", shiftKey: true }, { action: { command: { type: "inlineCode" }, type: "format" }, type: "editor" }],
+    ["Alt+Shift+5", { altKey: true, code: "Digit5", key: "%", shiftKey: true }, { action: { command: { type: "strikethrough" }, type: "format" }, type: "editor" }],
+    ["Alt+ArrowUp", { altKey: true, key: "ArrowUp" }, { action: { command: "moveLineUp", type: "edit" }, type: "editor" }],
+    ["Alt+ArrowDown", { altKey: true, key: "ArrowDown" }, { action: { command: "moveLineDown", type: "edit" }, type: "editor" }],
+    ["Tab", { key: "Tab" }, { action: { command: { type: "indentList" }, type: "paragraph" }, type: "editor" }],
+    ["Shift+Tab", { key: "Tab", shiftKey: true }, { action: { command: { type: "outdentList" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+1", { ctrlKey: true, key: "1" }, { action: { command: { level: 1, type: "heading" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+6", { ctrlKey: true, key: "6" }, { action: { command: { level: 6, type: "heading" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+0", { ctrlKey: true, key: "0" }, { action: { command: { type: "paragraph" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+=", { ctrlKey: true, key: "=" }, { action: { command: { type: "promoteHeading" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+-", { ctrlKey: true, key: "-" }, { action: { command: { type: "demoteHeading" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+Shift+M", { ctrlKey: true, key: "M", shiftKey: true }, { action: { command: { type: "mathBlock" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+Shift+K", { ctrlKey: true, key: "K", shiftKey: true }, { action: { command: { type: "codeBlock" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+Shift+Q", { ctrlKey: true, key: "Q", shiftKey: true }, { action: { command: { type: "blockquote" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+Shift+[", { ctrlKey: true, key: "[", shiftKey: true }, { action: { command: { type: "orderedList" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+Shift+]", { ctrlKey: true, key: "]", shiftKey: true }, { action: { command: { type: "bulletList" }, type: "paragraph" }, type: "editor" }],
+    ["Ctrl+Shift+X", { ctrlKey: true, key: "X", shiftKey: true }, { action: { command: { type: "taskList" }, type: "paragraph" }, type: "editor" }],
+  ] as const)("maps editor shortcut %s only in editor context", (_, event, action) => {
+    expect(
+      getAppShortcutAction(shortcut(event), { isEditorTarget: true }),
+    ).toEqual(action);
+  });
+
+  it.each([
+    ["Ctrl+B", { ctrlKey: true, key: "b" }],
+    ["Ctrl+1", { ctrlKey: true, key: "1" }],
+    ["Alt+ArrowUp", { altKey: true, key: "ArrowUp" }],
+    ["Tab", { key: "Tab" }],
+  ] as const)("ignores editor shortcut %s outside editor context", (_, event) => {
+    expect(getAppShortcutAction(shortcut(event))).toBeNull();
+  });
+
+  it.each([
+    ["composing Ctrl+S", { ctrlKey: true, isComposing: true, key: "s" }],
+    ["Ctrl+Meta+S", { ctrlKey: true, key: "s", metaKey: true }],
+    ["Ctrl+Alt+S", { altKey: true, ctrlKey: true, key: "s" }],
+    ["Ctrl+Alt+H", { altKey: true, ctrlKey: true, key: "h" }],
+    ["Ctrl+V", { ctrlKey: true, key: "v" }],
+    ["Escape outside fullscreen", { key: "Escape" }],
+    ["Ctrl+Shift+4", { code: "Digit4", ctrlKey: true, key: "$", shiftKey: true }],
+    ["Ctrl+Shift+9", { code: "Digit9", ctrlKey: true, key: "(", shiftKey: true }],
+    ["Ctrl+Shift+=", { ctrlKey: true, key: "+", shiftKey: true }],
+    ["Ctrl+Shift+-", { ctrlKey: true, key: "_", shiftKey: true }],
+  ] as const)("ignores reserved or invalid shortcut %s", (_, event) => {
+    expect(
+      getAppShortcutAction(shortcut(event), { isEditorTarget: true }),
+    ).toBeNull();
+  });
+
+  it("prioritizes workspace search over editor find for Ctrl+Shift+F", () => {
+    expect(
+      getAppShortcutAction(
+        shortcut({ ctrlKey: true, key: "F", shiftKey: true }),
+        { isEditorTarget: true },
+      ),
+    ).toEqual({
+      command: "workspaceSearch",
+      type: "view",
+    });
   });
 });

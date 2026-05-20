@@ -41,6 +41,7 @@ import {
   useState,
   type ClipboardEvent,
   type CSSProperties,
+  type DragEvent as ReactDragEvent,
   type FocusEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -72,11 +73,13 @@ import {
   noteDockStorageKeys,
   removeLegacyStorageItem,
 } from "./storageKeys";
+import { getMediaMimeTypeForFileName } from "../../shared/mediaTypes";
 import {
   createAssetFileName,
   extractLocalAssetReferences,
 } from "./assetManager";
 import { UniverSheetPreview } from "./components/UniverSheetPreview";
+import type { HtmlDocumentViewerHandle } from "./components/HtmlDocumentViewer";
 import {
   TyporaEditor,
   type TyporaEditorHandle,
@@ -88,8 +91,8 @@ import type {
   TyporaParagraphCommand,
 } from "./editorCommands";
 import {
-  getEditorShortcutAction,
-  isAppShortcutModifier,
+  getAppShortcutAction,
+  type AppShortcutAction,
 } from "./editorShortcuts";
 import { createMarkdownExportHtml } from "./exportDocument";
 import { createParagraphCommandMarkdown } from "./markdownCommands";
@@ -160,6 +163,7 @@ import {
   countMarkdownWords,
   getMarkdownOutline,
 } from "./markdownStructure";
+import { getHtmlOutline } from "./htmlStructure";
 import { fileToDataUrl } from "./services/imageUpload";
 import {
   createDocument,
@@ -252,6 +256,7 @@ const editorModeOptions: Array<{
 
 type MenubarMenu = "file" | "edit" | "paragraph" | "format" | "view" | "theme" | "help";
 type TopMenu = MenubarMenu | null;
+type ImmersiveRevealEdge = "top";
 type SidebarTab = "files" | "current" | "search";
 type FileExplorerView = "tree" | "list";
 
@@ -263,6 +268,7 @@ const sidebarRecentDirectoryLimit = 5;
 const storedRecentDirectoryLimit = 12;
 const recentDirectoryStorageKey = noteDockStorageKeys.recentDirectories;
 const internalFileWriteGraceMs = 8000;
+const immersiveRevealHitSlop = 44;
 
 type FindPanelMode = "find" | "replace";
 
@@ -396,21 +402,6 @@ const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
 
 const now = () => new Date().toISOString();
 
-const clipboardMediaMimeTypes = new Map<string, string>([
-  [".gif", "image/gif"],
-  [".jpeg", "image/jpeg"],
-  [".jpg", "image/jpeg"],
-  [".m4v", "video/mp4"],
-  [".mov", "video/quicktime"],
-  [".mp4", "video/mp4"],
-  [".mpeg", "video/mpeg"],
-  [".mpg", "video/mpeg"],
-  [".png", "image/png"],
-  [".svg", "image/svg+xml"],
-  [".webm", "video/webm"],
-  [".webp", "image/webp"],
-]);
-
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -424,14 +415,8 @@ function readFileInput(fileInput: HTMLInputElement | null) {
   fileInput?.click();
 }
 
-function getFileExtension(name: string) {
-  const match = name.match(/\.[^.\\/]+$/);
-
-  return match?.[0]?.toLowerCase() ?? "";
-}
-
 function getClipboardMediaMimeType(name: string) {
-  return clipboardMediaMimeTypes.get(getFileExtension(name)) ?? "";
+  return getMediaMimeTypeForFileName(name) ?? "";
 }
 
 function isClipboardMediaFile(file: File, kind: "image" | "video") {
@@ -1334,6 +1319,8 @@ export function App() {
   });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
+  const [isEditorDraggingMedia, setIsEditorDraggingMedia] = useState(false);
+  const [isImmersiveSidebarOpen, setIsImmersiveSidebarOpen] = useState(false);
   const [newFileName, setNewFileName] = useState("Untitled");
   const [directoryTree, setDirectoryTree] = useState<DirectoryTreeItem | null>(
     null,
@@ -1341,6 +1328,12 @@ export function App() {
   const [recentFileAvailability, setRecentFileAvailability] = useState<
     Record<string, boolean>
   >({});
+  const isImmersiveMode = isFullScreen;
+  const [immersiveRevealEdge, setImmersiveRevealEdge] =
+    useState<ImmersiveRevealEdge | null>(null);
+  const isSidebarHidden = isImmersiveMode
+    ? !isImmersiveSidebarOpen
+    : isSidebarCollapsed;
   const [missingAssetReferences, setMissingAssetReferences] = useState<string[]>([]);
   const [recentDirectoryPaths, setRecentDirectoryPaths] = useState(
     loadRecentDirectoryPaths,
@@ -1349,8 +1342,12 @@ export function App() {
     () => new Set(),
   );
   const [activeEditorLineIndex, setActiveEditorLineIndex] = useState(0);
+  const [activeHtmlOutlineId, setActiveHtmlOutlineId] = useState<string | null>(
+    null,
+  );
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const typoraEditorRef = useRef<TyporaEditorHandle | null>(null);
+  const htmlDocumentViewerRef = useRef<HtmlDocumentViewerHandle | null>(null);
   const mediaImportIdRef = useRef(0);
   const workspaceSearchInputRef = useRef<HTMLInputElement | null>(null);
   const pendingWorkspaceSearchRevealRef = useRef<WorkspaceSearchReveal | null>(null);
@@ -1370,6 +1367,18 @@ export function App() {
   const internalFileWritesRef = useRef(
     new Map<string, { content: string; expiresAt: number }>(),
   );
+
+  useEffect(() => {
+    if (!isImmersiveMode && immersiveRevealEdge) {
+      setImmersiveRevealEdge(null);
+    }
+  }, [immersiveRevealEdge, isImmersiveMode]);
+
+  useEffect(() => {
+    if (!isImmersiveMode && isImmersiveSidebarOpen) {
+      setIsImmersiveSidebarOpen(false);
+    }
+  }, [isImmersiveMode, isImmersiveSidebarOpen]);
 
   useEffect(() => {
     if (!contextMenu) {
@@ -1394,6 +1403,10 @@ export function App() {
       workspace.documents.find((item) => item.id === workspace.activeDocumentId) ?? null,
     [workspace.activeDocumentId, workspace.documents],
   );
+  useEffect(() => {
+    setActiveHtmlOutlineId(null);
+  }, [activeDocument?.content, activeDocument?.id]);
+
   const editingDrawingAsset = useMemo(
     () =>
       activeDocument && isDrawingDocument(activeDocument)
@@ -1458,13 +1471,23 @@ export function App() {
         : recentDocuments.slice(0, homeRecentDocumentLimit),
     [isRecentExpanded, recentDocuments],
   );
-  const activeDocumentOutline = useMemo(
+  const activeMarkdownOutline = useMemo(
     () =>
       isMarkdownDocument(activeDocument)
         ? getMarkdownOutline(activeDocument!.content)
         : [],
     [activeDocument],
   );
+  const activeHtmlOutline = useMemo(
+    () =>
+      isHtmlDocument(activeDocument)
+        ? getHtmlOutline(activeDocument!.content)
+        : [],
+    [activeDocument],
+  );
+  const activeDocumentOutline = isHtmlDocument(activeDocument)
+    ? activeHtmlOutline
+    : activeMarkdownOutline;
   const activeDocumentWordCount = useMemo(
     () =>
       isMarkdownDocument(activeDocument)
@@ -1700,6 +1723,9 @@ export function App() {
 
     if (typeof nextFullScreenState === "boolean") {
       setIsFullScreen(nextFullScreenState);
+      setTopMenu(null);
+      setIsActionsOpen(false);
+      setContextMenu(null);
     }
   }
 
@@ -1870,187 +1896,32 @@ export function App() {
       );
     }
 
-    function getShortcutDigit(event: KeyboardEvent) {
-      if (/^Digit[0-9]$/.test(event.code)) {
-        return event.code.slice("Digit".length);
-      }
-
-      return /^[0-9]$/.test(event.key) ? event.key : "";
-    }
-
     function handleGlobalEditShortcuts(event: KeyboardEvent) {
-      if (
-        event.isComposing ||
-        isCreateFileOpen ||
-        isSettingsOpen ||
-        shouldIgnoreAppShortcutTarget(event.target)
-      ) {
-        return;
-      }
-
-      const usesAppModifier = isAppShortcutModifier(event);
-      const key = event.key.toLowerCase();
-
-      if (
-        event.key === "F11" &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.altKey &&
-        !event.shiftKey
-      ) {
-        event.preventDefault();
-        void toggleFullScreen();
-        setTopMenu(null);
-        return;
-      }
-
-      if (usesAppModifier && event.shiftKey && !event.altKey && key === "n") {
-        event.preventDefault();
-        openNewWindow();
-        return;
-      }
-
-      if (usesAppModifier && event.shiftKey && !event.altKey && key === "s") {
-        event.preventDefault();
-        void saveActiveDocumentAs();
-        return;
-      }
-
-      if (usesAppModifier && !event.shiftKey && !event.altKey && key === "s") {
-        event.preventDefault();
-        void saveNow();
-        return;
-      }
-
-      if (usesAppModifier && !event.shiftKey && !event.altKey && key === "n") {
-        event.preventDefault();
-        createNewDocument();
-        return;
-      }
-
-      if (usesAppModifier && !event.shiftKey && !event.altKey && key === "o") {
-        event.preventDefault();
-        void openMarkdownFile();
-        return;
-      }
-
-      if (
-        usesAppModifier &&
-        !event.shiftKey &&
-        !event.altKey &&
-        (event.key === "," || event.code === "Comma")
-      ) {
-        event.preventDefault();
-        setIsSettingsOpen(true);
-        setTopMenu(null);
-        return;
-      }
-
-      if (usesAppModifier && event.shiftKey && !event.altKey && key === "l") {
-        event.preventDefault();
-        setIsSidebarCollapsed((current) => !current);
-        setTopMenu(null);
-        return;
-      }
-
-      if (usesAppModifier && event.shiftKey && !event.altKey) {
-        const digit = getShortcutDigit(event);
-
-        if (digit === "1") {
-          event.preventDefault();
-          setSidebarTab("current");
-          setIsSidebarCollapsed(false);
-          setTopMenu(null);
-          return;
-        }
-
-        if (digit === "2") {
-          event.preventDefault();
-          setIsHomeOpen(true);
-          setTopMenu(null);
-          return;
-        }
-
-        if (digit === "3") {
-          event.preventDefault();
-          setSidebarTab("files");
-          setIsSidebarCollapsed(false);
-          setTopMenu(null);
-          return;
-        }
-      }
-
-      if (
-        usesAppModifier &&
-        !event.shiftKey &&
-        !event.altKey &&
-        isEditorShortcutTarget(event.target)
-      ) {
-        switch (key) {
-          case "z":
-            event.preventDefault();
-            void runEditCommand("undo");
-            return;
-          case "y":
-            event.preventDefault();
-            void runEditCommand("redo");
-            return;
-          case "x":
-            event.preventDefault();
-            void runEditCommand("cut");
-            return;
-          case "c":
-            event.preventDefault();
-            void runEditCommand("copy");
-            return;
-          case "v":
-            event.preventDefault();
-            void pasteFromClipboardShortcut();
-            return;
-        }
-      }
-
-      if (
-        !usesAppModifier &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.altKey &&
-        isEditorShortcutTarget(event.target)
-      ) {
-        if (event.key === "Tab") {
-          event.preventDefault();
-          runParagraphCommand({
-            type: event.shiftKey ? "outdentList" : "indentList",
-          });
-          return;
-        }
-      }
-
-      const action = getEditorShortcutAction(event);
+      const action = getAppShortcutAction(event, {
+        isEditorTarget: isEditorShortcutTarget(event.target),
+        isFullScreen,
+      });
 
       if (!action) {
         return;
       }
 
-      event.preventDefault();
+      const isFullScreenAction =
+        action.type === "view" &&
+        (action.command === "toggleFullScreen" ||
+          action.command === "exitFullScreen");
 
-      switch (action.type) {
-        case "createLink":
-          createLinkFromPrompt();
-          break;
-        case "edit":
-          void runEditCommand(action.command);
-          break;
-        case "find":
-          openFindReplaceDialog(Boolean(action.replace));
-          break;
-        case "format":
-          runFormatCommand(action.command);
-          break;
-        case "paragraph":
-          runParagraphCommand(action.command);
-          break;
+      if (
+        !isFullScreenAction &&
+        (isCreateFileOpen ||
+          isSettingsOpen ||
+          shouldIgnoreAppShortcutTarget(event.target))
+      ) {
+        return;
       }
+
+      event.preventDefault();
+      runAppShortcutAction(action);
     }
 
     window.addEventListener("keydown", handleGlobalEditShortcuts, true);
@@ -2058,14 +1929,14 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", handleGlobalEditShortcuts, true);
     };
-  }, [activeDocument, isCreateFileOpen, isSettingsOpen, mode]);
+  }, [activeDocument, isCreateFileOpen, isFullScreen, isSettingsOpen, mode]);
 
   useEffect(() => {
     setActiveEditorLineIndex(0);
   }, [activeDocument?.id]);
 
   useEffect(() => {
-    if (sidebarTab !== "search" || isSidebarCollapsed) {
+    if (sidebarTab !== "search" || isSidebarHidden) {
       return;
     }
 
@@ -2073,7 +1944,7 @@ export function App() {
       workspaceSearchInputRef.current?.focus();
       workspaceSearchInputRef.current?.select();
     });
-  }, [isSidebarCollapsed, sidebarTab]);
+  }, [isSidebarHidden, sidebarTab]);
 
   useEffect(() => {
     const pendingReveal = pendingWorkspaceSearchRevealRef.current;
@@ -3402,9 +3273,31 @@ export function App() {
     setTopMenu(null);
   }
 
+  function setSidebarVisible(visible: boolean) {
+    if (isImmersiveMode) {
+      setIsImmersiveSidebarOpen(visible);
+      return;
+    }
+
+    setIsSidebarCollapsed(!visible);
+  }
+
+  function showSidebar() {
+    setSidebarVisible(true);
+  }
+
+  function toggleSidebarVisibility() {
+    if (isImmersiveMode) {
+      setIsImmersiveSidebarOpen((current) => !current);
+      return;
+    }
+
+    setIsSidebarCollapsed((current) => !current);
+  }
+
   function openWorkspaceSearch() {
     setSidebarTab("search");
-    setIsSidebarCollapsed(false);
+    showSidebar();
     setIsActionsOpen(false);
     setTopMenu(null);
     void refreshWorkspaceSearchDocuments();
@@ -3413,6 +3306,81 @@ export function App() {
   function closeWorkspaceSearch() {
     setWorkspaceSearchQuery("");
     setSidebarTab("current");
+  }
+
+  function runAppShortcutAction(action: AppShortcutAction) {
+    setTopMenu(null);
+    setIsActionsOpen(false);
+    setContextMenu(null);
+
+    switch (action.type) {
+      case "editor":
+        switch (action.action.type) {
+          case "createLink":
+            createLinkFromPrompt();
+            break;
+          case "edit":
+            void runEditCommand(action.action.command);
+            break;
+          case "format":
+            runFormatCommand(action.action.command);
+            break;
+          case "paragraph":
+            runParagraphCommand(action.action.command);
+            break;
+        }
+        break;
+      case "file":
+        switch (action.command) {
+          case "newMarkdownDocument":
+            createNewDocument();
+            break;
+          case "newWindow":
+            openNewWindow();
+            break;
+          case "openDocument":
+            void openMarkdownFile();
+            break;
+          case "openSettings":
+            setIsSettingsOpen(true);
+            break;
+          case "save":
+            void saveNow();
+            break;
+          case "saveAs":
+            void saveActiveDocumentAs();
+            break;
+        }
+        break;
+      case "find":
+        openFindReplaceDialog(Boolean(action.replace));
+        break;
+      case "view":
+        switch (action.command) {
+          case "exitFullScreen":
+          case "toggleFullScreen":
+            void toggleFullScreen();
+            break;
+          case "showDocuments":
+            setIsHomeOpen(true);
+            break;
+          case "showFiles":
+            setSidebarTab("files");
+            showSidebar();
+            break;
+          case "showOutline":
+            setSidebarTab("current");
+            showSidebar();
+            break;
+          case "toggleSidebar":
+            toggleSidebarVisibility();
+            break;
+          case "workspaceSearch":
+            openWorkspaceSearch();
+            break;
+        }
+        break;
+    }
   }
 
   async function refreshWorkspaceSearchDocuments() {
@@ -4203,51 +4171,155 @@ export function App() {
     }
   }
 
-  function getClipboardImageFile(event: ClipboardEvent<HTMLElement>) {
-    const imageFile = Array.from(event.clipboardData.files).find((file) =>
-      isClipboardMediaFile(file, "image"),
+  function dataTransferHasFiles(dataTransfer: DataTransfer) {
+    return (
+      Array.from(dataTransfer.types).includes("Files") ||
+      Array.from(dataTransfer.items).some((item) => item.kind === "file")
     );
+  }
 
-    if (imageFile) {
-      return imageFile;
+  function getDroppedMediaFiles(dataTransfer: DataTransfer) {
+    return Array.from(dataTransfer.files).filter(
+      (file) =>
+        isClipboardMediaFile(file, "video") ||
+        isClipboardMediaFile(file, "image"),
+    );
+  }
+
+  function getLocalPathForDroppedFile(file: File) {
+    try {
+      const resolvedPath = window.desktop?.getPathForFile?.(file);
+
+      if (resolvedPath) {
+        return resolvedPath;
+      }
+    } catch {
+      // Older Electron builds exposed path directly on File. Keep that as a
+      // compatibility fallback for local drag-and-drop.
     }
 
-    const file =
+    const legacyPath = (file as File & { path?: string }).path;
+
+    return typeof legacyPath === "string" && legacyPath ? legacyPath : null;
+  }
+
+  function prepareDropInsertionPoint(event: ReactDragEvent<HTMLElement>) {
+    if (mode === "typora") {
+      typoraEditorRef.current?.focusAtClientPoint(event.clientX, event.clientY);
+      return;
+    }
+
+    editorRef.current?.focus();
+  }
+
+  function handleEditorDragOver(event: ReactDragEvent<HTMLElement>) {
+    if (
+      !activeDocument ||
+      !isMarkdownDocument(activeDocument) ||
+      !dataTransferHasFiles(event.dataTransfer)
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsEditorDraggingMedia(true);
+  }
+
+  function handleEditorDragLeave(event: ReactDragEvent<HTMLElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setIsEditorDraggingMedia(false);
+    }
+  }
+
+  async function handleEditorDrop(event: ReactDragEvent<HTMLElement>) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    const mediaFiles = getDroppedMediaFiles(event.dataTransfer);
+
+    if (mediaFiles.length === 0) {
+      setIsEditorDraggingMedia(false);
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setIsEditorDraggingMedia(false);
+    prepareDropInsertionPoint(event);
+
+    for (const file of mediaFiles) {
+      if (isClipboardMediaFile(file, "video")) {
+        const filePath = getLocalPathForDroppedFile(file);
+
+        if (filePath) {
+          await handleVideoFilePath({
+            fileName: file.name || createTimestampedVideoName(file.type),
+            filePath,
+            mimeType: file.type || getClipboardMediaMimeType(file.name) || "video/mp4",
+          });
+        } else {
+          await handleVideoFile(file);
+        }
+        continue;
+      }
+
+      await handleImageFile(file);
+    }
+  }
+
+  function getClipboardMediaFileFromEvent({
+    createFallbackName,
+    event,
+    fallbackMimeType,
+    kind,
+  }: {
+    createFallbackName: (mimeType: string) => string;
+    event: ClipboardEvent<HTMLElement>;
+    fallbackMimeType: string;
+    kind: "image" | "video";
+  }) {
+    const clipboardFile = Array.from(event.clipboardData.files).find((file) =>
+      isClipboardMediaFile(file, kind),
+    );
+
+    if (clipboardFile) {
+      return clipboardFile;
+    }
+
+    const itemFile =
       Array.from(event.clipboardData.items)
         .filter((item) => item.kind === "file")
         .map((item) => item.getAsFile())
-        .find((item) => item ? isClipboardMediaFile(item, "image") : false) ?? null;
+        .find((file) => file ? isClipboardMediaFile(file, kind) : false) ?? null;
 
-    if (!file) {
+    if (!itemFile) {
       return null;
     }
 
-    return new File([file], file.name || createTimestampedImageName(file.type), {
-      type: file.type || "image/png",
+    const mimeType = itemFile.type || fallbackMimeType;
+
+    return new File([itemFile], itemFile.name || createFallbackName(mimeType), {
+      type: mimeType,
+    });
+  }
+
+  function getClipboardImageFile(event: ClipboardEvent<HTMLElement>) {
+    return getClipboardMediaFileFromEvent({
+      createFallbackName: createTimestampedImageName,
+      event,
+      fallbackMimeType: "image/png",
+      kind: "image",
     });
   }
 
   function getClipboardVideoFile(event: ClipboardEvent<HTMLElement>) {
-    const videoFile = Array.from(event.clipboardData.files).find((file) =>
-      isClipboardMediaFile(file, "video"),
-    );
-
-    if (videoFile) {
-      return videoFile;
-    }
-
-    const file =
-      Array.from(event.clipboardData.items)
-        .filter((item) => item.kind === "file")
-        .map((item) => item.getAsFile())
-        .find((item) => item ? isClipboardMediaFile(item, "video") : false) ?? null;
-
-    if (!file) {
-      return null;
-    }
-
-    return new File([file], file.name || createTimestampedVideoName(file.type), {
-      type: file.type || "video/webm",
+    return getClipboardMediaFileFromEvent({
+      createFallbackName: createTimestampedVideoName,
+      event,
+      fallbackMimeType: "video/webm",
+      kind: "video",
     });
   }
 
@@ -4348,13 +4420,15 @@ export function App() {
       return true;
     }
 
+    setBackupMessage("正在读取剪贴板媒体");
     const nativeMediaFiles = await window.desktop?.readClipboardMediaFiles?.();
     const nativeVideo = nativeMediaFiles?.find((file) =>
       file.mimeType.startsWith("video/"),
     );
 
     if (nativeVideo) {
-      await handleVideoDataUrl(nativeVideo.fileName, nativeVideo.dataUrl);
+      const importTarget = await insertVideoImportPlaceholder(nativeVideo.fileName);
+      await handleVideoDataUrl(nativeVideo.fileName, nativeVideo.dataUrl, importTarget);
       return true;
     }
 
@@ -4380,14 +4454,46 @@ export function App() {
     return true;
   }
 
-  async function pasteFromClipboardShortcut() {
-    if (activeDocument && isMarkdownDocument(activeDocument)) {
-      if (await pasteClipboardMediaFallback()) {
-        return;
+  async function readClipboardTextFallback() {
+    try {
+      const browserText = await navigator.clipboard?.readText?.();
+
+      if (browserText) {
+        return browserText;
       }
+    } catch {
+      // Electron's native clipboard remains available when browser clipboard
+      // permissions block programmatic paste from menus.
     }
 
-    await runEditCommand("paste");
+    try {
+      return (await window.desktop?.readClipboardText?.()) ?? "";
+    } catch {
+      return "";
+    }
+  }
+
+  async function pasteFromClipboardShortcut(options: { showEmptyFeedback?: boolean } = {}) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return false;
+    }
+
+    if (await pasteClipboardMediaFallback()) {
+      return true;
+    }
+
+    const text = await readClipboardTextFallback();
+
+    if (text) {
+      insertMarkdown(text);
+      return true;
+    }
+
+    if (options.showEmptyFeedback) {
+      setBackupMessage("剪贴板中没有可粘贴的内容");
+    }
+
+    return false;
   }
 
   async function handlePaste(event: ClipboardEvent<HTMLElement>) {
@@ -4415,7 +4521,18 @@ export function App() {
     }
 
     event.preventDefault();
-    await pasteClipboardMediaFallback();
+    if (await pasteClipboardMediaFallback()) {
+      return;
+    }
+
+    const text = event.clipboardData.getData("text/plain");
+
+    if (text) {
+      insertMarkdown(text);
+      return;
+    }
+
+    setBackupMessage("未能读取剪贴板中的媒体内容");
   }
 
   async function saveNow() {
@@ -4678,6 +4795,11 @@ export function App() {
       return;
     }
 
+    if (command === "paste") {
+      await pasteFromClipboardShortcut({ showEmptyFeedback: true });
+      return;
+    }
+
     if (mode === "typora" && typoraEditorRef.current) {
       typoraEditorRef.current.runEditCommand(command);
       return;
@@ -4701,17 +4823,6 @@ export function App() {
           deleteTextareaSelectionOrLine();
         } else {
           document.execCommand("delete");
-        }
-        break;
-      case "paste":
-        if (!document.execCommand("paste") && textarea && navigator.clipboard?.readText) {
-          const text = await navigator.clipboard.readText();
-          const nextContent =
-            textarea.value.slice(0, textarea.selectionStart) +
-            text +
-            textarea.value.slice(textarea.selectionEnd);
-          const cursor = textarea.selectionStart + text.length;
-          setTextareaContent(textarea, nextContent, cursor);
         }
         break;
       case "copy":
@@ -4807,7 +4918,7 @@ export function App() {
             <MenuSeparator />
             <MenuItem label="打开文件位置..." onSelect={() => runTopMenuAction(() => void showWorkspaceInFolder())} />
             <MenuItem label="在侧边栏中显示" onSelect={() => runTopMenuAction(() => {
-              setIsSidebarCollapsed(false);
+              showSidebar();
               setSidebarTab("files");
             })} />
             <MenuSeparator />
@@ -4933,17 +5044,17 @@ export function App() {
       case "view":
         return (
           <>
-            <MenuItem label="显示 / 隐藏侧边栏" shortcut="Ctrl+Shift+L" onSelect={() => runTopMenuAction(() => setIsSidebarCollapsed((current) => !current))} />
+            <MenuItem label="显示 / 隐藏侧边栏" shortcut="Ctrl+Shift+L" onSelect={() => runTopMenuAction(toggleSidebarVisibility)} />
             <MenuItem label="大纲" shortcut="Ctrl+Shift+1" onSelect={() => runTopMenuAction(() => setSidebarTab("current"))} />
             <MenuItem label="文档列表" shortcut="Ctrl+Shift+2" onSelect={() => runTopMenuAction(() => setIsHomeOpen(true))} />
             <MenuItem label="文件树" shortcut="Ctrl+Shift+3" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
-            <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(false))} />
+            <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(openWorkspaceSearch)} />
             <MenuSeparator />
             <MenuItem label="显示状态栏" checked disabled />
             <MenuItem label="字数统计窗口" disabled />
             <MenuSeparator />
             <MenuItem
-              label="切换全屏"
+              label="沉浸浏览模式"
               shortcut="F11"
               checked={isFullScreen}
               onSelect={() => runTopMenuAction(() => void toggleFullScreen())}
@@ -4993,21 +5104,66 @@ export function App() {
     }
   }
 
+  const isImmersiveTopRevealed =
+    isImmersiveMode && (immersiveRevealEdge === "top" || topMenu !== null);
+
+  function setImmersiveReveal(edge: ImmersiveRevealEdge | null) {
+    if (!isImmersiveMode && edge) {
+      return;
+    }
+
+    setImmersiveRevealEdge((current) => (current === edge ? current : edge));
+  }
+
+  function revealImmersiveEdge(edge: ImmersiveRevealEdge) {
+    setImmersiveReveal(edge);
+  }
+
+  function hideImmersiveEdge(edge: ImmersiveRevealEdge) {
+    setImmersiveRevealEdge((current) => (current === edge ? null : current));
+  }
+
+  function handleImmersivePointerMove(event: ReactPointerEvent<HTMLElement>) {
+    if (!isImmersiveMode) {
+      return;
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const distanceFromTop = event.clientY - bounds.top;
+    const nextEdge = distanceFromTop <= immersiveRevealHitSlop ? "top" : null;
+
+    setImmersiveReveal(nextEdge);
+  }
+
+  function handleImmersivePointerLeave() {
+    setImmersiveReveal(null);
+  }
+
   return (
     <>
       <main
-        className={
-          isSidebarCollapsed
-            ? "app-shell app-shell-sidebar-collapsed"
-            : "app-shell"
-        }
+        className={[
+          "app-shell",
+          isSidebarHidden ? "app-shell-sidebar-collapsed" : "",
+          isImmersiveMode ? "app-shell-immersive" : "",
+          isImmersiveTopRevealed ? "app-shell-immersive-reveal-top" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
         style={
           {
-            "--sidebar-width": `${isSidebarCollapsed ? 0 : sidebarWidth}px`,
+            "--sidebar-width": `${isSidebarHidden ? 0 : sidebarWidth}px`,
+            "--sidebar-panel-width": `${sidebarWidth}px`,
           } as CSSProperties
         }
+        onPointerMove={handleImmersivePointerMove}
+        onPointerLeave={handleImmersivePointerLeave}
       >
-        <header className="app-menubar">
+        <header
+          className="app-menubar"
+          onPointerEnter={() => revealImmersiveEdge("top")}
+          onPointerLeave={() => hideImmersiveEdge("top")}
+        >
           <div className="menubar-left">
             <button
               className="app-logo-button"
@@ -5090,7 +5246,16 @@ export function App() {
           </div>
         </header>
 
-        <aside className="sidebar explorer-sidebar" aria-hidden={isSidebarCollapsed}>
+        {isImmersiveMode && (
+          <div
+            className="immersive-reveal-zone immersive-reveal-zone-top"
+            aria-hidden="true"
+            onPointerEnter={() => revealImmersiveEdge("top")}
+            onPointerMove={() => revealImmersiveEdge("top")}
+          />
+        )}
+
+        <aside className="sidebar explorer-sidebar" aria-hidden={isSidebarHidden}>
           <div className="explorer-tabs" role="tablist" aria-label="侧边栏视图">
             <button
               className={sidebarTab === "files" ? "explorer-tab explorer-tab-active" : "explorer-tab"}
@@ -5194,29 +5359,51 @@ export function App() {
               />
             ) : activeDocument && activeDocumentOutline.length ? (
               <div className="outline-tree">
-                {activeDocumentOutline.map((entry) => (
-                  <button
-                    className={
-                      activeEditorLineIndex === entry.lineIndex
-                        ? "outline-item outline-item-active"
-                        : "outline-item"
-                    }
-                    key={entry.id}
-                    style={
-                      {
-                        "--outline-depth": `${Math.max(entry.level - 1, 0) * 14}px`,
-                      } as CSSProperties
-                    }
-                    type="button"
-                    onClick={() => {
-                      setIsHomeOpen(false);
-                      typoraEditorRef.current?.scrollToLine(entry.lineIndex);
-                      setActiveEditorLineIndex(entry.lineIndex);
-                    }}
-                  >
-                    <span>{entry.title}</span>
-                  </button>
-                ))}
+                {activeDocumentOutline.map((entry) => {
+                  const isHtmlOutline = isHtmlDocument(activeDocument);
+                  const isActive = isHtmlOutline
+                    ? activeHtmlOutlineId === entry.id
+                    : "lineIndex" in entry &&
+                      activeEditorLineIndex === entry.lineIndex;
+
+                  return (
+                    <button
+                      className={
+                        isActive
+                          ? "outline-item outline-item-active"
+                          : "outline-item"
+                      }
+                      key={entry.id}
+                      style={
+                        {
+                          "--outline-depth": `${Math.max(entry.level - 1, 0) * 14}px`,
+                        } as CSSProperties
+                      }
+                      title={
+                        isHtmlOutline && "anchor" in entry && entry.anchor
+                          ? `#${entry.anchor}`
+                          : entry.title
+                      }
+                      type="button"
+                      onClick={() => {
+                        setIsHomeOpen(false);
+
+                        if (isHtmlOutline) {
+                          htmlDocumentViewerRef.current?.scrollToOutlineEntry(entry.id);
+                          setActiveHtmlOutlineId(entry.id);
+                          return;
+                        }
+
+                        if ("lineIndex" in entry) {
+                          typoraEditorRef.current?.scrollToLine(entry.lineIndex);
+                          setActiveEditorLineIndex(entry.lineIndex);
+                        }
+                      }}
+                    >
+                      <span>{entry.title}</span>
+                    </button>
+                  );
+                })}
               </div>
             ) : activeDocument ? (
               <div className="outline-empty">当前文件没有可显示的标题</div>
@@ -5349,7 +5536,7 @@ export function App() {
         <div
           className={[
             "sidebar-resizer",
-            isSidebarCollapsed ? "sidebar-resizer-collapsed" : "",
+            isSidebarHidden ? "sidebar-resizer-collapsed" : "",
             isSidebarResizing ? "sidebar-resizer-active" : "",
           ]
             .filter(Boolean)
@@ -5357,7 +5544,7 @@ export function App() {
           role="separator"
           aria-label="Resize sidebar"
           aria-orientation="vertical"
-          onDoubleClick={() => setIsSidebarCollapsed((current) => !current)}
+          onDoubleClick={toggleSidebarVisibility}
           onPointerDown={startSidebarResize}
         />
 
@@ -5440,7 +5627,19 @@ export function App() {
               >
               {isHtmlDocument(activeDocument) ? (
                 <HtmlDocumentViewer
+                  ref={htmlDocumentViewerRef}
                   document={activeDocument}
+                  onActiveOutlineChange={setActiveHtmlOutlineId}
+                  onAppShortcut={(shortcut) => {
+                    const action = getAppShortcutAction(shortcut, {
+                      isEditorTarget: false,
+                      isFullScreen,
+                    });
+
+                    if (action) {
+                      runAppShortcutAction(action);
+                    }
+                  }}
                   onEditMindMap={({ code, index }) =>
                     openMindMapEditor({ index, kind: "html" }, code)
                   }
@@ -5485,7 +5684,26 @@ export function App() {
                   </div>
                 </section>
               ) : (
-                <div className={`editor-layout editor-layout-${mode}`}>
+                <div
+                  className={[
+                    "editor-layout",
+                    `editor-layout-${mode}`,
+                    isEditorDraggingMedia ? "editor-layout-drop-active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  onDragLeave={handleEditorDragLeave}
+                  onDragOver={handleEditorDragOver}
+                  onDrop={handleEditorDrop}
+                >
+                  {isEditorDraggingMedia && (
+                    <div className="editor-drop-overlay" aria-hidden="true">
+                      <div>
+                        <strong>释放以插入媒体</strong>
+                        <span>支持 MP4、MOV、WebM、MKV 等常见视频格式</span>
+                      </div>
+                    </div>
+                  )}
                   {mode === "typora" && (
                     <TyporaEditor
                       key={`${activeDocument.id}:${documentReloadTokens[activeDocument.id] ?? 0}`}
@@ -5543,10 +5761,10 @@ export function App() {
             <button
               className="workspace-status-button"
               type="button"
-              aria-label={isSidebarCollapsed ? "展开左侧栏" : "折叠左侧栏"}
-              onClick={() => setIsSidebarCollapsed((current) => !current)}
+              aria-label={isSidebarHidden ? "展开左侧栏" : "折叠左侧栏"}
+              onClick={toggleSidebarVisibility}
             >
-              {isSidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
+              {isSidebarHidden ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
             </button>
             <span className="workspace-status-spacer" />
             {missingAssetReferences.length > 0 && (

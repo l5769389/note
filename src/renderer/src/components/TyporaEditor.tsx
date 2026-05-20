@@ -95,6 +95,11 @@ import { createMermaidRenderId, renderMermaidSvg } from "../mermaid";
 import { isMindMapLanguage } from "../mindMapDocument";
 import { isReactFlowLanguage } from "../reactFlowDocument";
 import { isUniverSheetLanguage } from "../univerSheetDocument";
+import {
+  getAspectRatioResizeWidth,
+  getProportionalHeight,
+  getSafeAspectRatio,
+} from "../mediaSizing";
 import { MindMapDiagram } from "./MindMapDiagram";
 import { ReactFlowDiagram } from "./ReactFlowDiagram";
 import { UniverSheetPreview } from "./UniverSheetPreview";
@@ -161,8 +166,25 @@ type TyporaSearchRevealOptions = {
   query: string;
 };
 
+type VideoToolbarState =
+  | { visible: false }
+  | {
+      aspectRatio: number;
+      displayWidth: number;
+      left: number;
+      pos: number;
+      top: number;
+      videoHeight: number;
+      videoLeft: number;
+      videoTop: number;
+      videoWidth: number;
+      visible: true;
+      width?: number;
+    };
+
 export type TyporaEditorHandle = {
   clearSearchHighlight: () => void;
+  focusAtClientPoint: (clientX: number, clientY: number) => void;
   insertMarkdown: (markdown: string) => void;
   revealSearchResult: (options: TyporaSearchRevealOptions) => boolean;
   runEditCommand: (command: TyporaEditCommand) => void;
@@ -198,6 +220,7 @@ function createTyporaAlertTitle(kind: TyporaAlertKind, title: string) {
 
 const rawHtmlImagePattern = /^\s*<img\b[\s\S]*\/?>\s*$/i;
 const videoControlsSafeZone = 44;
+const fallbackVideoAspectRatio = 16 / 9;
 
 function getRawHtmlImageSource(node: ProseMirrorNode) {
   if (node.type.name !== "html") {
@@ -215,9 +238,112 @@ function getRawHtmlValue(node: ProseMirrorNode) {
     : node.textContent;
 }
 
+function isRawHtmlVideo(value: string) {
+  return /<video\b/i.test(value);
+}
+
+function getFirstRawHtmlVideo(value: string) {
+  const host = document.createElement("div");
+  host.innerHTML = value.trim();
+
+  return host.querySelector("video");
+}
+
+function getRawHtmlVideoWidth(value: string) {
+  const video = getFirstRawHtmlVideo(value);
+
+  if (!video) {
+    return undefined;
+  }
+
+  const inlineWidth = video.style.width.trim();
+  const styleMatch = inlineWidth.match(/^(\d+(?:\.\d+)?)px$/i);
+
+  if (styleMatch) {
+    return clampImageWidth(Number(styleMatch[1]));
+  }
+
+  const attrWidth = video.getAttribute("width");
+  const attrMatch = attrWidth?.match(/^(\d+(?:\.\d+)?)$/);
+
+  return attrMatch ? clampImageWidth(Number(attrMatch[1])) : undefined;
+}
+
+function patchRawHtmlVideoWidth(
+  value: string,
+  width?: number,
+  aspectRatio = fallbackVideoAspectRatio,
+) {
+  const host = document.createElement("div");
+  host.innerHTML = value.trim();
+  const video = host.querySelector("video");
+
+  if (!video) {
+    return value;
+  }
+
+  if (typeof width === "number") {
+    const nextWidth = clampImageWidth(width);
+
+    video.style.width = `${nextWidth}px`;
+    video.style.height = `${getProportionalHeight(nextWidth, aspectRatio)}px`;
+    video.style.maxWidth = "100%";
+    video.style.maxHeight = "none";
+    video.style.objectFit = "contain";
+    video.removeAttribute("width");
+    video.removeAttribute("height");
+  } else {
+    video.style.removeProperty("width");
+    video.style.removeProperty("max-width");
+    video.style.removeProperty("max-height");
+    video.style.removeProperty("height");
+    video.style.removeProperty("object-fit");
+    video.removeAttribute("width");
+    video.removeAttribute("height");
+
+    if (!video.getAttribute("style")?.trim()) {
+      video.removeAttribute("style");
+    }
+  }
+
+  return host.innerHTML;
+}
+
+function getVideoElementAspectRatio(video: HTMLVideoElement) {
+  if (video.videoWidth > 0 && video.videoHeight > 0) {
+    return getSafeAspectRatio(video.videoWidth / video.videoHeight);
+  }
+
+  const rect = video.getBoundingClientRect();
+
+  if (rect.width > 0 && rect.height > 0) {
+    return getSafeAspectRatio(rect.width / rect.height);
+  }
+
+  return fallbackVideoAspectRatio;
+}
+
+function replaceRawHtmlNodeValue(view: EditorView, pos: number, value: string) {
+  const node = view.state.doc.nodeAt(pos);
+
+  if (!node || node.type.name !== "html") {
+    return false;
+  }
+
+  const nextNode = node.type.create(
+    { ...node.attrs, value },
+    value ? view.state.schema.text(value) : null,
+  );
+  const transaction = view.state.tr.replaceWith(pos, pos + node.nodeSize, nextNode);
+
+  view.dispatch(transaction);
+  return true;
+}
+
 function createRenderedHtmlPreview(
   value: string,
   filePath?: string,
+  sourcePos?: number,
 ): HTMLElement | null {
   const trimmedValue = value.trim();
 
@@ -228,6 +354,14 @@ function createRenderedHtmlPreview(
   const wrapper = document.createElement("div");
   wrapper.className = "typora-raw-html-preview";
   wrapper.innerHTML = trimmedValue;
+
+  if (typeof sourcePos === "number") {
+    wrapper.dataset.typoraRawHtmlPos = String(sourcePos);
+  }
+
+  if (isRawHtmlVideo(trimmedValue)) {
+    wrapper.classList.add("typora-raw-html-preview-video");
+  }
 
   wrapper.querySelectorAll("[src]").forEach((element) => {
     const source = element.getAttribute("src");
@@ -306,7 +440,7 @@ function createRawHtmlPreviewDecoration(
                 Decoration.widget(
                   pos + node.nodeSize,
                   () =>
-                    createRenderedHtmlPreview(value, filePathRef.current) ??
+                    createRenderedHtmlPreview(value, filePathRef.current, pos) ??
                     document.createTextNode(""),
                   {
                     ignoreSelection: true,
@@ -731,7 +865,7 @@ function isNonEditorControl(target: EventTarget | null) {
     target instanceof Element &&
     Boolean(
       target.closest(
-        "button, input, textarea, select, [contenteditable='false'], .milkdown-image-toolbar, .milkdown-table-toolbar",
+        "button, input, textarea, select, [contenteditable='false'], .milkdown-image-toolbar, .milkdown-table-toolbar, .milkdown-video-resize-handle",
       ),
     )
   );
@@ -1823,6 +1957,33 @@ function runBrowserEditCommand(command: "copy" | "cut" | "delete" | "paste") {
   return document.execCommand(command);
 }
 
+function VideoResizeHandle({
+  onResizeStart,
+  state,
+}: {
+  onResizeStart: (
+    event: ReactPointerEvent<HTMLDivElement>,
+    state: Extract<VideoToolbarState, { visible: true }>,
+  ) => void;
+  state: VideoToolbarState;
+}) {
+  if (!state.visible) {
+    return null;
+  }
+
+  return (
+    <div
+      className="milkdown-video-resize-handle"
+      role="presentation"
+      style={{
+        left: state.videoLeft + state.videoWidth + 2,
+        top: state.videoTop + state.videoHeight + 2,
+      }}
+      onPointerDown={(event) => onResizeStart(event, state)}
+    />
+  );
+}
+
 function getActiveTopLevelBlock(view: EditorView) {
   const { $from } = view.state.selection;
 
@@ -2300,6 +2461,9 @@ function MilkdownRuntime({
   const [tableToolbar, setTableToolbar] = useState<TableToolbarState>({
     visible: false,
   });
+  const [videoToolbar, setVideoToolbar] = useState<VideoToolbarState>({
+    visible: false,
+  });
   const activeHeadingTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -2316,6 +2480,15 @@ function MilkdownRuntime({
     pos: number;
     startWidth: number;
     startX: number;
+    pendingWidth: number | null;
+    frameId: number | null;
+  } | null>(null);
+  const videoResizeRef = useRef<{
+    aspectRatio: number;
+    pos: number;
+    startWidth: number;
+    startX: number;
+    startY: number;
     pendingWidth: number | null;
     frameId: number | null;
   } | null>(null);
@@ -2466,6 +2639,80 @@ function MilkdownRuntime({
     const size = getTableSize(tableInfo.node);
 
     setTableToolbar({ ...size, left, top, visible: true, width });
+  }
+
+  function getVideoPreviewElement(pos: number) {
+    const root = rootRef.current;
+
+    if (!root) {
+      return null;
+    }
+
+    return root.querySelector<HTMLVideoElement>(
+      `.typora-raw-html-preview[data-typora-raw-html-pos="${pos}"] video`,
+    );
+  }
+
+  function updateVideoToolbarFromElement(videoElement: HTMLVideoElement | null) {
+    const root = rootRef.current;
+    const editor = get();
+
+    if (!root || !editor || !videoElement || !root.contains(videoElement)) {
+      setVideoToolbar({ visible: false });
+      return;
+    }
+
+    const wrapper = videoElement.closest<HTMLElement>(".typora-raw-html-preview");
+    const pos = Number(wrapper?.dataset.typoraRawHtmlPos ?? NaN);
+
+    if (!Number.isFinite(pos)) {
+      setVideoToolbar({ visible: false });
+      return;
+    }
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const node = view.state.doc.nodeAt(pos);
+      const value = node ? getRawHtmlValue(node) : "";
+
+      if (!node || node.type.name !== "html" || !isRawHtmlVideo(value)) {
+        setVideoToolbar({ visible: false });
+        return;
+      }
+
+      const overlay = getOverlayContainer(root);
+      const rootRect = root.getBoundingClientRect();
+      const overlayRect = overlay.getBoundingClientRect();
+      const videoRect = videoElement.getBoundingClientRect();
+      const visibleTop = rootRect.top + 8 - overlayRect.top;
+      const maxLeft = overlay.clientWidth - 152;
+      const rawLeft = videoRect.left - overlayRect.left;
+      const left = Math.max(8, Math.min(rawLeft, Math.max(8, maxLeft)));
+      const top = Math.max(visibleTop, videoRect.top - overlayRect.top - 38);
+      const width = getRawHtmlVideoWidth(value);
+
+      setVideoToolbar({
+        aspectRatio: getVideoElementAspectRatio(videoElement),
+        displayWidth: clampImageWidth(videoRect.width || minImageWidth),
+        left,
+        pos,
+        top,
+        videoHeight: videoRect.height,
+        videoLeft: videoRect.left - overlayRect.left,
+        videoTop: videoRect.top - overlayRect.top,
+        videoWidth: videoRect.width,
+        visible: true,
+        width,
+      });
+    });
+  }
+
+  function refreshVideoToolbar() {
+    if (!videoToolbar.visible) {
+      return;
+    }
+
+    updateVideoToolbarFromElement(getVideoPreviewElement(videoToolbar.pos));
   }
 
   function refreshImageToolbar() {
@@ -2691,6 +2938,178 @@ function MilkdownRuntime({
     };
     window.addEventListener("pointermove", resizeSelectedImage);
     window.addEventListener("pointerup", stopImageResize);
+  }
+
+  function updateVideoWidth(
+    pos: number,
+    width?: number,
+    aspectRatio = videoToolbar.visible && videoToolbar.pos === pos
+      ? videoToolbar.aspectRatio
+      : fallbackVideoAspectRatio,
+  ) {
+    const editor = get();
+
+    if (!editor) {
+      return;
+    }
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const node = view.state.doc.nodeAt(pos);
+      const value = node ? getRawHtmlValue(node) : "";
+
+      if (!node || node.type.name !== "html" || !isRawHtmlVideo(value)) {
+        setVideoToolbar({ visible: false });
+        return;
+      }
+
+      const nextValue = patchRawHtmlVideoWidth(value, width, aspectRatio);
+
+      if (nextValue !== value) {
+        replaceRawHtmlNodeValue(view, pos, nextValue);
+      }
+
+      requestAnimationFrame(() => {
+        updateVideoToolbarFromElement(getVideoPreviewElement(pos));
+      });
+    });
+  }
+
+  function applyVideoPreviewResize(
+    pos: number,
+    width: number,
+    aspectRatio: number,
+  ) {
+    const videoElement = getVideoPreviewElement(pos);
+
+    if (!videoElement) {
+      return;
+    }
+
+    const nextWidth = clampImageWidth(width);
+    const nextHeight = getProportionalHeight(nextWidth, aspectRatio);
+
+    videoElement.style.width = `${nextWidth}px`;
+    videoElement.style.height = `${nextHeight}px`;
+    videoElement.style.maxWidth = "100%";
+    videoElement.style.maxHeight = "none";
+    videoElement.style.objectFit = "contain";
+
+    const rect = videoElement.getBoundingClientRect();
+    const renderedWidth = rect.width || nextWidth;
+    const renderedHeight = rect.height || nextHeight;
+
+    setVideoToolbar((current) =>
+      current.visible && current.pos === pos
+        ? {
+            ...current,
+            aspectRatio: getSafeAspectRatio(aspectRatio),
+            displayWidth: clampImageWidth(renderedWidth),
+            videoHeight: renderedHeight,
+            videoWidth: renderedWidth,
+            width: nextWidth,
+          }
+        : current,
+    );
+  }
+
+  function flushPendingVideoResize() {
+    const resizeState = videoResizeRef.current;
+
+    if (!resizeState || resizeState.pendingWidth === null) {
+      return;
+    }
+
+    const nextWidth = resizeState.pendingWidth;
+
+    if (resizeState.frameId !== null) {
+      window.cancelAnimationFrame(resizeState.frameId);
+      resizeState.frameId = null;
+    }
+
+    resizeState.pendingWidth = null;
+    updateVideoWidth(resizeState.pos, nextWidth, resizeState.aspectRatio);
+  }
+
+  function scheduleVideoResize(width: number) {
+    const resizeState = videoResizeRef.current;
+
+    if (!resizeState) {
+      return;
+    }
+
+    resizeState.pendingWidth = clampImageWidth(width);
+
+    if (resizeState.frameId !== null) {
+      return;
+    }
+
+    resizeState.frameId = window.requestAnimationFrame(() => {
+      const currentResizeState = videoResizeRef.current;
+
+      if (!currentResizeState || currentResizeState.pendingWidth === null) {
+        return;
+      }
+
+      const nextWidth = currentResizeState.pendingWidth;
+      currentResizeState.pendingWidth = null;
+      currentResizeState.frameId = null;
+      applyVideoPreviewResize(
+        currentResizeState.pos,
+        nextWidth,
+        currentResizeState.aspectRatio,
+      );
+    });
+  }
+
+  function stopVideoResize(event?: PointerEvent) {
+    if (event) {
+      resizeSelectedVideo(event);
+    }
+
+    flushPendingVideoResize();
+    videoResizeRef.current = null;
+    window.removeEventListener("pointermove", resizeSelectedVideo);
+    window.removeEventListener("pointerup", stopVideoResize);
+  }
+
+  function resizeSelectedVideo(event: PointerEvent) {
+    const resizeState = videoResizeRef.current;
+
+    if (!resizeState) {
+      return;
+    }
+
+    scheduleVideoResize(
+      clampImageWidth(getAspectRatioResizeWidth({
+        aspectRatio: resizeState.aspectRatio,
+        currentX: event.clientX,
+        currentY: event.clientY,
+        startWidth: resizeState.startWidth,
+        startX: resizeState.startX,
+        startY: resizeState.startY,
+      })),
+    );
+  }
+
+  function startVideoResize(
+    event: ReactPointerEvent<HTMLDivElement>,
+    state: Extract<VideoToolbarState, { visible: true }>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    videoResizeRef.current = {
+      aspectRatio: state.aspectRatio || fallbackVideoAspectRatio,
+      pos: state.pos,
+      startWidth: state.displayWidth,
+      startX: event.clientX,
+      startY: event.clientY,
+      pendingWidth: null,
+      frameId: null,
+    };
+    window.addEventListener("pointermove", resizeSelectedVideo);
+    window.addEventListener("pointerup", stopVideoResize);
   }
 
   function runTableCommand(command: TableCommand) {
@@ -2999,6 +3418,30 @@ function MilkdownRuntime({
           }
 
           view.dispatch(transaction);
+        });
+      },
+      focusAtClientPoint(clientX: number, clientY: number) {
+        const editor = get();
+
+        if (!editor) {
+          return;
+        }
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const position = view.posAtCoords({ left: clientX, top: clientY });
+
+          if (position) {
+            view.dispatch(
+              view.state.tr
+                .setSelection(
+                  Selection.near(view.state.doc.resolve(position.pos)),
+                )
+                .scrollIntoView(),
+            );
+          }
+
+          view.focus();
         });
       },
       insertMarkdown(markdown: string) {
@@ -3327,13 +3770,31 @@ function MilkdownRuntime({
         const isTableInteraction =
           target instanceof Element &&
           (target.closest("table") || target.closest(".milkdown-table-toolbar"));
+        const videoElement =
+          target instanceof Element
+            ? target.closest<HTMLVideoElement>(".typora-raw-html-preview video")
+            : null;
+        const isVideoInteraction =
+          target instanceof Element &&
+          Boolean(
+            videoElement ||
+              target.closest(".milkdown-video-resize-handle"),
+          );
 
         if (!isTableInteraction) {
           setTableToolbar({ visible: false });
         }
 
+        if (videoElement) {
+          setImageToolbar({ visible: false });
+          requestAnimationFrame(() => updateVideoToolbarFromElement(videoElement));
+        } else if (!isVideoInteraction) {
+          setVideoToolbar({ visible: false });
+        }
+
         reportActiveHeading();
         requestAnimationFrame(refreshImageToolbar);
+        requestAnimationFrame(refreshVideoToolbar);
 
         if (isTableInteraction) {
           requestAnimationFrame(refreshTableToolbar);
@@ -3362,6 +3823,7 @@ function MilkdownRuntime({
         reportActiveHeading();
         requestAnimationFrame(refreshImageToolbar);
         requestAnimationFrame(refreshTableToolbar);
+        requestAnimationFrame(refreshVideoToolbar);
       }}
     >
       <ImageToolbar
@@ -3373,6 +3835,7 @@ function MilkdownRuntime({
       />
       <ImageNameEditor state={imageToolbar} onRename={renameImage} />
       <ImageResizeHandle state={imageToolbar} onResizeStart={startImageResize} />
+      <VideoResizeHandle state={videoToolbar} onResizeStart={startVideoResize} />
       <TableToolbar state={tableToolbar} onResize={resizeSelectedTable} onRun={runTableCommand} />
       <Milkdown />
     </div>
@@ -3428,6 +3891,9 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
       () => ({
         clearSearchHighlight() {
           controllerRef.current?.clearSearchHighlight();
+        },
+        focusAtClientPoint(clientX: number, clientY: number) {
+          controllerRef.current?.focusAtClientPoint(clientX, clientY);
         },
         insertMarkdown(markdown: string) {
           if (controllerRef.current) {

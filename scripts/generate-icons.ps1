@@ -80,7 +80,7 @@ function New-IconBitmap {
 
   $bitmap = [System.Drawing.Bitmap]::new($Size, $Size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $graphics = New-Graphics $bitmap
-  $graphics.Clear([System.Drawing.Color]::Transparent)
+  $graphics.Clear((New-Color "#ffffff"))
   Draw-FittedImage $graphics $Source 0 0 $Size $Size
   $graphics.Dispose()
   return $bitmap

@@ -7,6 +7,11 @@ import { access, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  getClipboardFormatMimeType,
+  getMediaFileExtensionFromMimeType,
+  getMediaMimeTypeForExtension,
+} from "../shared/mediaTypes";
 
 const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 const appName = "noteDock";
@@ -44,20 +49,6 @@ const drawingExtensions = new Set([".excalidraw"]);
 const maxDirectoryTreeDepth = 8;
 const workspaceAssetsDirectoryName = ".assets";
 const localSchemePattern = /^[a-z][a-z\d+.-]*:/i;
-const clipboardMediaMimeTypes = new Map<string, string>([
-  [".gif", "image/gif"],
-  [".jpeg", "image/jpeg"],
-  [".jpg", "image/jpeg"],
-  [".m4v", "video/mp4"],
-  [".mov", "video/quicktime"],
-  [".mp4", "video/mp4"],
-  [".mpeg", "video/mpeg"],
-  [".mpg", "video/mpeg"],
-  [".png", "image/png"],
-  [".svg", "image/svg+xml"],
-  [".webm", "video/webm"],
-  [".webp", "image/webp"],
-]);
 
 type DocumentFileType = "markdown" | "html" | "pdf" | "word" | "excel" | "sheet" | "drawing";
 
@@ -100,6 +91,12 @@ type ClipboardMediaFile = {
   size: number;
 };
 
+type ClipboardMediaData = {
+  dataUrl: string;
+  fileName: string;
+  mimeType: string;
+};
+
 type ReadWorkspaceAssetPayload = {
   documentFilePath: string;
   reference: string;
@@ -129,7 +126,7 @@ function createTimestampedFileName(prefix: string, extension: string) {
 }
 
 function getClipboardMediaMimeType(filePath: string) {
-  return clipboardMediaMimeTypes.get(extname(filePath).toLowerCase()) ?? null;
+  return getMediaMimeTypeForExtension(extname(filePath));
 }
 
 function bufferToDataUrl(buffer: Buffer, mimeType: string) {
@@ -172,6 +169,12 @@ function extractClipboardFileUrls(value: string) {
 }
 
 function readClipboardPathFormat(format: string, encoding: BufferEncoding) {
+  const text = clipboard.read(format);
+
+  if (text.trim()) {
+    return splitClipboardPathText(text.replace(/\0+$/g, ""));
+  }
+
   const buffer = clipboard.readBuffer(format);
 
   if (!buffer.length) {
@@ -181,13 +184,60 @@ function readClipboardPathFormat(format: string, encoding: BufferEncoding) {
   return splitClipboardPathText(buffer.toString(encoding).replace(/\0+$/g, ""));
 }
 
+function readClipboardTextLikeFormat(format: string) {
+  const text = clipboard.read(format);
+
+  if (text.trim()) {
+    return text.replace(/\0+$/g, "");
+  }
+
+  const buffer = clipboard.readBuffer(format);
+
+  if (!buffer.length) {
+    return "";
+  }
+
+  const hasUtf16Nulls = buffer.length > 1 && buffer[1] === 0;
+  const encoding: BufferEncoding = hasUtf16Nulls ? "utf16le" : "utf-8";
+
+  return buffer.toString(encoding).replace(/\0+$/g, "");
+}
+
+function getClipboardFormatPathCandidates(formats: string[]) {
+  const candidates: string[] = [];
+
+  for (const format of formats) {
+    const normalizedFormat = format.trim().toLowerCase();
+
+    if (normalizedFormat === "filenamew") {
+      candidates.push(...readClipboardPathFormat(format, "utf16le"));
+      continue;
+    }
+
+    if (normalizedFormat === "filename") {
+      candidates.push(...readClipboardPathFormat(format, "utf-8"));
+      continue;
+    }
+
+    if (
+      normalizedFormat === "text/uri-list" ||
+      normalizedFormat.includes("file") ||
+      normalizedFormat.includes("uri")
+    ) {
+      const text = readClipboardTextLikeFormat(format);
+      candidates.push(...splitClipboardPathText(text), ...extractClipboardFileUrls(text));
+    }
+  }
+
+  return candidates;
+}
+
 function getClipboardFilePathCandidates() {
-  const formats = new Set(clipboard.availableFormats());
+  const formats = clipboard.availableFormats();
   const candidates = [
     ...splitClipboardPathText(clipboard.readText()),
     ...extractClipboardFileUrls(clipboard.readHTML()),
-    ...(formats.has("FileNameW") ? readClipboardPathFormat("FileNameW", "utf16le") : []),
-    ...(formats.has("FileName") ? readClipboardPathFormat("FileName", "utf-8") : []),
+    ...getClipboardFormatPathCandidates(formats),
   ];
   const seen = new Set<string>();
 
@@ -235,6 +285,45 @@ async function getClipboardMediaFiles(): Promise<ClipboardMediaFile[]> {
   );
 
   return mediaFiles.filter((file): file is ClipboardMediaFile => Boolean(file));
+}
+
+function readClipboardBufferedMediaFiles() {
+  const mediaFiles: ClipboardMediaData[] = [];
+  const seenFormats = new Set<string>();
+
+  for (const format of clipboard.availableFormats()) {
+    const mimeType = getClipboardFormatMimeType(format);
+
+    if (!mimeType) {
+      continue;
+    }
+
+    const key = `${format.toLowerCase()}|${mimeType}`;
+
+    if (seenFormats.has(key)) {
+      continue;
+    }
+
+    seenFormats.add(key);
+
+    const buffer = clipboard.readBuffer(format);
+
+    if (!buffer.length) {
+      continue;
+    }
+
+    const prefix = mimeType.startsWith("video/") ? "video" : "image";
+    mediaFiles.push({
+      dataUrl: bufferToDataUrl(buffer, mimeType),
+      fileName: createTimestampedFileName(
+        prefix,
+        getMediaFileExtensionFromMimeType(mimeType),
+      ),
+      mimeType,
+    });
+  }
+
+  return mediaFiles;
 }
 
 function getWorkspaceLabel(directoryPath: string) {
@@ -752,7 +841,10 @@ function registerFileIpc() {
       }),
     );
 
-    return mediaFiles.filter(Boolean);
+    return [
+      ...mediaFiles.filter((file): file is ClipboardMediaData => Boolean(file)),
+      ...readClipboardBufferedMediaFiles(),
+    ];
   });
 
   ipcMain.handle("clipboard:read-text", () => clipboard.readText());

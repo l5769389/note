@@ -66,6 +66,7 @@ type DesktopApi = {
     title: string;
   }) => Promise<string | null>;
   getDefaultWorkspaceDirectory: () => Promise<string>;
+  getPathForFile: (file: File) => string;
   getWindowState: () => Promise<{
     alwaysOnTop: boolean;
     fullScreen: boolean;

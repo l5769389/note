@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { IpcRendererEvent } from "electron";
 
 type WorkspaceFileChangePayload = {
@@ -8,6 +8,8 @@ type WorkspaceFileChangePayload = {
 };
 
 contextBridge.exposeInMainWorld("desktop", {
+  getPathForFile: (file: unknown) =>
+    webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0]),
   listClipboardMediaFiles: () => ipcRenderer.invoke("clipboard:list-media-files"),
   readClipboardImage: () => ipcRenderer.invoke("clipboard:read-image"),
   readClipboardMediaFiles: () => ipcRenderer.invoke("clipboard:read-media-files"),

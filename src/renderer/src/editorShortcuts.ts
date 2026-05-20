@@ -14,10 +14,39 @@ export type EditorShortcutAction =
 export type EditorShortcutEvent = Pick<
   KeyboardEvent,
   "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey"
->;
+> & {
+  isComposing?: boolean;
+};
+
+export type AppShortcutAction =
+  | { command: "newMarkdownDocument" | "newWindow" | "openDocument" | "openSettings" | "save" | "saveAs"; type: "file" }
+  | { command: "exitFullScreen" | "showDocuments" | "showFiles" | "showOutline" | "toggleFullScreen" | "toggleSidebar" | "workspaceSearch"; type: "view" }
+  | { replace?: boolean; type: "find" }
+  | { action: Exclude<EditorShortcutAction, { type: "find" }>; type: "editor" };
+
+export type AppShortcutContext = {
+  isEditorTarget?: boolean;
+  isFullScreen?: boolean;
+};
 
 export function isAppShortcutModifier(event: EditorShortcutEvent) {
   return (event.ctrlKey || event.metaKey) && !(event.ctrlKey && event.metaKey);
+}
+
+function hasOnlyAppModifier(event: EditorShortcutEvent, shiftKey = false) {
+  return isAppShortcutModifier(event) && !event.altKey && event.shiftKey === shiftKey;
+}
+
+function hasNoModifier(event: EditorShortcutEvent) {
+  return !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+}
+
+export function getShortcutDigit(event: EditorShortcutEvent) {
+  if (/^Digit[0-9]$/.test(event.code)) {
+    return event.code.slice("Digit".length);
+  }
+
+  return /^[0-9]$/.test(event.key) ? event.key : "";
 }
 
 const shiftedParagraphShortcuts: Record<string, TyporaParagraphCommand> = {
@@ -64,10 +93,6 @@ export function getEditorShortcutAction(
 
   if (!event.shiftKey && event.key.toLowerCase() === "h") {
     return { replace: true, type: "find" };
-  }
-
-  if (event.shiftKey && event.key.toLowerCase() === "f") {
-    return { type: "find" };
   }
 
   if (!event.shiftKey && event.key.toLowerCase() === "b") {
@@ -119,4 +144,125 @@ export function getEditorShortcutAction(
   const command = shiftedParagraphShortcuts[event.key];
 
   return command ? { command, type: "paragraph" } : null;
+}
+
+export function getAppShortcutAction(
+  event: EditorShortcutEvent,
+  context: AppShortcutContext = {},
+): AppShortcutAction | null {
+  if (event.isComposing) {
+    return null;
+  }
+
+  const key = event.key.toLowerCase();
+
+  if (event.key === "F11" && hasNoModifier(event)) {
+    return { command: "toggleFullScreen", type: "view" };
+  }
+
+  if (event.key === "Escape" && context.isFullScreen && hasNoModifier(event)) {
+    return { command: "exitFullScreen", type: "view" };
+  }
+
+  if (hasOnlyAppModifier(event, true)) {
+    const digit = getShortcutDigit(event);
+
+    if (key === "n") {
+      return { command: "newWindow", type: "file" };
+    }
+
+    if (key === "s") {
+      return { command: "saveAs", type: "file" };
+    }
+
+    if (key === "l") {
+      return { command: "toggleSidebar", type: "view" };
+    }
+
+    if (key === "f") {
+      return { command: "workspaceSearch", type: "view" };
+    }
+
+    if (digit === "1") {
+      return { command: "showOutline", type: "view" };
+    }
+
+    if (digit === "2") {
+      return { command: "showDocuments", type: "view" };
+    }
+
+    if (digit === "3") {
+      return { command: "showFiles", type: "view" };
+    }
+  }
+
+  if (hasOnlyAppModifier(event)) {
+    if (key === "s") {
+      return { command: "save", type: "file" };
+    }
+
+    if (key === "n") {
+      return { command: "newMarkdownDocument", type: "file" };
+    }
+
+    if (key === "o") {
+      return { command: "openDocument", type: "file" };
+    }
+
+    if (event.key === "," || event.code === "Comma") {
+      return { command: "openSettings", type: "file" };
+    }
+
+    if (key === "f") {
+      return { type: "find" };
+    }
+
+    if (key === "h") {
+      return { replace: true, type: "find" };
+    }
+
+    if (context.isEditorTarget) {
+      if (key === "z") {
+        return { action: { command: "undo", type: "edit" }, type: "editor" };
+      }
+
+      if (key === "y") {
+        return { action: { command: "redo", type: "edit" }, type: "editor" };
+      }
+
+      if (key === "x") {
+        return { action: { command: "cut", type: "edit" }, type: "editor" };
+      }
+
+      if (key === "c") {
+        return { action: { command: "copy", type: "edit" }, type: "editor" };
+      }
+    }
+  }
+
+  if (
+    context.isEditorTarget &&
+    event.key === "Tab" &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  ) {
+    return {
+      action: {
+        command: { type: event.shiftKey ? "outdentList" : "indentList" },
+        type: "paragraph",
+      },
+      type: "editor",
+    };
+  }
+
+  if (!context.isEditorTarget) {
+    return null;
+  }
+
+  const editorAction = getEditorShortcutAction(event);
+
+  return editorAction && editorAction.type !== "find"
+    ? { action: editorAction, type: "editor" }
+    : null;
 }
