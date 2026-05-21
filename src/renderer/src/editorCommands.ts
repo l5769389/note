@@ -11,6 +11,7 @@ export type TyporaEditCommand =
   | "undo";
 
 export type TyporaAlertKind = "caution" | "important" | "note" | "tip" | "warning";
+export type TaskStatusCommand = "completed" | "incomplete" | "toggle";
 
 export type TyporaFormatCommand =
   | { type: "bold" }
@@ -44,4 +45,5 @@ export type TyporaParagraphCommand =
   | { type: "paragraph" }
   | { type: "promoteHeading" }
   | { type: "taskList" }
+  | { type: "taskStatus"; status: TaskStatusCommand }
   | { type: "toc" };

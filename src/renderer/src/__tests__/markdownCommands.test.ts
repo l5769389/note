@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createParagraphCommandMarkdown } from "../markdownCommands";
+import {
+  createParagraphCommandMarkdown,
+  updateMarkdownTaskStatus,
+} from "../markdownCommands";
 
 describe("createParagraphCommandMarkdown", () => {
   it("creates markdown for heading and paragraph commands", () => {
@@ -42,5 +45,34 @@ describe("createParagraphCommandMarkdown", () => {
     expect(createParagraphCommandMarkdown({ type: "demoteHeading" })).toBe("");
     expect(createParagraphCommandMarkdown({ type: "indentList" })).toBe("");
     expect(createParagraphCommandMarkdown({ type: "outdentList" })).toBe("");
+    expect(
+      createParagraphCommandMarkdown({
+        type: "taskStatus",
+        status: "toggle",
+      }),
+    ).toBe("");
+  });
+});
+
+describe("updateMarkdownTaskStatus", () => {
+  it("toggles task items on the current line", () => {
+    const result = updateMarkdownTaskStatus("- [ ] A\n- [x] B", 2, 2, "toggle");
+
+    expect(result?.markdown).toBe("- [x] A\n- [x] B");
+  });
+
+  it("marks selected task lines as completed or incomplete", () => {
+    const markdown = "- [ ] A\n- [x] B\n- [ ] C";
+
+    expect(updateMarkdownTaskStatus(markdown, 0, markdown.length, "completed")?.markdown).toBe(
+      "- [x] A\n- [x] B\n- [x] C",
+    );
+    expect(updateMarkdownTaskStatus(markdown, 0, markdown.length, "incomplete")?.markdown).toBe(
+      "- [ ] A\n- [ ] B\n- [ ] C",
+    );
+  });
+
+  it("leaves non-task lines unchanged", () => {
+    expect(updateMarkdownTaskStatus("- A\nplain", 0, 0, "completed")).toBeNull();
   });
 });

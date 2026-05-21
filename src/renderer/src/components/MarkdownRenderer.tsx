@@ -335,6 +335,85 @@ function MarkdownSourceRenderer({
   return <source {...props} src={getRenderedResourceUrl(src, filePath)} />;
 }
 
+function MarkdownListItemRenderer({
+  checked,
+  children,
+  className,
+  index: _index,
+  node: _node,
+  ordered: _ordered,
+  ...props
+}: ComponentPropsWithoutRef<"li"> & {
+  checked?: boolean | null;
+  index?: number;
+  node?: unknown;
+  ordered?: boolean;
+}) {
+  const childNodes = Children.toArray(children);
+  const renderedCheckbox = childNodes.find(
+    (child) =>
+      isValidElement<ComponentPropsWithoutRef<"input">>(child) &&
+      child.type === "input" &&
+      child.props.type === "checkbox",
+  );
+  const checkboxChecked =
+    typeof checked === "boolean"
+      ? checked
+      : isValidElement<ComponentPropsWithoutRef<"input">>(renderedCheckbox)
+        ? renderedCheckbox.props.checked === true
+        : null;
+  const isTaskItem =
+    checkboxChecked !== null || /\btask-list-item\b/.test(className ?? "");
+  const taskChildren = isTaskItem
+    ? childNodes.map((child) => {
+        if (
+          isValidElement<ComponentPropsWithoutRef<"input">>(child) &&
+          child.type === "input" &&
+          child.props.type === "checkbox"
+        ) {
+          return cloneElement(child, {
+            "aria-label": checkboxChecked ? "已完成任务" : "未完成任务",
+            checked: checkboxChecked ?? child.props.checked,
+            className: [child.props.className, "markdown-task-checkbox"]
+              .filter(Boolean)
+              .join(" "),
+            disabled: true,
+            readOnly: true,
+          });
+        }
+
+        return child;
+      })
+    : children;
+
+  return (
+    <li
+      {...props}
+      className={[
+        className,
+        isTaskItem ? "markdown-task-list-item" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      data-task-checked={
+        checkboxChecked === null ? undefined : String(checkboxChecked)
+      }
+    >
+      {isTaskItem && !renderedCheckbox ? (
+        <input
+          aria-label={checkboxChecked ? "已完成任务" : "未完成任务"}
+          checked={checkboxChecked === true}
+          className="markdown-task-checkbox"
+          disabled
+          readOnly
+          type="checkbox"
+        />
+      ) : null}
+      {taskChildren}
+    </li>
+  );
+}
+
 function BlockquoteRenderer({ children }: { children?: ReactNode }) {
   const alert = getMarkdownAlert(children);
 
@@ -375,6 +454,7 @@ export function MarkdownRenderer({
         ),
         blockquote: BlockquoteRenderer,
         code: CodeRenderer,
+        li: MarkdownListItemRenderer,
         img: ({ src, ...props }: ComponentPropsWithoutRef<"img">) => (
           <MarkdownImageRenderer {...props} filePath={filePath} src={src} />
         ),

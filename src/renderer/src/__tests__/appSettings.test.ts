@@ -4,13 +4,17 @@ import {
   appSettingsVersion,
   appThemeValues,
   defaultAppSettings,
+  formatEditorFontSizeAdjustment,
+  getAdjustedEditorFontSize,
   getEditorCodeFontFamily,
+  getEditorContentDensityStyle,
   getEditorContentWidth,
   getEditorFontFamily,
   getEditorFontSize,
   getEditorLineHeight,
   getInitialTheme,
   loadAppSettings,
+  normalizeEditorFontSizeAdjustment,
   themeOptions,
 } from "../appSettings";
 
@@ -45,8 +49,10 @@ describe("loadAppSettings", () => {
         key === appSettingsStorageKey
           ? JSON.stringify({
               editorCodeFontFamily: "consolas",
+              editorContentDensity: "comfortable",
               editorContentWidth: "980px",
               editorFontFamily: "serif",
+              editorFontSizeAdjustment: 1.5,
               editorFontSize: "16px",
               editorLineHeight: "2",
               editorMode: "split",
@@ -59,8 +65,10 @@ describe("loadAppSettings", () => {
 
     expect(loadAppSettings(storage)).toEqual({
       editorCodeFontFamily: "consolas",
+      editorContentDensity: "comfortable",
       editorContentWidth: "980px",
       editorFontFamily: "serif",
+      editorFontSizeAdjustment: 1.5,
       editorFontSize: "16px",
       editorLineHeight: "2",
       editorMode: "split",
@@ -73,6 +81,7 @@ describe("loadAppSettings", () => {
       getItem: () =>
         JSON.stringify({
           editorCodeFontFamily: "missing",
+          editorContentDensity: "dense",
           editorContentWidth: "9999px",
           editorFontFamily: "missing",
           editorFontSize: "3px",
@@ -99,6 +108,25 @@ describe("loadAppSettings", () => {
 
     expect(loadAppSettings(storage)).toEqual(defaultAppSettings);
   });
+
+  it("infers a content density when migrating older typography settings", () => {
+    const storage = {
+      getItem: () =>
+        JSON.stringify({
+          editorFontSize: "14px",
+          editorLineHeight: "1.55",
+          editorMode: "typora",
+        }),
+    } as unknown as Storage;
+
+    expect(loadAppSettings(storage)).toEqual({
+      ...defaultAppSettings,
+      editorContentDensity: "compact",
+      editorFontSizeAdjustment: 0,
+      editorFontSize: "14px",
+      editorLineHeight: "1.55",
+    });
+  });
 });
 
 describe("editor font helpers", () => {
@@ -117,5 +145,25 @@ describe("editor font helpers", () => {
     expect(getEditorContentWidth("theme")).toBe(
       "var(--theme-editor-content-width)",
     );
+  });
+
+  it("returns content density styles for reader size presets", () => {
+    expect(getEditorContentDensityStyle("compact").fontSize).toBe(
+      "calc(var(--theme-editor-font-size) - 0.5px)",
+    );
+    expect(getEditorContentDensityStyle("normal").lineHeight).toBe(
+      "var(--theme-editor-line-height)",
+    );
+    expect(getEditorContentDensityStyle("comfortable").contentWidth).toBe("820px");
+  });
+
+  it("normalizes and formats custom reader font size adjustments", () => {
+    expect(normalizeEditorFontSizeAdjustment(1.26)).toBe(1.5);
+    expect(normalizeEditorFontSizeAdjustment(99)).toBe(4);
+    expect(normalizeEditorFontSizeAdjustment("bad")).toBe(0);
+    expect(formatEditorFontSizeAdjustment(0)).toBe("使用预设");
+    expect(formatEditorFontSizeAdjustment(1.5)).toBe("+1.5px");
+    expect(getAdjustedEditorFontSize("16px", 1.5)).toBe("calc(16px + 1.5px)");
+    expect(getAdjustedEditorFontSize("16px", -1)).toBe("calc(16px - 1px)");
   });
 });

@@ -1198,6 +1198,8 @@ type HtmlDocumentViewerProps = {
   onEditReactFlow?: (payload: { code: string; index: number }) => void;
 };
 
+type AnnotationSaveState = "idle" | "saving" | "failed";
+
 export const HtmlDocumentViewer = forwardRef<
   HtmlDocumentViewerHandle,
   HtmlDocumentViewerProps
@@ -1217,13 +1219,15 @@ export const HtmlDocumentViewer = forwardRef<
   const [annotations, setAnnotations] = useState<HtmlAnnotation[]>([]);
   const [isAnnotationPanelOpen, setAnnotationPanelOpen] = useState(false);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
-  const [annotationSaveState, setAnnotationSaveState] = useState<
-    "idle" | "saving" | "failed"
-  >("idle");
+  const [annotationSaveState, setAnnotationSaveState] =
+    useState<AnnotationSaveState>("idle");
   const srcDoc = useMemo(
     () => createHtmlPreviewDocument(document.content, document.filePath),
     [document.content, document.filePath],
   );
+  const iframeLoadKey = `${document.id}:${document.filePath ?? ""}:${document.updatedAt}:${document.content.length}`;
+  const [loadedIframeKey, setLoadedIframeKey] = useState("");
+  const isIframeLoading = loadedIframeKey !== iframeLoadKey;
   const sortedAnnotations = useMemo(
     () =>
       [...annotations].sort((first, second) => {
@@ -1535,11 +1539,24 @@ export const HtmlDocumentViewer = forwardRef<
     <div className="html-document-viewer">
       <div className="html-document-viewer-body">
         <iframe
+          key={iframeLoadKey}
           ref={iframeRef}
           title={getDocumentDisplayName(document)}
+          onLoad={() => setLoadedIframeKey(iframeLoadKey)}
           sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads"
           srcDoc={srcDoc}
         />
+        {isIframeLoading ? (
+          <div className="document-loading-overlay html-document-loading">
+            <div className="document-loading-card" role="status" aria-live="polite">
+              <span className="document-loading-spinner" aria-hidden="true" />
+              <div>
+                <strong>正在渲染 HTML</strong>
+                <span>{getDocumentDisplayName(document)}</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {annotations.length && !isAnnotationPanelOpen ? (
           <button
             className="html-annotation-list-toggle"
@@ -1548,8 +1565,13 @@ export const HtmlDocumentViewer = forwardRef<
             aria-label="显示批注列表"
             onClick={() => setAnnotationPanelOpen(true)}
           >
-            <MessageSquareText size={17} />
-            <span>{annotations.length}</span>
+            <span className="html-annotation-list-toggle-icon">
+              <MessageSquareText size={16} />
+            </span>
+            <span className="html-annotation-list-toggle-label">批注</span>
+            <span className="html-annotation-list-toggle-count">
+              {annotations.length}
+            </span>
           </button>
         ) : null}
         {isAnnotationPanelOpen ? (
@@ -1559,7 +1581,7 @@ export const HtmlDocumentViewer = forwardRef<
             data-notedock-ignore-annotations
           >
             <div className="html-annotation-sidebar-header">
-              <div>
+              <div className="html-annotation-sidebar-title">
                 <strong>HTML 批注</strong>
                 <span>
                   {annotationSaveState === "failed"
@@ -1584,6 +1606,7 @@ export const HtmlDocumentViewer = forwardRef<
                       ? "html-annotation-card html-annotation-card-active"
                       : "html-annotation-card"
                   }
+                  data-annotation-style={annotation.style}
                   key={annotation.id}
                 >
                   <button
@@ -1597,7 +1620,9 @@ export const HtmlDocumentViewer = forwardRef<
                       });
                     }}
                   >
-                    <span>{annotationStyleLabels[annotation.style]}</span>
+                    <span className="html-annotation-style-pill">
+                      {annotationStyleLabels[annotation.style]}
+                    </span>
                     <strong>{getAnnotationSnippet(annotation)}</strong>
                     {annotation.body?.value ? <small>{annotation.body.value}</small> : null}
                   </button>

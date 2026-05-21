@@ -57,6 +57,57 @@ function Draw-FittedImage {
   $Graphics.DrawImage($Image, $dest)
 }
 
+function New-RoundedRectanglePath {
+  param(
+    [float]$X,
+    [float]$Y,
+    [float]$Width,
+    [float]$Height,
+    [float]$Radius
+  )
+
+  $diameter = $Radius * 2
+  $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
+  $path.AddArc($X, $Y, $diameter, $diameter, 180, 90)
+  $path.AddArc($X + $Width - $diameter, $Y, $diameter, $diameter, 270, 90)
+  $path.AddArc($X + $Width - $diameter, $Y + $Height - $diameter, $diameter, $diameter, 0, 90)
+  $path.AddArc($X, $Y + $Height - $diameter, $diameter, $diameter, 90, 90)
+  $path.CloseFigure()
+  return $path
+}
+
+function Fill-RoundedRectangle {
+  param(
+    [System.Drawing.Graphics]$Graphics,
+    [System.Drawing.Brush]$Brush,
+    [float]$X,
+    [float]$Y,
+    [float]$Width,
+    [float]$Height,
+    [float]$Radius
+  )
+
+  $path = New-RoundedRectanglePath $X $Y $Width $Height $Radius
+  $Graphics.FillPath($Brush, $path)
+  $path.Dispose()
+}
+
+function Draw-RoundedRectangle {
+  param(
+    [System.Drawing.Graphics]$Graphics,
+    [System.Drawing.Pen]$Pen,
+    [float]$X,
+    [float]$Y,
+    [float]$Width,
+    [float]$Height,
+    [float]$Radius
+  )
+
+  $path = New-RoundedRectanglePath $X $Y $Width $Height $Radius
+  $Graphics.DrawPath($Pen, $path)
+  $path.Dispose()
+}
+
 function New-CroppedLogoImage {
   param([System.Drawing.Image]$Source)
 
@@ -165,13 +216,42 @@ function Save-InstallerHeader {
 
   $bitmap = [System.Drawing.Bitmap]::new(150, 57, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
   $graphics = New-Graphics $bitmap
-  $graphics.Clear((New-Color "#ffffff"))
-  Draw-FittedImage $graphics $Source 4 4 48 48
+  $bounds = [System.Drawing.Rectangle]::new(0, 0, 150, 57)
+  $background = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
+    $bounds,
+    (New-Color "#ffffff"),
+    (New-Color "#eef6f6"),
+    [System.Drawing.Drawing2D.LinearGradientMode]::ForwardDiagonal
+  )
+  $graphics.FillRectangle($background, $bounds)
+  $background.Dispose()
 
-  $titleFont = [System.Drawing.Font]::new("Segoe UI", 10, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-  $metaFont = [System.Drawing.Font]::new("Segoe UI", 7, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-  $graphics.DrawString("noteDock", $titleFont, [System.Drawing.SolidBrush]::new((New-Color "#111827")), 56, 13)
-  $graphics.DrawString("Notes and documents", $metaFont, [System.Drawing.SolidBrush]::new((New-Color "#5f6b7a")), 57, 30)
+  $glowBrush = [System.Drawing.SolidBrush]::new((New-Color "#14b8a6" 26))
+  $graphics.FillEllipse($glowBrush, 96, -24, 74, 74)
+  $glowBrush.Dispose()
+
+  $cardBrush = [System.Drawing.SolidBrush]::new((New-Color "#ffffff"))
+  $cardBorder = [System.Drawing.Pen]::new((New-Color "#c7d2fe"), 1)
+  Fill-RoundedRectangle $graphics $cardBrush 7 7 43 43 11
+  Draw-RoundedRectangle $graphics $cardBorder 7.5 7.5 42 42 11
+  Draw-FittedImage $graphics $Source 13 13 31 31
+
+  $accentBrush = [System.Drawing.SolidBrush]::new((New-Color "#0f766e"))
+  $titleBrush = [System.Drawing.SolidBrush]::new((New-Color "#111827"))
+  $metaBrush = [System.Drawing.SolidBrush]::new((New-Color "#52627a"))
+  $titleFont = [System.Drawing.Font]::new("Segoe UI", 12, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+  $metaFont = [System.Drawing.Font]::new("Segoe UI", 8, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+  $graphics.DrawString("noteDock", $titleFont, $titleBrush, 57, 11)
+  $graphics.DrawString("Local-first notes", $metaFont, $metaBrush, 58, 29)
+  Fill-RoundedRectangle $graphics $accentBrush 58 43 55 4 2
+
+  $cardBrush.Dispose()
+  $cardBorder.Dispose()
+  $accentBrush.Dispose()
+  $titleBrush.Dispose()
+  $metaBrush.Dispose()
+  $titleFont.Dispose()
+  $metaFont.Dispose()
 
   $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Bmp)
   $graphics.Dispose()
@@ -187,17 +267,67 @@ function Save-InstallerSidebar {
 
   $bitmap = [System.Drawing.Bitmap]::new(164, 314, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
   $graphics = New-Graphics $bitmap
-  $graphics.Clear((New-Color "#ffffff"))
-  Draw-FittedImage $graphics $Source 21 28 122 122
+  $bounds = [System.Drawing.Rectangle]::new(0, 0, 164, 314)
+  $background = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
+    $bounds,
+    (New-Color "#0f172a"),
+    (New-Color "#0f766e"),
+    [System.Drawing.Drawing2D.LinearGradientMode]::ForwardDiagonal
+  )
+  $graphics.FillRectangle($background, $bounds)
+  $background.Dispose()
 
-  $titleFont = [System.Drawing.Font]::new("Segoe UI", 14, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-  $metaFont = [System.Drawing.Font]::new("Segoe UI", 9, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+  $navyOverlay = [System.Drawing.SolidBrush]::new((New-Color "#111827" 92))
+  $graphics.FillRectangle($navyOverlay, 0, 0, 164, 314)
+  $navyOverlay.Dispose()
+
+  $tealGlow = [System.Drawing.SolidBrush]::new((New-Color "#14b8a6" 48))
+  $indigoGlow = [System.Drawing.SolidBrush]::new((New-Color "#818cf8" 34))
+  $whiteLine = [System.Drawing.Pen]::new((New-Color "#ffffff" 28), 1)
+  $graphics.FillEllipse($tealGlow, 88, -34, 120, 120)
+  $graphics.FillEllipse($indigoGlow, -58, 206, 164, 164)
+  $graphics.DrawLine($whiteLine, 22, 26, 22, 286)
+  $graphics.DrawLine($whiteLine, 142, 42, 142, 276)
+
+  $logoCard = [System.Drawing.SolidBrush]::new((New-Color "#ffffff" 246))
+  $logoBorder = [System.Drawing.Pen]::new((New-Color "#ffffff" 72), 1)
+  Fill-RoundedRectangle $graphics $logoCard 36 34 92 92 18
+  Draw-RoundedRectangle $graphics $logoBorder 36.5 34.5 91 91 18
+  Draw-FittedImage $graphics $Source 50 48 64 64
+
+  $titleFont = [System.Drawing.Font]::new("Segoe UI", 20, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+  $metaFont = [System.Drawing.Font]::new("Segoe UI", 10, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+  $smallFont = [System.Drawing.Font]::new("Segoe UI", 8, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
   $center = [System.Drawing.StringFormat]::new()
   $center.Alignment = [System.Drawing.StringAlignment]::Center
-  $graphics.DrawString("noteDock", $titleFont, [System.Drawing.SolidBrush]::new((New-Color "#111827")), [System.Drawing.RectangleF]::new(12, 178, 140, 24), $center)
-  $graphics.DrawString($Subtitle, $metaFont, [System.Drawing.SolidBrush]::new((New-Color "#5f6b7a")), [System.Drawing.RectangleF]::new(14, 228, 136, 34), $center)
+  $center.LineAlignment = [System.Drawing.StringAlignment]::Near
+
+  $titleBrush = [System.Drawing.SolidBrush]::new((New-Color "#f8fafc"))
+  $metaBrush = [System.Drawing.SolidBrush]::new((New-Color "#cbd5e1"))
+  $pillBrush = [System.Drawing.SolidBrush]::new((New-Color "#ffffff" 28))
+  $pillBorder = [System.Drawing.Pen]::new((New-Color "#ffffff" 44), 1)
+
+  $graphics.DrawString("noteDock", $titleFont, $titleBrush, [System.Drawing.RectangleF]::new(16, 148, 132, 28), $center)
+  $graphics.DrawString("Local-first notes`nfor focused reading", $metaFont, $metaBrush, [System.Drawing.RectangleF]::new(18, 184, 128, 46), $center)
+  Fill-RoundedRectangle $graphics $pillBrush 27 245 110 30 15
+  Draw-RoundedRectangle $graphics $pillBorder 27.5 245.5 109 29 15
+  $graphics.DrawString($Subtitle, $smallFont, $titleBrush, [System.Drawing.RectangleF]::new(31, 254, 102, 14), $center)
+  Fill-RoundedRectangle $graphics $tealGlow 56 286 52 4 2
 
   $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Bmp)
+  $tealGlow.Dispose()
+  $indigoGlow.Dispose()
+  $whiteLine.Dispose()
+  $logoCard.Dispose()
+  $logoBorder.Dispose()
+  $titleFont.Dispose()
+  $metaFont.Dispose()
+  $smallFont.Dispose()
+  $center.Dispose()
+  $titleBrush.Dispose()
+  $metaBrush.Dispose()
+  $pillBrush.Dispose()
+  $pillBorder.Dispose()
   $graphics.Dispose()
   $bitmap.Dispose()
 }
@@ -215,8 +345,8 @@ try {
   Save-Png $logo 512 (Join-Path $resourcesDir "icon.png")
   Save-Ico $logo $iconSizes (Join-Path $resourcesDir "icon.ico")
   Save-InstallerHeader $logo (Join-Path $resourcesDir "installer-header.bmp")
-  Save-InstallerSidebar $logo (Join-Path $resourcesDir "installer-sidebar.bmp") "Setup wizard"
-  Save-InstallerSidebar $logo (Join-Path $resourcesDir "uninstaller-sidebar.bmp") "Uninstall wizard"
+  Save-InstallerSidebar $logo (Join-Path $resourcesDir "installer-sidebar.bmp") "Install noteDock"
+  Save-InstallerSidebar $logo (Join-Path $resourcesDir "uninstaller-sidebar.bmp") "Remove noteDock"
 } finally {
   $logo.Dispose()
   $source.Dispose()

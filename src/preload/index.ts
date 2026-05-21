@@ -10,6 +10,7 @@ type WorkspaceFileChangePayload = {
 contextBridge.exposeInMainWorld("desktop", {
   getPathForFile: (file: unknown) =>
     webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0]),
+  hasClipboardContent: () => ipcRenderer.invoke("clipboard:has-content"),
   listClipboardMediaFiles: () => ipcRenderer.invoke("clipboard:list-media-files"),
   readClipboardImage: () => ipcRenderer.invoke("clipboard:read-image"),
   readClipboardMediaFiles: () => ipcRenderer.invoke("clipboard:read-media-files"),
@@ -41,6 +42,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("export:pdf", payload),
   getDefaultWorkspaceDirectory: () =>
     ipcRenderer.invoke("workspace:get-default-directory"),
+  getZoomFactor: () =>
+    ipcRenderer.invoke("window:get-zoom-factor"),
   listMarkdownFiles: (directoryPath: string) =>
     ipcRenderer.invoke("workspace:list-markdown-files", directoryPath),
   newWindow: () =>
@@ -58,6 +61,17 @@ contextBridge.exposeInMainWorld("desktop", {
 
     return () => {
       ipcRenderer.removeListener("workspace:file-change", listener);
+    };
+  },
+  onZoomFactorChanged: (callback: (factor: number) => void) => {
+    const listener = (_: IpcRendererEvent, factor: number) => {
+      callback(factor);
+    };
+
+    ipcRenderer.on("window:zoom-factor-changed", listener);
+
+    return () => {
+      ipcRenderer.removeListener("window:zoom-factor-changed", listener);
     };
   },
   openWorkspaceDirectory: () =>
@@ -108,6 +122,10 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("window:toggle-always-on-top"),
   toggleFullScreen: () =>
     ipcRenderer.invoke("window:toggle-fullscreen"),
+  resetZoom: () =>
+    ipcRenderer.invoke("window:reset-zoom"),
+  setZoomFactor: (factor: number) =>
+    ipcRenderer.invoke("window:set-zoom-factor", factor),
   watchWorkspaceDirectory: (directoryPath: string) =>
     ipcRenderer.invoke("workspace:watch-directory", directoryPath),
   writeMarkdownFile: (payload: { content: string; filePath: string }) =>
@@ -117,4 +135,8 @@ contextBridge.exposeInMainWorld("desktop", {
     documentFilePath: string;
     reference: string;
   }) => ipcRenderer.invoke("workspace:write-text-asset", payload),
+  zoomIn: () =>
+    ipcRenderer.invoke("window:zoom-in"),
+  zoomOut: () =>
+    ipcRenderer.invoke("window:zoom-out"),
 });

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  getSelectAllShortcutScope,
   getAppShortcutAction,
   getEditorShortcutAction,
   isAppShortcutModifier,
+  isSelectAllShortcut,
+  selectAllContentScopeSelector,
   type EditorShortcutEvent,
 } from "../editorShortcuts";
 
@@ -20,6 +23,22 @@ function shortcut(
   };
 }
 
+function shortcutTarget(scope: "content" | "input" | "none") {
+  return {
+    closest(selector: string) {
+      if (scope === "input" && selector.includes("input")) {
+        return {};
+      }
+
+      if (scope === "content" && selector === selectAllContentScopeSelector) {
+        return {};
+      }
+
+      return null;
+    },
+  } as unknown as EventTarget;
+}
+
 describe("getEditorShortcutAction", () => {
   it("recognizes application shortcut modifiers", () => {
     expect(isAppShortcutModifier(shortcut({ ctrlKey: true }))).toBe(true);
@@ -27,6 +46,28 @@ describe("getEditorShortcutAction", () => {
     expect(
       isAppShortcutModifier(shortcut({ ctrlKey: true, metaKey: true })),
     ).toBe(false);
+  });
+
+  it("recognizes scoped select-all shortcuts", () => {
+    expect(isSelectAllShortcut(shortcut({ ctrlKey: true, key: "a" }))).toBe(
+      true,
+    );
+    expect(isSelectAllShortcut(shortcut({ metaKey: true, key: "A" }))).toBe(
+      true,
+    );
+    expect(
+      isSelectAllShortcut(shortcut({ ctrlKey: true, key: "a", shiftKey: true })),
+    ).toBe(false);
+    expect(
+      isSelectAllShortcut(shortcut({ ctrlKey: true, isComposing: true, key: "a" })),
+    ).toBe(false);
+  });
+
+  it("classifies where Ctrl+A may run", () => {
+    expect(getSelectAllShortcutScope(shortcutTarget("input"))).toBe("input");
+    expect(getSelectAllShortcutScope(shortcutTarget("content"))).toBe("content");
+    expect(getSelectAllShortcutScope(shortcutTarget("none"))).toBe("blocked");
+    expect(getSelectAllShortcutScope(null)).toBe("blocked");
   });
 
   it("maps format shortcuts", () => {
@@ -121,9 +162,14 @@ describe("getAppShortcutAction", () => {
     ["Ctrl+O", { ctrlKey: true, key: "o" }, { command: "openDocument", type: "file" }],
     ["Ctrl+S", { ctrlKey: true, key: "s" }, { command: "save", type: "file" }],
     ["Ctrl+Shift+S", { ctrlKey: true, key: "S", shiftKey: true }, { command: "saveAs", type: "file" }],
-    ["Ctrl+,", { code: "Comma", ctrlKey: true, key: "," }, { command: "openSettings", type: "file" }],
   ] as const)("maps file shortcut %s", (_, event, action) => {
     expect(getAppShortcutAction(shortcut(event))).toEqual(action);
+  });
+
+  it("does not expose the settings shortcut", () => {
+    expect(
+      getAppShortcutAction(shortcut({ code: "Comma", ctrlKey: true, key: "," })),
+    ).toBeNull();
   });
 
   it.each([
@@ -133,6 +179,14 @@ describe("getAppShortcutAction", () => {
     ["Ctrl+Shift+1", { code: "Digit1", ctrlKey: true, key: "!", shiftKey: true }, { command: "showOutline", type: "view" }, {}],
     ["Ctrl+Shift+2", { code: "Digit2", ctrlKey: true, key: "@", shiftKey: true }, { command: "showDocuments", type: "view" }, {}],
     ["Ctrl+Shift+3", { code: "Digit3", ctrlKey: true, key: "#", shiftKey: true }, { command: "showFiles", type: "view" }, {}],
+    ["Ctrl+Shift+9", { code: "Digit9", ctrlKey: true, key: "(", shiftKey: true }, { command: "resetZoom", type: "view" }, {}],
+    ["Ctrl+Shift+=", { code: "Equal", ctrlKey: true, key: "+", shiftKey: true }, { command: "zoomIn", type: "view" }, {}],
+    ["Ctrl+Shift+= on layouts reporting =", { code: "Equal", ctrlKey: true, key: "=", shiftKey: true }, { command: "zoomIn", type: "view" }, {}],
+    ["Ctrl+NumpadAdd", { code: "NumpadAdd", ctrlKey: true, key: "+" }, { command: "zoomIn", type: "view" }, {}],
+    ["Ctrl+Shift+-", { code: "Minus", ctrlKey: true, key: "_", shiftKey: true }, { command: "zoomOut", type: "view" }, {}],
+    ["Ctrl+Shift+- on layouts reporting -", { code: "Minus", ctrlKey: true, key: "-", shiftKey: true }, { command: "zoomOut", type: "view" }, {}],
+    ["Ctrl+NumpadSubtract", { code: "NumpadSubtract", ctrlKey: true, key: "-" }, { command: "zoomOut", type: "view" }, {}],
+    ["Ctrl+Numpad0", { code: "Numpad0", ctrlKey: true, key: "0" }, { command: "resetZoom", type: "view" }, {}],
     ["Ctrl+Shift+F", { ctrlKey: true, key: "F", shiftKey: true }, { command: "workspaceSearch", type: "view" }, {}],
   ] as const)("maps view shortcut %s", (_, event, action, context) => {
     expect(getAppShortcutAction(shortcut(event), context)).toEqual(action);
@@ -192,12 +246,10 @@ describe("getAppShortcutAction", () => {
     ["Ctrl+Meta+S", { ctrlKey: true, key: "s", metaKey: true }],
     ["Ctrl+Alt+S", { altKey: true, ctrlKey: true, key: "s" }],
     ["Ctrl+Alt+H", { altKey: true, ctrlKey: true, key: "h" }],
+    ["Ctrl+A", { ctrlKey: true, key: "a" }],
     ["Ctrl+V", { ctrlKey: true, key: "v" }],
     ["Escape outside fullscreen", { key: "Escape" }],
     ["Ctrl+Shift+4", { code: "Digit4", ctrlKey: true, key: "$", shiftKey: true }],
-    ["Ctrl+Shift+9", { code: "Digit9", ctrlKey: true, key: "(", shiftKey: true }],
-    ["Ctrl+Shift+=", { ctrlKey: true, key: "+", shiftKey: true }],
-    ["Ctrl+Shift+-", { ctrlKey: true, key: "_", shiftKey: true }],
   ] as const)("ignores reserved or invalid shortcut %s", (_, event) => {
     expect(
       getAppShortcutAction(shortcut(event), { isEditorTarget: true }),

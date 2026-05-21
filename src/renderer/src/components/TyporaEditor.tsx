@@ -109,6 +109,7 @@ import {
 } from "../assetManager";
 import type {
   ImageAlignment,
+  TaskStatusCommand,
   TyporaAlertKind,
   TyporaEditCommand,
   TyporaFormatCommand,
@@ -142,6 +143,7 @@ import {
 
 export type {
   ImageAlignment,
+  TaskStatusCommand,
   TyporaAlertKind,
   TyporaEditCommand,
   TyporaFormatCommand,
@@ -221,6 +223,7 @@ function createTyporaAlertTitle(kind: TyporaAlertKind, title: string) {
 const rawHtmlImagePattern = /^\s*<img\b[\s\S]*\/?>\s*$/i;
 const videoControlsSafeZone = 44;
 const fallbackVideoAspectRatio = 16 / 9;
+const clickedHeadingUserScrollThreshold = 1;
 
 function getRawHtmlImageSource(node: ProseMirrorNode) {
   if (node.type.name !== "html") {
@@ -2284,18 +2287,26 @@ function toggleBlockquote(view: EditorView) {
   return runProseCommand(view, wrapIn(blockquoteType));
 }
 
-function setCurrentTaskListItem(view: EditorView, checked = false) {
+function setCurrentTaskListItemStatus(
+  view: EditorView,
+  status: TaskStatusCommand,
+) {
   const listItem = getCurrentNodeRange(view, "list_item");
 
   if (!listItem) {
     return false;
   }
 
+  const checked =
+    status === "toggle"
+      ? listItem.node.attrs.checked !== true
+      : status === "completed";
+
   view.dispatch(
     view.state.tr.setNodeMarkup(listItem.pos, undefined, {
       ...listItem.node.attrs,
       checked,
-    }),
+    }).scrollIntoView(),
   );
   return true;
 }
@@ -2314,7 +2325,7 @@ function wrapCurrentSelectionInList(
   const wrapped = runProseCommand(view, wrapInList(listType));
 
   if (task) {
-    requestAnimationFrame(() => setCurrentTaskListItem(view, false));
+    requestAnimationFrame(() => setCurrentTaskListItemStatus(view, "incomplete"));
   }
 
   return wrapped;
@@ -2465,6 +2476,11 @@ function MilkdownRuntime({
     visible: false,
   });
   const activeHeadingTimerRef = useRef<number | null>(null);
+  const clickedHeadingRef = useRef<{
+    lineIndex: number;
+    scrollTop: number;
+  } | null>(null);
+  const clickedHeadingUserScrollRef = useRef(false);
 
   useEffect(() => {
     filePathRef.current = filePath;
@@ -2493,7 +2509,36 @@ function MilkdownRuntime({
     frameId: number | null;
   } | null>(null);
 
+  function clearClickedHeadingLock() {
+    clickedHeadingRef.current = null;
+    clickedHeadingUserScrollRef.current = false;
+  }
+
+  function shouldReleaseClickedHeadingLock() {
+    const clickedHeading = clickedHeadingRef.current;
+    const root = rootRef.current;
+
+    if (!clickedHeading || !root || !clickedHeadingUserScrollRef.current) {
+      return false;
+    }
+
+    const scrollDistance = Math.abs(root.scrollTop - clickedHeading.scrollTop);
+    return scrollDistance > clickedHeadingUserScrollThreshold;
+  }
+
   function publishActiveHeading(lineIndex: number) {
+    const clickedHeading = clickedHeadingRef.current;
+
+    if (clickedHeading) {
+      if (!shouldReleaseClickedHeadingLock()) {
+        if (lineIndex !== clickedHeading.lineIndex) {
+          return;
+        }
+      } else {
+        clearClickedHeadingLock();
+      }
+    }
+
     pendingActiveHeadingRef.current = lineIndex;
 
     if (activeHeadingTimerRef.current !== null) {
@@ -3304,11 +3349,28 @@ function MilkdownRuntime({
     }
   }
 
+  function reportActiveHeadingFromScrollWhenUnlocked() {
+    if (clickedHeadingRef.current) {
+      if (shouldReleaseClickedHeadingLock()) {
+        clearClickedHeadingLock();
+        reportActiveHeadingFromScroll();
+      }
+
+      return;
+    }
+
+    reportActiveHeadingFromScroll();
+  }
+
   useEffect(() => {
     const editor = get();
     const isDifferentDocument = previousDocumentIdRef.current !== documentId;
 
     previousDocumentIdRef.current = documentId;
+
+    if (isDifferentDocument) {
+      clearClickedHeadingLock();
+    }
 
     if (!editor) {
       return;
@@ -3367,17 +3429,29 @@ function MilkdownRuntime({
 
       scrollFrameRef.current = window.requestAnimationFrame(() => {
         scrollFrameRef.current = null;
-        reportActiveHeadingFromScroll();
+        reportActiveHeadingFromScrollWhenUnlocked();
+
         refreshImageToolbar();
         refreshTableToolbar();
       });
     };
+    const markUserScrollIntent = () => {
+      if (clickedHeadingRef.current) {
+        clickedHeadingUserScrollRef.current = true;
+      }
+    };
 
     root.addEventListener("scroll", handleScroll, { passive: true });
-    window.requestAnimationFrame(reportActiveHeadingFromScroll);
+    root.addEventListener("pointerdown", markUserScrollIntent, { passive: true });
+    root.addEventListener("wheel", markUserScrollIntent, { passive: true });
+    root.addEventListener("touchmove", markUserScrollIntent, { passive: true });
+    window.requestAnimationFrame(reportActiveHeadingFromScrollWhenUnlocked);
 
     return () => {
       root.removeEventListener("scroll", handleScroll);
+      root.removeEventListener("pointerdown", markUserScrollIntent);
+      root.removeEventListener("wheel", markUserScrollIntent);
+      root.removeEventListener("touchmove", markUserScrollIntent);
 
       if (activeHeadingTimerRef.current !== null) {
         window.clearTimeout(activeHeadingTimerRef.current);
@@ -3432,13 +3506,21 @@ function MilkdownRuntime({
           const position = view.posAtCoords({ left: clientX, top: clientY });
 
           if (position) {
-            view.dispatch(
-              view.state.tr
-                .setSelection(
-                  Selection.near(view.state.doc.resolve(position.pos)),
-                )
-                .scrollIntoView(),
-            );
+            const { selection } = view.state;
+
+            if (
+              selection.empty ||
+              position.pos < selection.from ||
+              position.pos > selection.to
+            ) {
+              view.dispatch(
+                view.state.tr
+                  .setSelection(
+                    Selection.near(view.state.doc.resolve(position.pos)),
+                  )
+                  .scrollIntoView(),
+              );
+            }
           }
 
           view.focus();
@@ -3704,6 +3786,9 @@ function MilkdownRuntime({
             case "taskList":
               wrapCurrentSelectionInList(view, "bullet_list", true);
               break;
+            case "taskStatus":
+              setCurrentTaskListItemStatus(view, command.status);
+              break;
             case "alert":
               insert(createMarkdownAlert(command.kind))(ctx);
               break;
@@ -3745,10 +3830,31 @@ function MilkdownRuntime({
           )
           .at(occurrence - 1);
 
-        headingElement?.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
+        clickedHeadingRef.current = {
+          lineIndex,
+          scrollTop: root.scrollTop,
+        };
+        clickedHeadingUserScrollRef.current = false;
+
+        if (headingElement) {
+          const rootRect = root.getBoundingClientRect();
+          const headingRect = headingElement.getBoundingClientRect();
+          const isHeadingVisible =
+            headingRect.top >= rootRect.top && headingRect.bottom <= rootRect.bottom;
+
+          if (!isHeadingVisible) {
+            headingElement.scrollIntoView({
+              behavior: "smooth",
+              block: "center",
+            });
+          }
+        }
+
+        if (activeHeadingTimerRef.current !== null) {
+          window.clearTimeout(activeHeadingTimerRef.current);
+          activeHeadingTimerRef.current = null;
+        }
+
         pendingActiveHeadingRef.current = lineIndex;
         onActiveLineChange?.(lineIndex);
       },
@@ -3766,6 +3872,8 @@ function MilkdownRuntime({
       autoCorrect="off"
       spellCheck={false}
       onClick={(event) => {
+        clearClickedHeadingLock();
+
         const target = event.target;
         const isTableInteraction =
           target instanceof Element &&
@@ -3820,6 +3928,7 @@ function MilkdownRuntime({
         editor.action((ctx) => focusDocumentEnd(ctx.get(editorViewCtx), false));
       }}
       onKeyUp={() => {
+        clearClickedHeadingLock();
         reportActiveHeading();
         requestAnimationFrame(refreshImageToolbar);
         requestAnimationFrame(refreshTableToolbar);
@@ -3929,7 +4038,10 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
         aria-label="Milkdown markdown editor"
         autoCapitalize="off"
         autoCorrect="off"
-        onContextMenu={onContextMenu}
+        onContextMenu={(event) => {
+          controllerRef.current?.focusAtClientPoint(event.clientX, event.clientY);
+          onContextMenu?.(event);
+        }}
         onDoubleClick={(event) => {
           if (!onEditDrawing || !(event.target instanceof Element)) {
             return;

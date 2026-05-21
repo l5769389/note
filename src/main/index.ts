@@ -17,6 +17,19 @@ const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 const appName = "noteDock";
 const appUserModelId = "com.local.notedock";
 const localPreviewProtocol = "typora-local";
+const windowZoomMax = 2;
+const windowZoomMin = 0.5;
+const windowZoomStep = 0.1;
+type WindowZoomCommand = "reset" | "zoomIn" | "zoomOut";
+
+type WindowKeyboardInput = {
+  alt?: boolean;
+  code?: string;
+  control?: boolean;
+  key?: string;
+  meta?: boolean;
+  shift?: boolean;
+};
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -735,6 +748,80 @@ function getSenderWindow(event: IpcMainInvokeEvent) {
   return BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
 }
 
+function clampWindowZoomFactor(value: number) {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+
+  return Math.min(windowZoomMax, Math.max(windowZoomMin, value));
+}
+
+function setWindowZoomFactor(window: BrowserWindow | null, factor: number) {
+  if (!window) {
+    return 1;
+  }
+
+  const nextFactor = Number(clampWindowZoomFactor(factor).toFixed(2));
+  window.webContents.setZoomFactor(nextFactor);
+  window.webContents.send("window:zoom-factor-changed", nextFactor);
+  return nextFactor;
+}
+
+function isWindowShortcutModifier(input: WindowKeyboardInput) {
+  return Boolean(input.control || input.meta) && !(input.control && input.meta);
+}
+
+function getKeyboardInputDigit(input: WindowKeyboardInput) {
+  if (input.code && /^Digit[0-9]$/.test(input.code)) {
+    return input.code.slice("Digit".length);
+  }
+
+  return input.key && /^[0-9]$/.test(input.key) ? input.key : "";
+}
+
+function isMainPlusInput(input: WindowKeyboardInput) {
+  return input.code === "Equal" || input.key === "+" || input.key === "=";
+}
+
+function isMainMinusInput(input: WindowKeyboardInput) {
+  return input.code === "Minus" || input.key === "-" || input.key === "_";
+}
+
+function getWindowZoomShortcutCommand(input: WindowKeyboardInput): WindowZoomCommand | null {
+  if (!isWindowShortcutModifier(input) || input.alt) {
+    return null;
+  }
+
+  if (input.shift && getKeyboardInputDigit(input) === "9") {
+    return "reset";
+  }
+
+  if (!input.shift && input.code === "Numpad0") {
+    return "reset";
+  }
+
+  if (input.code === "NumpadAdd" || (input.shift && isMainPlusInput(input))) {
+    return "zoomIn";
+  }
+
+  if (input.code === "NumpadSubtract" || (input.shift && isMainMinusInput(input))) {
+    return "zoomOut";
+  }
+
+  return null;
+}
+
+function runWindowZoomShortcut(window: BrowserWindow, command: WindowZoomCommand) {
+  if (command === "reset") {
+    return setWindowZoomFactor(window, 1);
+  }
+
+  const currentFactor = window.webContents.getZoomFactor() ?? 1;
+  const delta = command === "zoomIn" ? windowZoomStep : -windowZoomStep;
+
+  return setWindowZoomFactor(window, currentFactor + delta);
+}
+
 function getDialogOwner(event?: IpcMainInvokeEvent) {
   return event ? getSenderWindow(event) : BrowserWindow.getFocusedWindow() ?? mainWindow;
 }
@@ -772,6 +859,17 @@ function createMainWindow(): BrowserWindow {
   });
 
   mainWindow = window;
+
+  window.webContents.on("before-input-event", (event, input) => {
+    const zoomCommand = getWindowZoomShortcutCommand(input);
+
+    if (!zoomCommand) {
+      return;
+    }
+
+    event.preventDefault();
+    runWindowZoomShortcut(window, zoomCommand);
+  });
 
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -823,6 +921,14 @@ function registerFileIpc() {
   });
 
   ipcMain.handle("clipboard:list-media-files", () => getClipboardMediaFiles());
+
+  ipcMain.handle("clipboard:has-content", () => {
+    return (
+      clipboard.availableFormats().length > 0 ||
+      Boolean(clipboard.readText()) ||
+      !clipboard.readImage().isEmpty()
+    );
+  });
 
   ipcMain.handle("clipboard:read-media-files", async () => {
     const mediaFiles = await Promise.all(
@@ -1348,6 +1454,36 @@ function registerWindowIpc() {
     const nextFullScreenState = !window.isFullScreen();
     window.setFullScreen(nextFullScreenState);
     return nextFullScreenState;
+  });
+
+  ipcMain.handle("window:get-zoom-factor", (event) => {
+    return getSenderWindow(event)?.webContents.getZoomFactor() ?? 1;
+  });
+
+  ipcMain.handle("window:reset-zoom", (event) => {
+    return setWindowZoomFactor(getSenderWindow(event), 1);
+  });
+
+  ipcMain.handle("window:set-zoom-factor", (event, factor: number) => {
+    return setWindowZoomFactor(getSenderWindow(event), factor);
+  });
+
+  ipcMain.handle("window:zoom-in", (event) => {
+    const window = getSenderWindow(event);
+
+    return setWindowZoomFactor(
+      window,
+      (window?.webContents.getZoomFactor() ?? 1) + windowZoomStep,
+    );
+  });
+
+  ipcMain.handle("window:zoom-out", (event) => {
+    const window = getSenderWindow(event);
+
+    return setWindowZoomFactor(
+      window,
+      (window?.webContents.getZoomFactor() ?? 1) - windowZoomStep,
+    );
   });
 
   ipcMain.handle("window:toggle-always-on-top", (event) => {

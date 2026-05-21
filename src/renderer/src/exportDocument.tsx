@@ -132,6 +132,30 @@ const exportStyles = `
     padding-left: 1.55em;
   }
 
+  .markdown-export-document .contains-task-list {
+    list-style: none;
+  }
+
+  .markdown-export-document .markdown-task-list-item {
+    position: relative;
+    list-style: none;
+  }
+
+  .markdown-export-document .markdown-task-checkbox {
+    width: 1.05em;
+    height: 1.05em;
+    margin: 0 0.55em 0 -1.55em;
+    accent-color: #6254e8;
+    vertical-align: -0.16em;
+  }
+
+  .markdown-export-document .markdown-task-list-item[data-task-checked="true"] > p:first-of-type {
+    color: #7a8392;
+    text-decoration: line-through;
+    text-decoration-color: rgba(98, 84, 232, 0.42);
+    text-decoration-thickness: 1.5px;
+  }
+
   .markdown-export-document li + li {
     margin-top: 0.28em;
   }

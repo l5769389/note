@@ -19,13 +19,11 @@ import {
   Italic,
   ListTree,
   Minus,
-  PanelRight,
   Plus,
   RefreshCw,
   Rows3,
   Search,
   Scissors,
-  SplitSquareHorizontal,
   Square,
   Table2,
   Trash2,
@@ -36,6 +34,7 @@ import {
   Suspense,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -51,16 +50,13 @@ import {
 import {
   appSettingsStorageKey,
   appThemeStorageKey,
-  editorCodeFontOptions,
-  editorContentWidthOptions,
-  editorFontOptions,
-  editorFontSizeOptions,
-  editorLineHeightOptions,
+  editorContentDensityOptions,
+  editorFontSizeAdjustmentRange,
+  formatEditorFontSizeAdjustment,
+  getAdjustedEditorFontSize,
   getEditorCodeFontFamily,
-  getEditorContentWidth,
+  getEditorContentDensityStyle,
   getEditorFontFamily,
-  getEditorFontSize,
-  getEditorLineHeight,
   getInitialTheme,
   loadAppSettings,
   themeOptions,
@@ -91,11 +87,17 @@ import type {
   TyporaParagraphCommand,
 } from "./editorCommands";
 import {
+  getSelectAllContentScope,
+  getSelectAllShortcutScope,
   getAppShortcutAction,
+  isSelectAllShortcut,
   type AppShortcutAction,
 } from "./editorShortcuts";
 import { createMarkdownExportHtml } from "./exportDocument";
-import { createParagraphCommandMarkdown } from "./markdownCommands";
+import {
+  createParagraphCommandMarkdown,
+  updateMarkdownTaskStatus,
+} from "./markdownCommands";
 import {
   createClearInlineStyleEdit,
   createMarkdownImageEdit,
@@ -243,22 +245,15 @@ const WordDocumentViewer = lazy(() =>
   })),
 );
 
-const editorModeOptions: Array<{
-  value: EditorMode;
-  label: string;
-  icon: ReactNode;
-}> = [
-  { value: "typora", label: "实时渲染", icon: <BookOpenText size={16} /> },
-  { value: "source", label: "源码", icon: <Code2 size={16} /> },
-  { value: "split", label: "分栏", icon: <SplitSquareHorizontal size={16} /> },
-  { value: "preview", label: "预览", icon: <PanelRight size={16} /> },
-];
-
 type MenubarMenu = "file" | "edit" | "paragraph" | "format" | "view" | "theme" | "help";
 type TopMenu = MenubarMenu | null;
 type ImmersiveRevealEdge = "top";
 type SidebarTab = "files" | "current" | "search";
 type FileExplorerView = "tree" | "list";
+type DocumentLoadingState = {
+  detail?: string;
+  title: string;
+} | null;
 
 const defaultSidebarWidth = 334;
 const minSidebarWidth = 236;
@@ -269,6 +264,10 @@ const storedRecentDirectoryLimit = 12;
 const recentDirectoryStorageKey = noteDockStorageKeys.recentDirectories;
 const internalFileWriteGraceMs = 8000;
 const immersiveRevealHitSlop = 44;
+const defaultWindowZoomFactor = 1;
+const zoomIndicatorVisibleMs = 1500;
+const markdownTaskListLinePattern = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\[([ xX])\][ \t]*/;
+const markdownListLinePattern = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/;
 
 type FindPanelMode = "find" | "replace";
 
@@ -316,6 +315,16 @@ type AppContextMenuState = {
   width: number;
   x: number;
   y: number;
+};
+
+type EditorContextMenuInfo = {
+  canPaste: boolean;
+  hasSelection: boolean;
+  isEditable: boolean;
+  isListItem: boolean;
+  isTaskListItem: boolean;
+  linkHref?: string;
+  taskChecked?: boolean;
 };
 
 function createDefaultExcalidrawScene() {
@@ -404,6 +413,28 @@ const now = () => new Date().toISOString();
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function getSidebarResizeTarget(pointerX: number) {
+  const nextWidth = clamp(pointerX, 0, maxSidebarWidth);
+
+  if (nextWidth < minSidebarWidth) {
+    return {
+      isCollapsed: true,
+      previewX: 0,
+      width: 0,
+    };
+  }
+
+  return {
+    isCollapsed: false,
+    previewX: nextWidth,
+    width: nextWidth,
+  };
+}
+
+function getFileNameFromPath(filePath: string) {
+  return filePath.split(/[\\/]/).pop() || filePath;
 }
 
 type TableSize = {
@@ -536,6 +567,83 @@ function centerTextareaRangeInView(
   });
 }
 
+function DocumentLoadingIndicator({
+  detail,
+  title,
+}: {
+  detail?: string;
+  title: string;
+}) {
+  return (
+    <div className="document-loading-card" role="status" aria-live="polite">
+      <span className="document-loading-spinner" aria-hidden="true" />
+      <div>
+        <strong>{title}</strong>
+        {detail ? <span>{detail}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function AboutDialog({
+  onOpenChange,
+  open,
+}: {
+  onOpenChange: (open: boolean) => void;
+  open: boolean;
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay about-dialog-overlay" />
+        <Dialog.Content className="about-dialog">
+          <div className="about-header">
+            <div className="about-brand">
+              <img src={appLogoUrl} alt="" draggable={false} />
+              <div>
+                <Dialog.Title className="about-title">noteDock</Dialog.Title>
+                <Dialog.Description className="about-subtitle">
+                  本地优先的 Markdown 笔记与文档阅读工具
+                </Dialog.Description>
+              </div>
+            </div>
+            <Dialog.Close asChild>
+              <button className="icon-button" type="button" aria-label="关闭关于 noteDock">
+                <X size={16} />
+              </button>
+            </Dialog.Close>
+          </div>
+          <div className="about-body">
+            <p>
+              noteDock 面向日常学习、项目笔记和资料阅读，提供实时渲染编辑、文件树、目录定位、HTML/PDF/Office 文档预览，以及轻量批注能力。
+            </p>
+            <div className="about-feature-grid" aria-label="noteDock 功能概览">
+              <span>实时渲染编辑</span>
+              <span>多格式预览</span>
+              <span>HTML 批注</span>
+            </div>
+            <p>
+              应用基于 Electron、React 与 Milkdown 构建，优先使用本地文件和本机存储，让笔记工作流保持简单、可控。
+            </p>
+            <div className="about-meta">
+              <span>版本 0.1.0</span>
+              <span>Electron + Milkdown</span>
+            </div>
+          </div>
+          <div className="dialog-actions about-actions">
+            <Dialog.Close asChild>
+              <button className="primary-button" type="button">
+                <Check size={16} />
+                知道了
+              </button>
+            </Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function MenuSeparator() {
   return <div className="menubar-dropdown-separator" role="separator" />;
 }
@@ -613,20 +721,29 @@ function MenuSubmenu({
     }, 220);
   }
 
-  function openSubmenu() {
-    clearCloseTimer();
+  function updatePanelPosition() {
     const rect = submenuRef.current?.getBoundingClientRect();
+    const panel = panelRef.current;
 
     if (rect) {
-      const panelHeight = panelRef.current?.offsetHeight ?? 320;
+      const panelHeight = panel?.offsetHeight || 320;
+      const panelWidth = panel?.offsetWidth || 176;
       const maxTop = Math.max(8, window.innerHeight - panelHeight - 8);
+      const preferredLeft = rect.right - 2;
+      const left =
+        preferredLeft + panelWidth > window.innerWidth - 8
+          ? Math.max(8, rect.left - panelWidth + 2)
+          : preferredLeft;
 
       setPanelStyle({
-        left: rect.right - 2,
+        left,
         top: Math.min(Math.max(8, rect.top - 8), maxTop),
       });
     }
+  }
 
+  function openSubmenu() {
+    clearCloseTimer();
     setIsOpen(true);
   }
 
@@ -645,6 +762,12 @@ function MenuSubmenu({
       setIsOpen(false);
     }
   }
+
+  useLayoutEffect(() => {
+    if (isOpen) {
+      updatePanelPosition();
+    }
+  }, [isOpen]);
 
   useEffect(() => () => clearCloseTimer(), []);
 
@@ -842,6 +965,7 @@ function DirectoryTree({
             : "directory-tree-folder"
         }
         style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
+        title={item.name}
         type="button"
         onClick={() => onToggleDirectory(item.path)}
         onContextMenu={(event) => onDirectoryContextMenu?.(event, item.path)}
@@ -927,6 +1051,7 @@ function DirectoryTreeItems({
             }
             key={child.path}
             style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
+            title={child.name}
             type="button"
             onClick={() => onOpenFile(child.path)}
             onContextMenu={(event) => onFileContextMenu?.(event, child.path)}
@@ -1114,6 +1239,7 @@ function DirectoryFileList({
                 : "directory-file-list-item"
             }
             key={file.path}
+            title={file.name}
             type="button"
             onClick={() => onOpenFile(file.path)}
             onContextMenu={(event) => onFileContextMenu?.(event, file.path)}
@@ -1211,7 +1337,10 @@ function WorkspaceSearchPanel({
               className="workspace-search-group"
               key={group.document.filePath ?? group.document.id}
             >
-              <div className="workspace-search-file">
+              <div
+                className="workspace-search-file"
+                title={getDocumentDisplayName(group.document)}
+              >
                 <FileText size={15} />
                 <strong>{getDocumentDisplayName(group.document)}</strong>
                 <span>{group.matches.length}</span>
@@ -1269,6 +1398,8 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>(loadAppSettings);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
+  const [windowZoomFactor, setWindowZoomFactor] = useState(defaultWindowZoomFactor);
+  const [isZoomIndicatorVisible, setIsZoomIndicatorVisible] = useState(false);
   const [isHomeOpen, setIsHomeOpen] = useState(true);
   const [isRecentExpanded, setIsRecentExpanded] = useState(false);
   const [, setSaveState] = useState<SaveState>("idle");
@@ -1287,6 +1418,7 @@ export function App() {
     initialData: UniverSheetData;
     target: UniverSheetEditTarget;
   } | null>(null);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
@@ -1304,6 +1436,8 @@ export function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [fileExplorerView, setFileExplorerView] =
     useState<FileExplorerView>("tree");
+  const [documentLoadingState, setDocumentLoadingState] =
+    useState<DocumentLoadingState>(null);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const storedWidth = Number(
       getMigratedStorageItem(
@@ -1319,6 +1453,9 @@ export function App() {
   });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
+  const [sidebarResizePreviewX, setSidebarResizePreviewX] = useState<
+    number | null
+  >(null);
   const [isEditorDraggingMedia, setIsEditorDraggingMedia] = useState(false);
   const [isImmersiveSidebarOpen, setIsImmersiveSidebarOpen] = useState(false);
   const [newFileName, setNewFileName] = useState("Untitled");
@@ -1348,6 +1485,7 @@ export function App() {
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const typoraEditorRef = useRef<TyporaEditorHandle | null>(null);
   const htmlDocumentViewerRef = useRef<HtmlDocumentViewerHandle | null>(null);
+  const zoomIndicatorTimerRef = useRef<number | null>(null);
   const mediaImportIdRef = useRef(0);
   const workspaceSearchInputRef = useRef<HTMLInputElement | null>(null);
   const pendingWorkspaceSearchRevealRef = useRef<WorkspaceSearchReveal | null>(null);
@@ -1645,10 +1783,27 @@ export function App() {
       setIsAlwaysOnTop(state.alwaysOnTop);
     });
 
+    void window.desktop?.getZoomFactor?.().then((factor) => {
+      if (isStale || typeof factor !== "number" || !Number.isFinite(factor)) {
+        return;
+      }
+
+      setWindowZoomFactor(factor);
+    });
+
     return () => {
       isStale = true;
     };
   }, []);
+
+  useEffect(
+    () => () => {
+      if (zoomIndicatorTimerRef.current !== null) {
+        window.clearTimeout(zoomIndicatorTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     window.localStorage.setItem(appSettingsStorageKey, JSON.stringify(settings));
@@ -1656,6 +1811,10 @@ export function App() {
 
   useEffect(() => {
     const style = document.documentElement.style;
+    const contentDensity = getEditorContentDensityStyle(
+      settings.editorContentDensity,
+    );
+
     style.setProperty(
       "--editor-font-family",
       getEditorFontFamily(settings.editorFontFamily),
@@ -1664,15 +1823,20 @@ export function App() {
       "--editor-code-font-family",
       getEditorCodeFontFamily(settings.editorCodeFontFamily),
     );
-    style.setProperty("--editor-font-size", getEditorFontSize(settings.editorFontSize));
     style.setProperty(
-      "--editor-line-height",
-      getEditorLineHeight(settings.editorLineHeight),
+      "--editor-font-size",
+      getAdjustedEditorFontSize(
+        contentDensity.fontSize,
+        settings.editorFontSizeAdjustment,
+      ),
     );
-    style.setProperty(
-      "--editor-content-width",
-      getEditorContentWidth(settings.editorContentWidth),
-    );
+    style.setProperty("--editor-line-height", contentDensity.lineHeight);
+    style.setProperty("--editor-content-width", contentDensity.contentWidth);
+    style.setProperty("--editor-paragraph-margin", contentDensity.paragraphMargin);
+    style.setProperty("--editor-list-margin", contentDensity.listMargin);
+    style.setProperty("--editor-block-margin", contentDensity.blockMargin);
+    style.setProperty("--editor-code-block-margin", contentDensity.codeBlockMargin);
+    style.setProperty("--editor-table-cell-padding", contentDensity.tableCellPadding);
   }, [settings]);
 
   useEffect(() => {
@@ -1737,32 +1901,78 @@ export function App() {
     }
   }
 
+  function revealZoomIndicator(nextFactor: number) {
+    setWindowZoomFactor(nextFactor);
+    setIsZoomIndicatorVisible(true);
+
+    if (zoomIndicatorTimerRef.current !== null) {
+      window.clearTimeout(zoomIndicatorTimerRef.current);
+    }
+
+    zoomIndicatorTimerRef.current = window.setTimeout(() => {
+      setIsZoomIndicatorVisible(false);
+      zoomIndicatorTimerRef.current = null;
+    }, zoomIndicatorVisibleMs);
+  }
+
+  async function runWindowZoomCommand(command: "reset" | "zoomIn" | "zoomOut") {
+    const nextZoomFactor =
+      command === "reset"
+        ? await window.desktop?.resetZoom?.()
+        : command === "zoomIn"
+          ? await window.desktop?.zoomIn?.()
+          : await window.desktop?.zoomOut?.();
+
+    if (typeof nextZoomFactor !== "number" || !Number.isFinite(nextZoomFactor)) {
+      return;
+    }
+
+    revealZoomIndicator(nextZoomFactor);
+    setTopMenu(null);
+    setIsActionsOpen(false);
+    setContextMenu(null);
+  }
+
+  useEffect(() => {
+    return window.desktop?.onZoomFactorChanged?.((factor) => {
+      if (typeof factor === "number" && Number.isFinite(factor)) {
+        revealZoomIndicator(factor);
+      }
+    });
+  }, []);
+
   function startSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setIsSidebarResizing(true);
+    setSidebarResizePreviewX(getSidebarResizeTarget(event.clientX).previewX);
 
-    function resizeSidebar(pointerEvent: PointerEvent) {
-      const nextWidth = pointerEvent.clientX;
+    function previewSidebarResize(pointerEvent: PointerEvent) {
+      setSidebarResizePreviewX(
+        getSidebarResizeTarget(pointerEvent.clientX).previewX,
+      );
+    }
 
-      if (nextWidth < minSidebarWidth) {
-        setIsSidebarCollapsed(true);
-        return;
+    function commitSidebarResize(pointerX: number) {
+      const resizeTarget = getSidebarResizeTarget(pointerX);
+
+      setIsSidebarCollapsed(resizeTarget.isCollapsed);
+
+      if (!resizeTarget.isCollapsed) {
+        setSidebarWidth(resizeTarget.width);
       }
-
-      setIsSidebarCollapsed(false);
-      setSidebarWidth(clamp(nextWidth, minSidebarWidth, maxSidebarWidth));
     }
 
     function stopSidebarResize(pointerEvent: PointerEvent) {
-      resizeSidebar(pointerEvent);
+      commitSidebarResize(pointerEvent.clientX);
       setIsSidebarResizing(false);
-      window.removeEventListener("pointermove", resizeSidebar);
+      setSidebarResizePreviewX(null);
+      window.removeEventListener("pointermove", previewSidebarResize);
       window.removeEventListener("pointerup", stopSidebarResize);
       window.removeEventListener("pointercancel", stopSidebarResize);
     }
 
-    window.addEventListener("pointermove", resizeSidebar);
+    window.addEventListener("pointermove", previewSidebarResize);
     window.addEventListener("pointerup", stopSidebarResize);
     window.addEventListener("pointercancel", stopSidebarResize);
   }
@@ -1889,6 +2099,46 @@ export function App() {
       );
     }
 
+    function selectContentScopeContents(scope: Element) {
+      const ownerDocument = scope.ownerDocument;
+      const selection = ownerDocument.getSelection();
+
+      if (!selection) {
+        return;
+      }
+
+      const range = ownerDocument.createRange();
+      range.selectNodeContents(scope);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    function handleScopedSelectAll(event: KeyboardEvent) {
+      if (!isSelectAllShortcut(event)) {
+        return false;
+      }
+
+      const scope = getSelectAllShortcutScope(event.target);
+
+      if (scope === "input") {
+        return false;
+      }
+
+      event.preventDefault();
+
+      if (scope !== "content" || isCreateFileOpen || isSettingsOpen) {
+        return true;
+      }
+
+      const contentScope = getSelectAllContentScope(event.target);
+
+      if (contentScope) {
+        selectContentScopeContents(contentScope);
+      }
+
+      return true;
+    }
+
     function isEditorShortcutTarget(target: EventTarget | null) {
       return (
         target instanceof Element &&
@@ -1897,6 +2147,10 @@ export function App() {
     }
 
     function handleGlobalEditShortcuts(event: KeyboardEvent) {
+      if (handleScopedSelectAll(event)) {
+        return;
+      }
+
       const action = getAppShortcutAction(event, {
         isEditorTarget: isEditorShortcutTarget(event.target),
         isFullScreen,
@@ -1910,9 +2164,15 @@ export function App() {
         action.type === "view" &&
         (action.command === "toggleFullScreen" ||
           action.command === "exitFullScreen");
+      const isWindowZoomAction =
+        action.type === "view" &&
+        (action.command === "resetZoom" ||
+          action.command === "zoomIn" ||
+          action.command === "zoomOut");
 
       if (
         !isFullScreenAction &&
+        !isWindowZoomAction &&
         (isCreateFileOpen ||
           isSettingsOpen ||
           shouldIgnoreAppShortcutTarget(event.target))
@@ -2270,26 +2530,34 @@ export function App() {
       return;
     }
 
-    const localFile = await window.desktop?.readMarkdownFile?.(filePath);
+    showDocumentLoading("正在打开文档", getFileNameFromPath(filePath));
 
-    if (!localFile) {
-      return;
+    try {
+      const localFile = await window.desktop?.readMarkdownFile?.(filePath);
+
+      if (!localFile) {
+        return;
+      }
+
+      const document = createDocumentFromLocalFile(localFile);
+
+      if (document.filePath) {
+        savedFileContentByPathRef.current.set(document.filePath, document.content);
+      }
+
+      setWorkspace((current) => ({
+        ...current,
+        activeDocumentId: document.id,
+        documents: mergeDocumentByFilePath(current.documents, document),
+        workspacePath: current.workspacePath || filePath.split(/[\\/]/).slice(0, -1).join("\\"),
+      }));
+      rememberRecentDirectory(getDirectoryPath(document.filePath));
+      setIsHomeOpen(false);
+    } catch {
+      setSaveState("failed");
+    } finally {
+      clearDocumentLoading();
     }
-
-    const document = createDocumentFromLocalFile(localFile);
-
-    if (document.filePath) {
-      savedFileContentByPathRef.current.set(document.filePath, document.content);
-    }
-
-    setWorkspace((current) => ({
-      ...current,
-      activeDocumentId: document.id,
-      documents: mergeDocumentByFilePath(current.documents, document),
-      workspacePath: current.workspacePath || filePath.split(/[\\/]/).slice(0, -1).join("\\"),
-    }));
-    rememberRecentDirectory(getDirectoryPath(document.filePath));
-    setIsHomeOpen(false);
   }
 
   async function duplicateDocumentFile(filePath: string) {
@@ -2479,13 +2747,24 @@ export function App() {
     void window.desktop?.newWindow?.();
   }
 
+  function showDocumentLoading(title: string, detail?: string) {
+    setDocumentLoadingState({ detail, title });
+  }
+
+  function clearDocumentLoading() {
+    setDocumentLoadingState(null);
+  }
+
   async function openRecentDocument(document: MarkdownDocument) {
     if (!document.filePath) {
       setActiveDocument(document.id);
       return;
     }
 
-    const exists = window.desktop?.pathExists
+    showDocumentLoading("正在打开文档", getDocumentDisplayName(document));
+
+    try {
+      const exists = window.desktop?.pathExists
       ? await window.desktop.pathExists(document.filePath)
       : true;
 
@@ -2539,6 +2818,9 @@ export function App() {
         title: "无法打开最近文件",
         tone: "danger",
       });
+    }
+    } finally {
+      clearDocumentLoading();
     }
   }
 
@@ -2728,13 +3010,24 @@ export function App() {
   ) {
     event.preventDefault();
     event.stopPropagation();
+    openContextMenuAt(event.clientX, event.clientY, items, width);
+  }
 
+  function openContextMenuAt(
+    clientX: number,
+    clientY: number,
+    items: AppContextMenuItem[],
+    width = 236,
+  ) {
     const visibleRows = items.filter((item) => item.type !== "separator").length;
     const separators = items.length - visibleRows;
-    const estimatedHeight = Math.min(420, visibleRows * 38 + separators * 9 + 16);
-    const x = clamp(event.clientX, 8, Math.max(8, window.innerWidth - width - 8));
+    const estimatedHeight = Math.min(
+      Math.max(160, window.innerHeight - 16),
+      visibleRows * 36 + separators * 11 + 12,
+    );
+    const x = clamp(clientX, 8, Math.max(8, window.innerWidth - width - 8));
     const y = clamp(
-      event.clientY,
+      clientY,
       8,
       Math.max(8, window.innerHeight - estimatedHeight - 8),
     );
@@ -2761,61 +3054,311 @@ export function App() {
     await navigator.clipboard?.writeText(text);
   }
 
-  function openEditorContextMenu(event: ReactMouseEvent<HTMLElement>) {
+  function getDomSelectionTextWithin(container: Element | null) {
+    const selection = window.getSelection();
+
+    if (!selection || selection.isCollapsed || !selection.rangeCount) {
+      return "";
+    }
+
+    if (!container) {
+      return selection.toString();
+    }
+
+    const range = selection.getRangeAt(0);
+    const commonAncestor =
+      range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+        ? (range.commonAncestorContainer as Element)
+        : range.commonAncestorContainer.parentElement;
+    const anchorElement =
+      selection.anchorNode?.nodeType === Node.ELEMENT_NODE
+        ? (selection.anchorNode as Element)
+        : selection.anchorNode?.parentElement;
+    const focusElement =
+      selection.focusNode?.nodeType === Node.ELEMENT_NODE
+        ? (selection.focusNode as Element)
+        : selection.focusNode?.parentElement;
+
+    if (
+      (commonAncestor && container.contains(commonAncestor)) ||
+      (anchorElement && container.contains(anchorElement)) ||
+      (focusElement && container.contains(focusElement))
+    ) {
+      return selection.toString();
+    }
+
+    return "";
+  }
+
+  function getEditorSelectionText(target: Element | null, isTextareaContext: boolean) {
+    if (isTextareaContext) {
+      const textarea = target?.closest<HTMLTextAreaElement>("textarea.markdown-input");
+
+      if (!textarea || textarea.selectionStart === textarea.selectionEnd) {
+        return "";
+      }
+
+      return textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
+    }
+
+    return getDomSelectionTextWithin(
+      target?.closest(".ProseMirror, .markdown-preview") ?? null,
+    );
+  }
+
+  async function hasClipboardContentForPaste() {
+    try {
+      const nativeClipboardHasContent =
+        await window.desktop?.hasClipboardContent?.();
+
+      if (typeof nativeClipboardHasContent === "boolean") {
+        return nativeClipboardHasContent;
+      }
+    } catch {
+      // Browser clipboard is the fallback when the desktop bridge is unavailable.
+    }
+
+    try {
+      return Boolean(await navigator.clipboard?.readText?.());
+    } catch {
+      return false;
+    }
+  }
+
+  function getTextareaContextMenuInfo(): Partial<EditorContextMenuInfo> {
+    const editor = editorRef.current;
+
+    if (!editor || !activeDocument) {
+      return {};
+    }
+
+    const range = getSelectedTextareaLineRange(editor);
+    const line = range.content.slice(range.lineStart, range.lineEnd);
+    const taskMatch = line.match(markdownTaskListLinePattern);
+    const link = findMarkdownLinkInRange(range);
+
+    return {
+      isListItem: markdownListLinePattern.test(line),
+      isTaskListItem: Boolean(taskMatch),
+      linkHref: link?.href,
+      taskChecked: taskMatch ? taskMatch[1]?.toLowerCase() === "x" : undefined,
+    };
+  }
+
+  async function getEditorContextMenuInfo(
+    event: ReactMouseEvent<HTMLElement>,
+  ): Promise<EditorContextMenuInfo> {
+    const target = event.target instanceof Element ? event.target : null;
+    const isTextareaContext = Boolean(target?.closest("textarea.markdown-input"));
+    const isPreviewContext = Boolean(target?.closest(".markdown-preview"));
+    const taskElement = target?.closest(
+      'li[data-item-type="task"], li.task-list-item, li.markdown-task-list-item',
+    );
+    const listElement = target?.closest("li");
+    const linkElement = target?.closest<HTMLAnchorElement>("a[href]");
+    const taskCheckedAttribute =
+      taskElement?.getAttribute("data-checked") ??
+      taskElement?.getAttribute("data-task-checked");
+    const domTaskChecked =
+      taskCheckedAttribute === "true"
+        ? true
+        : taskCheckedAttribute === "false"
+          ? false
+          : undefined;
+    const textareaInfo = isTextareaContext ? getTextareaContextMenuInfo() : {};
+    const selectedText = getEditorSelectionText(target, isTextareaContext);
+    const isEditable = !isPreviewContext && (mode === "typora" || isTextareaContext);
+
+    return {
+      canPaste: isEditable ? await hasClipboardContentForPaste() : false,
+      hasSelection: selectedText.length > 0,
+      isEditable,
+      isListItem: Boolean(listElement) || Boolean(textareaInfo.isListItem),
+      isTaskListItem:
+        Boolean(taskElement) || Boolean(textareaInfo.isTaskListItem),
+      linkHref: linkElement?.href || textareaInfo.linkHref,
+      taskChecked: domTaskChecked ?? textareaInfo.taskChecked,
+    };
+  }
+
+  function compactContextMenuItems(items: AppContextMenuItem[]) {
+    const compacted: AppContextMenuItem[] = [];
+
+    for (const item of items) {
+      if (
+        item.type === "separator" &&
+        (compacted.length === 0 ||
+          compacted[compacted.length - 1]?.type === "separator")
+      ) {
+        continue;
+      }
+
+      compacted.push(item);
+    }
+
+    while (compacted.at(-1)?.type === "separator") {
+      compacted.pop();
+    }
+
+    return compacted;
+  }
+
+  async function openEditorContextMenu(event: ReactMouseEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+
     if (!activeDocument || !isMarkdownDocument(activeDocument)) {
       return;
     }
 
-    openContextMenu(
-      event,
-      [
-        {
-          icon: <Scissors size={15} />,
-          label: "剪切",
-          onSelect: () => runEditCommand("cut"),
-          shortcut: "Ctrl+X",
-        },
-        {
-          icon: <Copy size={15} />,
-          label: "复制",
-          onSelect: () => runEditCommand("copy"),
-          shortcut: "Ctrl+C",
-        },
-        {
-          icon: <ClipboardPaste size={15} />,
-          label: "粘贴",
-          onSelect: () => runEditCommand("paste"),
-          shortcut: "Ctrl+V",
-        },
-        { type: "separator" },
-        {
-          icon: <Bold size={15} />,
-          label: "加粗",
-          onSelect: () => runFormatCommand({ type: "bold" }),
-          shortcut: "Ctrl+B",
-        },
-        {
-          icon: <Italic size={15} />,
-          label: "斜体",
-          onSelect: () => runFormatCommand({ type: "italic" }),
-          shortcut: "Ctrl+I",
-        },
-        {
-          icon: <Code2 size={15} />,
-          label: "行内代码",
-          onSelect: () => runFormatCommand({ type: "inlineCode" }),
-          shortcut: "Ctrl+Shift+`",
-        },
-        { type: "separator" },
-        {
-          danger: true,
-          icon: <Trash2 size={15} />,
-          label: "删除",
-          onSelect: () => runEditCommand("delete"),
-          shortcut: "Delete",
-        },
-      ],
-      246,
+    const { clientX, clientY } = event;
+    const contextInfo = await getEditorContextMenuInfo(event);
+    const items: AppContextMenuItem[] = [
+      ...(contextInfo.linkHref
+        ? [
+            {
+              icon: <ExternalLink size={15} />,
+              label: "打开链接",
+              onSelect: () =>
+                window.open(
+                  contextInfo.linkHref,
+                  "_blank",
+                  "noopener,noreferrer",
+                ),
+            },
+            {
+              icon: <Copy size={15} />,
+              label: "复制链接",
+              onSelect: () => copyTextToClipboard(contextInfo.linkHref ?? ""),
+            },
+            ...(contextInfo.isEditable
+              ? [
+                  {
+                    icon: <X size={15} />,
+                    label: "移除链接",
+                    onSelect: () => runFormatCommand({ type: "removeLink" }),
+                  },
+                ]
+              : []),
+            { type: "separator" as const },
+          ]
+        : []),
+      ...(contextInfo.isEditable
+        ? [
+            {
+              disabled: !contextInfo.hasSelection,
+              icon: <Scissors size={15} />,
+              label: "剪切",
+              onSelect: () => runEditCommand("cut"),
+              shortcut: "Ctrl+X",
+            },
+          ]
+        : []),
+      {
+        disabled: !contextInfo.hasSelection,
+        icon: <Copy size={15} />,
+        label: "复制",
+        onSelect: () => runEditCommand("copy"),
+        shortcut: "Ctrl+C",
+      },
+      ...(contextInfo.isEditable
+        ? [
+            {
+              disabled: !contextInfo.canPaste,
+              icon: <ClipboardPaste size={15} />,
+              label: "粘贴",
+              onSelect: () => runEditCommand("paste"),
+              shortcut: "Ctrl+V",
+            },
+          ]
+        : []),
+      { type: "separator" },
+      ...(contextInfo.isEditable && contextInfo.isTaskListItem
+        ? [
+            {
+              icon: <ListTree size={15} />,
+              label: "切换任务状态",
+              onSelect: () =>
+                runParagraphCommand({ type: "taskStatus", status: "toggle" }),
+            },
+            {
+              disabled: contextInfo.taskChecked === true,
+              icon: <Check size={15} />,
+              label: "标记已完成",
+              onSelect: () =>
+                runParagraphCommand({
+                  type: "taskStatus",
+                  status: "completed",
+                }),
+            },
+            {
+              disabled: contextInfo.taskChecked === false,
+              icon: <Square size={15} />,
+              label: "标记为未完成",
+              onSelect: () =>
+                runParagraphCommand({
+                  type: "taskStatus",
+                  status: "incomplete",
+                }),
+            },
+            { type: "separator" as const },
+          ]
+        : []),
+      ...(contextInfo.isEditable && contextInfo.isListItem
+        ? [
+            {
+              icon: <ChevronRight size={15} />,
+              label: "增加列表缩进",
+              onSelect: () => runParagraphCommand({ type: "indentList" }),
+              shortcut: "Tab",
+            },
+            {
+              icon: <ChevronLeft size={15} />,
+              label: "减少列表缩进",
+              onSelect: () => runParagraphCommand({ type: "outdentList" }),
+              shortcut: "Shift+Tab",
+            },
+            { type: "separator" as const },
+          ]
+        : []),
+      ...(contextInfo.isEditable
+        ? [
+            {
+              icon: <Bold size={15} />,
+              label: "加粗",
+              onSelect: () => runFormatCommand({ type: "bold" }),
+              shortcut: "Ctrl+B",
+            },
+            {
+              icon: <Italic size={15} />,
+              label: "斜体",
+              onSelect: () => runFormatCommand({ type: "italic" }),
+              shortcut: "Ctrl+I",
+            },
+            {
+              icon: <Code2 size={15} />,
+              label: "行内代码",
+              onSelect: () => runFormatCommand({ type: "inlineCode" }),
+              shortcut: "Ctrl+Shift+`",
+            },
+            { type: "separator" as const },
+            {
+              danger: true,
+              disabled: !activeDocument.content,
+              icon: <Trash2 size={15} />,
+              label: "删除",
+              onSelect: () => runEditCommand("delete"),
+              shortcut: "Delete",
+            },
+          ]
+        : []),
+    ];
+
+    openContextMenuAt(
+      clientX,
+      clientY,
+      compactContextMenuItems(items),
+      contextInfo.linkHref || contextInfo.isTaskListItem ? 272 : 246,
     );
   }
 
@@ -3341,9 +3884,6 @@ export function App() {
           case "openDocument":
             void openMarkdownFile();
             break;
-          case "openSettings":
-            setIsSettingsOpen(true);
-            break;
           case "save":
             void saveNow();
             break;
@@ -3361,6 +3901,9 @@ export function App() {
           case "toggleFullScreen":
             void toggleFullScreen();
             break;
+          case "resetZoom":
+            void runWindowZoomCommand("reset");
+            break;
           case "showDocuments":
             setIsHomeOpen(true);
             break;
@@ -3377,6 +3920,12 @@ export function App() {
             break;
           case "workspaceSearch":
             openWorkspaceSearch();
+            break;
+          case "zoomIn":
+            void runWindowZoomCommand("zoomIn");
+            break;
+          case "zoomOut":
+            void runWindowZoomCommand("zoomOut");
             break;
         }
         break;
@@ -3621,12 +4170,16 @@ export function App() {
   }
 
   async function openMarkdownFile() {
+    showDocumentLoading("正在打开文档", "等待选择文件...");
+
     try {
       const localFile = await window.desktop?.selectMarkdownFile?.();
 
       if (!localFile) {
         return;
       }
+
+      showDocumentLoading("正在打开文档", localFile.title || getFileNameFromPath(localFile.filePath));
 
       const document = createDocumentFromLocalFile(localFile);
 
@@ -3645,6 +4198,8 @@ export function App() {
       setSaveState("saved");
     } catch {
       setSaveState("failed");
+    } finally {
+      clearDocumentLoading();
     }
   }
 
@@ -4844,6 +5399,32 @@ export function App() {
       return;
     }
 
+    if (command.type === "taskStatus") {
+      const textarea = editorRef.current;
+
+      if (!textarea) {
+        return;
+      }
+
+      const result = updateMarkdownTaskStatus(
+        textarea.value,
+        textarea.selectionStart,
+        textarea.selectionEnd,
+        command.status,
+      );
+
+      if (result) {
+        setTextareaContent(
+          textarea,
+          result.markdown,
+          result.selectionStart,
+          result.selectionEnd,
+        );
+      }
+
+      return;
+    }
+
     const markdown = createParagraphCommandMarkdown(
       command,
       activeDocument?.content ?? "",
@@ -4921,8 +5502,6 @@ export function App() {
               showSidebar();
               setSidebarTab("files");
             })} />
-            <MenuSeparator />
-            <MenuItem label="偏好设置..." shortcut="Ctrl+逗号" onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
           </>
         );
       case "edit":
@@ -4977,7 +5556,6 @@ export function App() {
             <MenuItem label="表格" onSelect={() => runTopMenuAction(() => insertTable({ columns: 3, rows: 3 }))} />
             <MenuItem label="公式块" shortcut="Ctrl+Shift+M" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "mathBlock" }))} />
             <MenuItem label="代码块" shortcut="Ctrl+Shift+K" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "codeBlock" }))} />
-            <MenuItem label="代码工具" submenu disabled />
             <MenuSubmenu label="警告框">
               {markdownAlertOptions.map((option) => (
                 <MenuItem
@@ -4997,19 +5575,15 @@ export function App() {
             <MenuItem label="有序列表" shortcut="Ctrl+Shift+[" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "orderedList" }))} />
             <MenuItem label="无序列表" shortcut="Ctrl+Shift+]" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "bulletList" }))} />
             <MenuItem label="任务列表" shortcut="Ctrl+Shift+X" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "taskList" }))} />
-            <MenuItem label="任务状态" submenu disabled />
+            <MenuSubmenu label="任务状态">
+              <MenuItem label="切换任务状态" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "taskStatus", status: "toggle" }))} />
+              <MenuItem label="标记已完成" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "taskStatus", status: "completed" }))} />
+              <MenuItem label="标记为未完成" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "taskStatus", status: "incomplete" }))} />
+            </MenuSubmenu>
             <MenuItem label="增加列表缩进" shortcut="Tab" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "indentList" }))} />
             <MenuItem label="减少列表缩进" shortcut="Shift+Tab" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "outdentList" }))} />
             <MenuSeparator />
-            <MenuItem label="在上方插入段落" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "insertParagraphBefore" }))} />
-            <MenuItem label="在下方插入段落" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "insertParagraphAfter" }))} />
-            <MenuSeparator />
-            <MenuItem label="链接引用" disabled />
-            <MenuItem label="脚注" disabled />
-            <MenuSeparator />
             <MenuItem label="水平分割线" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "horizontalRule" }))} />
-            <MenuItem label="内容目录" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "toc" }))} />
-            <MenuItem label="YAML Front Matter" disabled />
           </>
         );
       case "format":
@@ -5024,11 +5598,6 @@ export function App() {
             <MenuItem label="注释" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "comment" }))} />
             <MenuSeparator />
             <MenuItem label="超链接" shortcut="Ctrl+K" onSelect={() => runTopMenuAction(createLinkFromPrompt)} />
-            <MenuSubmenu label="链接操作">
-              <MenuItem label="打开链接" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "openLink" }))} />
-              <MenuItem label="复制链接" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "copyLink" }))} />
-              <MenuItem label="移除链接" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "removeLink" }))} />
-            </MenuSubmenu>
             <MenuSubmenu label="图像">
               <MenuItem label="插入本地图片..." onSelect={() => runTopMenuAction(() => readFileInput(imageInputRef.current))} />
               <MenuSeparator />
@@ -5037,21 +5606,36 @@ export function App() {
               <MenuItem label="右对齐" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "imageAlign", align: "right" }))} />
               <MenuItem label="恢复原始大小" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "imageResetSize" }))} />
             </MenuSubmenu>
-            <MenuSeparator />
-            <MenuItem label="清除样式" shortcut="Ctrl+\\" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "clearStyle" }))} />
           </>
         );
       case "view":
         return (
           <>
             <MenuItem label="显示 / 隐藏侧边栏" shortcut="Ctrl+Shift+L" onSelect={() => runTopMenuAction(toggleSidebarVisibility)} />
-            <MenuItem label="大纲" shortcut="Ctrl+Shift+1" onSelect={() => runTopMenuAction(() => setSidebarTab("current"))} />
-            <MenuItem label="文档列表" shortcut="Ctrl+Shift+2" onSelect={() => runTopMenuAction(() => setIsHomeOpen(true))} />
-            <MenuItem label="文件树" shortcut="Ctrl+Shift+3" onSelect={() => runTopMenuAction(() => setSidebarTab("files"))} />
             <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(openWorkspaceSearch)} />
-            <MenuSeparator />
-            <MenuItem label="显示状态栏" checked disabled />
-            <MenuItem label="字数统计窗口" disabled />
+            <MenuItem label="阅读设置..." onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
+            <MenuSubmenu label="编辑模式">
+              <MenuItem
+                checked={mode === "typora"}
+                label="实时渲染"
+                onSelect={() => runTopMenuAction(() => updateEditorMode("typora"))}
+              />
+              <MenuItem
+                checked={mode === "source"}
+                label="源码"
+                onSelect={() => runTopMenuAction(() => updateEditorMode("source"))}
+              />
+              <MenuItem
+                checked={mode === "split"}
+                label="分栏"
+                onSelect={() => runTopMenuAction(() => updateEditorMode("split"))}
+              />
+              <MenuItem
+                checked={mode === "preview"}
+                label="预览"
+                onSelect={() => runTopMenuAction(() => updateEditorMode("preview"))}
+              />
+            </MenuSubmenu>
             <MenuSeparator />
             <MenuItem
               label="沉浸浏览模式"
@@ -5065,9 +5649,22 @@ export function App() {
               onSelect={() => runTopMenuAction(() => void toggleAlwaysOnTop())}
             />
             <MenuSeparator />
-            <MenuItem label="实际大小" shortcut="Ctrl+Shift+9" checked disabled />
-            <MenuItem label="放大" shortcut="Ctrl+Shift+=" disabled />
-            <MenuItem label="缩小" shortcut="Ctrl+Shift+-" disabled />
+            <MenuItem
+              label={`实际大小 (${windowZoomPercent}%)`}
+              shortcut="Ctrl+Shift+9"
+              checked={isDefaultWindowZoom}
+              onSelect={() => runTopMenuAction(() => void runWindowZoomCommand("reset"))}
+            />
+            <MenuItem
+              label="放大"
+              shortcut="Ctrl++"
+              onSelect={() => runTopMenuAction(() => void runWindowZoomCommand("zoomIn"))}
+            />
+            <MenuItem
+              label="缩小"
+              shortcut="Ctrl+Shift+-"
+              onSelect={() => runTopMenuAction(() => void runWindowZoomCommand("zoomOut"))}
+            />
             <MenuSeparator />
             <MenuItem label="应用内窗口切换" shortcut="Ctrl+Tab 键" disabled />
           </>
@@ -5090,13 +5687,8 @@ export function App() {
           <>
             <MenuItem
               label="关于 noteDock"
-              onSelect={() =>
-                runTopMenuAction(() => {
-                  setBackupMessage("noteDock · Electron + Milkdown");
-                })
-              }
+              onSelect={() => runTopMenuAction(() => setIsAboutOpen(true))}
             />
-            <MenuItem label="打开设置" onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
           </>
         );
       default:
@@ -5138,6 +5730,40 @@ export function App() {
   function handleImmersivePointerLeave() {
     setImmersiveReveal(null);
   }
+
+  function shouldPreserveSelectAllFocus(target: EventTarget | null) {
+    return (
+      target instanceof Element &&
+      Boolean(
+        target.closest(
+          "a[href],button,iframe,input,textarea,select,[contenteditable='true']",
+        ),
+      )
+    );
+  }
+
+  function focusSelectAllContentScope(event: ReactPointerEvent<HTMLElement>) {
+    if (shouldPreserveSelectAllFocus(event.target)) {
+      return;
+    }
+
+    const contentScope = getSelectAllContentScope(event.target);
+
+    if (contentScope instanceof HTMLElement) {
+      contentScope.focus({ preventScroll: true });
+    }
+  }
+
+  const selectedContentDensity =
+    editorContentDensityOptions.find(
+      (option) => option.value === settings.editorContentDensity,
+    ) ?? editorContentDensityOptions[1];
+  const fontSizeAdjustmentLabel = formatEditorFontSizeAdjustment(
+    settings.editorFontSizeAdjustment,
+  );
+  const windowZoomPercent = Math.round(windowZoomFactor * 100);
+  const isDefaultWindowZoom =
+    Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
 
   return (
     <>
@@ -5254,6 +5880,18 @@ export function App() {
             onPointerMove={() => revealImmersiveEdge("top")}
           />
         )}
+
+        {sidebarResizePreviewX !== null ? (
+          <div
+            className="sidebar-resize-preview"
+            aria-hidden="true"
+            style={
+              {
+                "--sidebar-resize-preview-x": `${sidebarResizePreviewX}px`,
+              } as CSSProperties
+            }
+          />
+        ) : null}
 
         <aside className="sidebar explorer-sidebar" aria-hidden={isSidebarHidden}>
           <div className="explorer-tabs" role="tablist" aria-label="侧边栏视图">
@@ -5594,6 +6232,10 @@ export function App() {
                     <button
                       className="recent-row"
                       key={document.id}
+                      title={`${getDocumentDisplayName(document)}\n${getDocumentPathPreview(
+                        document,
+                        workspace.workspacePath,
+                      )}`}
                       type="button"
                       onClick={() => void openRecentDocument(document)}
                       onContextMenu={(event) => {
@@ -5617,11 +6259,29 @@ export function App() {
               </section>
             </section>
           ) : (
-            <section className="editor-workspace">
+            <section
+              className="editor-workspace"
+              data-select-all-scope="content"
+              onPointerDownCapture={focusSelectAllContentScope}
+              tabIndex={-1}
+            >
               <Suspense
                 fallback={
-                  <section className="standalone-document-viewer">
-                    <div className="drawing-loading">正在加载阅读器...</div>
+                  <section
+                    className="standalone-document-viewer"
+                    data-select-all-scope="content"
+                    tabIndex={-1}
+                  >
+                    <div className="document-loading-inline">
+                      <DocumentLoadingIndicator
+                        title="正在加载阅读器"
+                        detail={
+                          activeDocument
+                            ? getDocumentDisplayName(activeDocument)
+                            : undefined
+                        }
+                      />
+                    </div>
                   </section>
                 }
               >
@@ -5657,7 +6317,11 @@ export function App() {
               ) : isExcelDocument(activeDocument) ? (
                 <ExcelDocumentViewer document={activeDocument} />
               ) : isSheetDocument(activeDocument) ? (
-                <section className="standalone-document-viewer standalone-sheet-viewer">
+                <section
+                  className="standalone-document-viewer standalone-sheet-viewer"
+                  data-select-all-scope="content"
+                  tabIndex={-1}
+                >
                   <UniverSheetPreview
                     code={activeDocument.content}
                     filePath={activeDocument.filePath}
@@ -5667,7 +6331,11 @@ export function App() {
                   />
                 </section>
               ) : isDrawingDocument(activeDocument) ? (
-                <section className="standalone-document-viewer standalone-drawing-viewer">
+                <section
+                  className="standalone-document-viewer standalone-drawing-viewer"
+                  data-select-all-scope="content"
+                  tabIndex={-1}
+                >
                   <div className="standalone-document-card">
                     <FileText size={26} />
                     <div>
@@ -5735,7 +6403,12 @@ export function App() {
                   )}
 
                   {(mode === "split" || mode === "preview") && (
-                    <article className="markdown-preview">
+                    <article
+                      className="markdown-preview"
+                      data-select-all-scope="content"
+                      onContextMenu={openEditorContextMenu}
+                      tabIndex={-1}
+                    >
                       <MarkdownRenderer
                         filePath={activeDocument.filePath}
                         onEditMindMap={(code) =>
@@ -5757,6 +6430,14 @@ export function App() {
               </Suspense>
             </section>
           )}
+          {documentLoadingState ? (
+            <div className="document-loading-overlay">
+              <DocumentLoadingIndicator
+                title={documentLoadingState.title}
+                detail={documentLoadingState.detail}
+              />
+            </div>
+          ) : null}
           <footer className="workspace-statusbar">
             <button
               className="workspace-status-button"
@@ -5807,6 +6488,19 @@ export function App() {
             }
           }}
         />
+
+        <div
+          className={[
+            "window-zoom-indicator",
+            isZoomIndicatorVisible ? "window-zoom-indicator-visible" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          aria-live="polite"
+          aria-hidden={!isZoomIndicatorVisible}
+        >
+          {windowZoomPercent}%
+        </div>
 
         {contextMenu ? (
           <div
@@ -6286,12 +6980,24 @@ export function App() {
           </Dialog.Portal>
         </Dialog.Root>
 
+        <AboutDialog open={isAboutOpen} onOpenChange={setIsAboutOpen} />
+
         <Dialog.Root open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
           <Dialog.Portal>
             <Dialog.Overlay className="dialog-overlay" />
             <Dialog.Content className="settings-dialog">
               <div className="settings-header">
-                <Dialog.Title className="settings-title">设置</Dialog.Title>
+                <div className="settings-title-group">
+                  <span className="settings-title-icon" aria-hidden="true">
+                    <BookOpenText size={18} />
+                  </span>
+                  <div>
+                    <Dialog.Title className="settings-title">阅读设置</Dialog.Title>
+                    <p className="settings-subtitle">
+                      调整正文区域的显示大小，实时影响 Markdown、HTML 与编辑器内容。
+                    </p>
+                  </div>
+                </div>
                 <Dialog.Close asChild>
                   <button className="icon-button" type="button" aria-label="关闭设置">
                     <X size={16} />
@@ -6299,114 +7005,121 @@ export function App() {
                 </Dialog.Close>
               </div>
 
-              <section className="settings-section">
-                <div className="settings-section-title">编辑模式</div>
-                <ToggleGroup.Root
-                  className="settings-mode-grid"
-                  type="single"
-                  value={mode}
-                  aria-label="编辑模式"
-                  onValueChange={(nextMode) => {
-                    if (nextMode) {
-                      updateEditorMode(nextMode as EditorMode);
-                    }
-                  }}
-                >
-                  {editorModeOptions.map((option) => (
-                    <ToggleGroup.Item
-                      className="settings-mode-item"
-                      key={option.value}
-                      value={option.value}
-                      aria-label={option.label}
-                    >
-                      {option.icon}
-                      <span>{option.label}</span>
-                    </ToggleGroup.Item>
-                  ))}
-                </ToggleGroup.Root>
-              </section>
-              <section className="settings-section settings-form-section">
-                <div className="settings-section-title">字体与排版</div>
-                <div className="settings-field-grid">
-                  <label className="settings-field">
-                    <span>正文字体</span>
-                    <select
-                      value={settings.editorFontFamily}
-                      onChange={(event) =>
-                        updateSetting("editorFontFamily", event.target.value)
+              <div className="settings-body">
+                <section className="settings-section">
+                  <div className="settings-section-heading">
+                    <div>
+                      <div className="settings-section-title">正文大小</div>
+                      <p>
+                        选择一个阅读密度预设，字体、行高、表格留白和内容宽度会一起调整。
+                      </p>
+                    </div>
+                    <span className="settings-current-badge">
+                      当前：{selectedContentDensity.label} · {fontSizeAdjustmentLabel}
+                    </span>
+                  </div>
+
+                  <ToggleGroup.Root
+                    className="settings-density-grid"
+                    type="single"
+                    value={settings.editorContentDensity}
+                    aria-label="正文大小"
+                    onValueChange={(nextDensity) => {
+                      if (nextDensity) {
+                        updateSetting(
+                          "editorContentDensity",
+                          nextDensity as AppSettings["editorContentDensity"],
+                        );
                       }
-                    >
-                      {editorFontOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="settings-field">
-                    <span>代码字体</span>
-                    <select
-                      value={settings.editorCodeFontFamily}
-                      onChange={(event) =>
-                        updateSetting("editorCodeFontFamily", event.target.value)
-                      }
-                    >
-                      {editorCodeFontOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <div className="settings-field-grid">
-                  <label className="settings-field">
-                    <span>字号</span>
-                    <select
-                      value={settings.editorFontSize}
-                      onChange={(event) =>
-                        updateSetting("editorFontSize", event.target.value)
-                      }
-                    >
-                      {editorFontSizeOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="settings-field">
-                    <span>行高</span>
-                    <select
-                      value={settings.editorLineHeight}
-                      onChange={(event) =>
-                        updateSetting("editorLineHeight", event.target.value)
-                      }
-                    >
-                      {editorLineHeightOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <label className="settings-field">
-                  <span>内容宽度</span>
-                  <select
-                    value={settings.editorContentWidth}
-                    onChange={(event) =>
-                      updateSetting("editorContentWidth", event.target.value)
-                    }
+                    }}
                   >
-                    {editorContentWidthOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
+                    {editorContentDensityOptions.map((option) => (
+                      <ToggleGroup.Item
+                        className="settings-density-card"
+                        key={option.value}
+                        value={option.value}
+                        aria-label={option.label}
+                      >
+                        <span className="settings-density-title">
+                          <strong>{option.label}</strong>
+                          <span>{option.meta}</span>
+                        </span>
+                        <span className="settings-density-description">
+                          {option.description}
+                        </span>
+                        <span
+                          className={`settings-density-preview settings-density-preview-${option.value}`}
+                          aria-hidden="true"
+                        >
+                          <span />
+                          <span />
+                          <span />
+                        </span>
+                      </ToggleGroup.Item>
                     ))}
-                  </select>
-                </label>
-              </section>
+                  </ToggleGroup.Root>
+
+                  <div className="settings-font-control">
+                    <div className="settings-font-control-header">
+                      <div>
+                        <div className="settings-font-control-title">字号微调</div>
+                        <p>在当前预设基础上拖拽调整，适合按屏幕距离和主题字体再细调。</p>
+                      </div>
+                      <span className="settings-font-value-badge">
+                        {fontSizeAdjustmentLabel}
+                      </span>
+                    </div>
+                    <div className="settings-font-slider-row">
+                      <span>{editorFontSizeAdjustmentRange.min}px</span>
+                      <input
+                        className="settings-font-slider"
+                        type="range"
+                        min={editorFontSizeAdjustmentRange.min}
+                        max={editorFontSizeAdjustmentRange.max}
+                        step={editorFontSizeAdjustmentRange.step}
+                        value={settings.editorFontSizeAdjustment}
+                        aria-label="字号微调"
+                        onChange={(event) => {
+                          updateSetting(
+                            "editorFontSizeAdjustment",
+                            Number(event.currentTarget.value),
+                          );
+                        }}
+                      />
+                      <span>+{editorFontSizeAdjustmentRange.max}px</span>
+                    </div>
+                    <div className="settings-font-control-footer">
+                      <span>预设控制整体密度，微调只改变正文基准字号。</span>
+                      <button
+                        className="settings-font-reset"
+                        type="button"
+                        onClick={() =>
+                          updateSetting(
+                            "editorFontSizeAdjustment",
+                            editorFontSizeAdjustmentRange.defaultValue,
+                          )
+                        }
+                      >
+                        重置到预设
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="settings-preview-panel" aria-label="显示预览">
+                  <div className="settings-preview-kicker">预览</div>
+                  <h3>项目笔记</h3>
+                  <p>
+                    文本大小会同步影响正文、列表和表格区域。这个设置偏向阅读体验，不改变文档本身内容。
+                  </p>
+                  <div className="settings-preview-table" aria-hidden="true">
+                    <span>类型</span>
+                    <span>状态</span>
+                    <span>Markdown</span>
+                    <span>已同步</span>
+                  </div>
+                </section>
+              </div>
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>

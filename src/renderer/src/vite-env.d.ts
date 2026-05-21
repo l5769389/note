@@ -13,6 +13,7 @@ type WorkspaceFileChangePayload = {
 };
 
 type DesktopApi = {
+  hasClipboardContent: () => Promise<boolean>;
   listClipboardMediaFiles: () => Promise<
     Array<{
       fileName: string;
@@ -67,6 +68,7 @@ type DesktopApi = {
   }) => Promise<string | null>;
   getDefaultWorkspaceDirectory: () => Promise<string>;
   getPathForFile: (file: File) => string;
+  getZoomFactor: () => Promise<number>;
   getWindowState: () => Promise<{
     alwaysOnTop: boolean;
     fullScreen: boolean;
@@ -76,6 +78,7 @@ type DesktopApi = {
   onWorkspaceFileChanged: (
     callback: (payload: WorkspaceFileChangePayload) => void,
   ) => () => void;
+  onZoomFactorChanged: (callback: (factor: number) => void) => () => void;
   openPath: (targetPath: string) => Promise<string>;
   openWorkspaceDirectory: () => Promise<LocalWorkspaceDirectory | null>;
   pathExists: (filePath: string) => Promise<boolean>;
@@ -113,6 +116,8 @@ type DesktopApi = {
     electron: string;
   };
   windowControl: (action: "close" | "maximize" | "minimize") => Promise<boolean | void>;
+  resetZoom: () => Promise<number>;
+  setZoomFactor: (factor: number) => Promise<number>;
   toggleAlwaysOnTop: () => Promise<boolean>;
   toggleFullScreen: () => Promise<boolean>;
   watchWorkspaceDirectory: (directoryPath: string) => Promise<boolean>;
@@ -125,6 +130,8 @@ type DesktopApi = {
     documentFilePath: string;
     reference: string;
   }) => Promise<{ assetFilePath: string; reference: string }>;
+  zoomIn: () => Promise<number>;
+  zoomOut: () => Promise<number>;
 };
 
 declare global {

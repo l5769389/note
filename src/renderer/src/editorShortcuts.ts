@@ -19,8 +19,8 @@ export type EditorShortcutEvent = Pick<
 };
 
 export type AppShortcutAction =
-  | { command: "newMarkdownDocument" | "newWindow" | "openDocument" | "openSettings" | "save" | "saveAs"; type: "file" }
-  | { command: "exitFullScreen" | "showDocuments" | "showFiles" | "showOutline" | "toggleFullScreen" | "toggleSidebar" | "workspaceSearch"; type: "view" }
+  | { command: "newMarkdownDocument" | "newWindow" | "openDocument" | "save" | "saveAs"; type: "file" }
+  | { command: "exitFullScreen" | "resetZoom" | "showDocuments" | "showFiles" | "showOutline" | "toggleFullScreen" | "toggleSidebar" | "workspaceSearch" | "zoomIn" | "zoomOut"; type: "view" }
   | { replace?: boolean; type: "find" }
   | { action: Exclude<EditorShortcutAction, { type: "find" }>; type: "editor" };
 
@@ -29,8 +29,54 @@ export type AppShortcutContext = {
   isFullScreen?: boolean;
 };
 
+export type SelectAllShortcutScope = "blocked" | "content" | "input";
+
+export const selectAllContentScopeSelector = "[data-select-all-scope='content']";
+
+const selectAllInputSelector = "input,textarea,select,[contenteditable='true']";
+
+type ClosestCapableTarget = EventTarget & {
+  closest?: (selector: string) => Element | null;
+};
+
 export function isAppShortcutModifier(event: EditorShortcutEvent) {
   return (event.ctrlKey || event.metaKey) && !(event.ctrlKey && event.metaKey);
+}
+
+export function isSelectAllShortcut(event: EditorShortcutEvent) {
+  return (
+    !event.isComposing &&
+    isAppShortcutModifier(event) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === "a"
+  );
+}
+
+function closestShortcutTarget(target: EventTarget | null, selector: string) {
+  const candidate = target as ClosestCapableTarget | null;
+
+  return typeof candidate?.closest === "function"
+    ? candidate.closest(selector)
+    : null;
+}
+
+export function getSelectAllContentScope(target: EventTarget | null) {
+  return closestShortcutTarget(target, selectAllContentScopeSelector);
+}
+
+export function getSelectAllShortcutScope(
+  target: EventTarget | null,
+): SelectAllShortcutScope {
+  if (closestShortcutTarget(target, selectAllInputSelector)) {
+    return "input";
+  }
+
+  if (getSelectAllContentScope(target)) {
+    return "content";
+  }
+
+  return "blocked";
 }
 
 function hasOnlyAppModifier(event: EditorShortcutEvent, shiftKey = false) {
@@ -39,6 +85,42 @@ function hasOnlyAppModifier(event: EditorShortcutEvent, shiftKey = false) {
 
 function hasNoModifier(event: EditorShortcutEvent) {
   return !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+}
+
+function isMainPlusKey(event: EditorShortcutEvent) {
+  return event.code === "Equal" || event.key === "+" || event.key === "=";
+}
+
+function isMainMinusKey(event: EditorShortcutEvent) {
+  return event.code === "Minus" || event.key === "-" || event.key === "_";
+}
+
+function getWindowZoomShortcutCommand(
+  event: EditorShortcutEvent,
+): Extract<AppShortcutAction, { type: "view" }>["command"] | null {
+  if (!isAppShortcutModifier(event) || event.altKey) {
+    return null;
+  }
+
+  const digit = getShortcutDigit(event);
+
+  if (event.shiftKey && digit === "9") {
+    return "resetZoom";
+  }
+
+  if (event.code === "Numpad0" && !event.shiftKey) {
+    return "resetZoom";
+  }
+
+  if (event.code === "NumpadAdd" || (event.shiftKey && isMainPlusKey(event))) {
+    return "zoomIn";
+  }
+
+  if (event.code === "NumpadSubtract" || (event.shiftKey && isMainMinusKey(event))) {
+    return "zoomOut";
+  }
+
+  return null;
 }
 
 export function getShortcutDigit(event: EditorShortcutEvent) {
@@ -164,6 +246,12 @@ export function getAppShortcutAction(
     return { command: "exitFullScreen", type: "view" };
   }
 
+  const windowZoomCommand = getWindowZoomShortcutCommand(event);
+
+  if (windowZoomCommand) {
+    return { command: windowZoomCommand, type: "view" };
+  }
+
   if (hasOnlyAppModifier(event, true)) {
     const digit = getShortcutDigit(event);
 
@@ -207,10 +295,6 @@ export function getAppShortcutAction(
 
     if (key === "o") {
       return { command: "openDocument", type: "file" };
-    }
-
-    if (event.key === "," || event.code === "Comma") {
-      return { command: "openSettings", type: "file" };
     }
 
     if (key === "f") {
