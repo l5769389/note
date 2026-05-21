@@ -5,6 +5,7 @@ import type {
   LocalMarkdownFile,
   LocalWorkspaceDirectory,
 } from "./types";
+import type { PersistedAppState } from "../../shared/appState";
 
 type WorkspaceFileChangePayload = {
   event: "add" | "change" | "unlink";
@@ -13,6 +14,8 @@ type WorkspaceFileChangePayload = {
 };
 
 type DesktopApi = {
+  loadAppState: () => Promise<PersistedAppState>;
+  saveAppState: (state: PersistedAppState) => Promise<PersistedAppState>;
   hasClipboardContent: () => Promise<boolean>;
   listClipboardMediaFiles: () => Promise<
     Array<{
@@ -78,6 +81,7 @@ type DesktopApi = {
   onWorkspaceFileChanged: (
     callback: (payload: WorkspaceFileChangePayload) => void,
   ) => () => void;
+  onQuickCapture: (callback: () => void) => () => void;
   onZoomFactorChanged: (callback: (factor: number) => void) => () => void;
   openPath: (targetPath: string) => Promise<string>;
   openWorkspaceDirectory: () => Promise<LocalWorkspaceDirectory | null>;

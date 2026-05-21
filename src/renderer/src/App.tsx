@@ -16,7 +16,10 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  Hash,
+  Inbox,
   Italic,
+  Link2,
   ListTree,
   Minus,
   Plus,
@@ -48,8 +51,9 @@ import {
   type ReactNode,
 } from "react";
 import {
+  appThemeValues,
   appSettingsStorageKey,
-  appThemeStorageKey,
+  defaultAppSettings,
   editorContentDensityOptions,
   editorFontSizeAdjustmentRange,
   formatEditorFontSizeAdjustment,
@@ -59,6 +63,7 @@ import {
   getEditorFontFamily,
   getInitialTheme,
   loadAppSettings,
+  normalizeAppSettings,
   themeOptions,
   type AppSettings,
   type AppTheme,
@@ -76,11 +81,12 @@ import {
 } from "./assetManager";
 import { UniverSheetPreview } from "./components/UniverSheetPreview";
 import type { HtmlDocumentViewerHandle } from "./components/HtmlDocumentViewer";
-import {
-  TyporaEditor,
-  type TyporaEditorHandle,
-} from "./components/TyporaEditor";
+import type { TyporaEditorHandle } from "./components/TyporaEditor";
 import appLogoUrl from "../../../resources/icon.png";
+import {
+  persistedAppStateVersion,
+  type PersistedAppState,
+} from "../../shared/appState";
 import type {
   TyporaEditCommand,
   TyporaFormatCommand,
@@ -165,13 +171,28 @@ import {
   countMarkdownWords,
   getMarkdownOutline,
 } from "./markdownStructure";
+import {
+  addMarkdownTag,
+  createMarkdownNoteContent,
+  createWorkspaceKnowledge,
+  getWikiLinkTitle,
+  normalizePropertyKey,
+  normalizeTagName,
+  normalizeWikiLinkTarget,
+  removeMarkdownProperty,
+  removeMarkdownTag,
+  upsertMarkdownProperty,
+  type DocumentKnowledge,
+} from "./noteKnowledge";
 import { getHtmlOutline } from "./htmlStructure";
 import { fileToDataUrl } from "./services/imageUpload";
 import {
   createDocument,
-  loadWorkspace,
+  loadWorkspaceFromStorage,
+  normalizeWorkspaceSnapshot,
   renameFromMarkdown,
-  saveWorkspace,
+  saveWorkspaceToStorage,
+  serializeWorkspaceSnapshot,
 } from "./storage";
 import type {
   DirectoryTreeItem,
@@ -180,6 +201,7 @@ import type {
   MarkdownDocument,
   SaveState,
   LocalMarkdownFile,
+  WorkspaceSnapshot,
 } from "./types";
 import {
   findMarkdownSearchMatches,
@@ -212,6 +234,12 @@ const HtmlDocumentViewer = lazy(() =>
 const MarkdownRenderer = lazy(() =>
   import("./components/MarkdownRenderer").then((module) => ({
     default: module.MarkdownRenderer,
+  })),
+);
+
+const TyporaEditor = lazy(() =>
+  import("./components/TyporaEditor").then((module) => ({
+    default: module.TyporaEditor,
   })),
 );
 
@@ -896,10 +924,23 @@ function normalizeDirectoryKey(path?: string) {
   return path?.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() ?? "";
 }
 
-function loadRecentDirectoryPaths() {
+function createStartupWorkspace(): WorkspaceSnapshot {
+  return {
+    activeDocumentId: "",
+    documents: [],
+    updatedAt: new Date().toISOString(),
+    version: 1,
+  };
+}
+
+function getBrowserStorage() {
+  return typeof window === "undefined" ? undefined : window.localStorage;
+}
+
+function loadRecentDirectoryPaths(storage = getBrowserStorage()) {
   try {
     const raw = getMigratedStorageItem(
-      window.localStorage,
+      storage,
       recentDirectoryStorageKey,
       legacyNoteDockStorageKeys.recentDirectories,
     );
@@ -911,6 +952,140 @@ function loadRecentDirectoryPaths() {
   } catch {
     return [];
   }
+}
+
+function normalizeTheme(value: unknown): AppTheme {
+  return appThemeValues.includes(value as AppTheme) ? (value as AppTheme) : "github";
+}
+
+function normalizeSidebarWidth(value: unknown) {
+  const width =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : Number.NaN;
+
+  return Number.isFinite(width)
+    ? clamp(width, minSidebarWidth, maxSidebarWidth)
+    : defaultSidebarWidth;
+}
+
+function hasPersistedAppState(state: PersistedAppState | null | undefined) {
+  return Boolean(
+    state &&
+      (state.workspace !== undefined ||
+        state.appSettings !== undefined ||
+        state.theme !== undefined ||
+        state.sidebarWidth !== undefined ||
+        (state.recentDirectories?.length ?? 0) > 0),
+  );
+}
+
+function hasBrowserPersistedAppState(storage = getBrowserStorage()) {
+  if (!storage) {
+    return false;
+  }
+
+  try {
+    return [
+      ...Object.values(noteDockStorageKeys),
+      ...Object.values(legacyNoteDockStorageKeys),
+    ].some((key) => storage.getItem(key) !== null);
+  } catch {
+    return false;
+  }
+}
+
+function getLegacyPersistedAppState(
+  storage = getBrowserStorage(),
+): PersistedAppState | null {
+  if (!hasBrowserPersistedAppState(storage)) {
+    return null;
+  }
+
+  return {
+    appSettings: loadAppSettings(storage),
+    recentDirectories: loadRecentDirectoryPaths(storage),
+    sidebarWidth: normalizeSidebarWidth(
+      getMigratedStorageItem(
+        storage,
+        noteDockStorageKeys.sidebarWidth,
+        legacyNoteDockStorageKeys.sidebarWidth,
+      ),
+    ),
+    theme: getInitialTheme(storage),
+    version: persistedAppStateVersion,
+    workspace: loadWorkspaceFromStorage(storage),
+  };
+}
+
+function normalizePersistedDirectories(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((path): path is string => typeof path === "string")
+    : [];
+}
+
+function createPersistedAppState({
+  recentDirectories,
+  settings,
+  sidebarWidth,
+  theme,
+  workspace,
+}: {
+  recentDirectories: string[];
+  settings: AppSettings;
+  sidebarWidth: number;
+  theme: AppTheme;
+  workspace: ReturnType<typeof normalizeWorkspaceSnapshot>;
+}): PersistedAppState {
+  return {
+    appSettings: settings,
+    recentDirectories,
+    sidebarWidth,
+    theme,
+    updatedAt: new Date().toISOString(),
+    version: persistedAppStateVersion,
+    workspace: serializeWorkspaceSnapshot(workspace),
+  };
+}
+
+function saveLegacyPersistedAppState(state: PersistedAppState) {
+  const storage = getBrowserStorage();
+
+  if (!storage) {
+    return;
+  }
+
+  saveWorkspaceToStorage(normalizeWorkspaceSnapshot(state.workspace), storage);
+  storage.setItem(
+    appSettingsStorageKey,
+    JSON.stringify(normalizeAppSettings(state.appSettings)),
+  );
+  storage.setItem(noteDockStorageKeys.theme, normalizeTheme(state.theme));
+  storage.setItem(
+    noteDockStorageKeys.sidebarWidth,
+    String(normalizeSidebarWidth(state.sidebarWidth)),
+  );
+  storage.setItem(
+    recentDirectoryStorageKey,
+    JSON.stringify(normalizePersistedDirectories(state.recentDirectories)),
+  );
+}
+
+async function savePersistedAppState(state: PersistedAppState) {
+  if (window.desktop?.saveAppState) {
+    await window.desktop.saveAppState(state);
+    return;
+  }
+
+  saveLegacyPersistedAppState(state);
+}
+
+function clearBrowserPersistedAppState(storage = getBrowserStorage()) {
+  [...Object.values(noteDockStorageKeys), ...Object.values(legacyNoteDockStorageKeys)].forEach(
+    (key) => removeLegacyStorageItem(storage, key),
+  );
 }
 
 function collectDirectoryPaths(item: DirectoryTreeItem): string[] {
@@ -1202,34 +1377,49 @@ function collectDirectoryFilesWithDocumentMap(
 function DirectoryFileList({
   activeFilePath,
   documents,
+  emptyLabel = "当前目录中没有文件",
   items,
+  metadataByDocumentId,
   onFileContextMenu,
   onOpenFile,
+  visibleFilePaths,
   workspacePath,
 }: {
   activeFilePath?: string;
   documents: MarkdownDocument[];
+  emptyLabel?: string;
   items: DirectoryTreeItem[];
+  metadataByDocumentId?: Map<string, DocumentKnowledge>;
   onFileContextMenu?: (
     event: ReactMouseEvent<HTMLButtonElement>,
     filePath: string,
   ) => void;
   onOpenFile: (filePath: string) => void;
+  visibleFilePaths?: Set<string>;
   workspacePath?: string;
 }) {
   const files = useMemo(
-    () => collectDirectoryFiles(documents, items, workspacePath),
-    [documents, items, workspacePath],
+    () =>
+      collectDirectoryFiles(documents, items, workspacePath).filter(
+        (file) =>
+          !visibleFilePaths ||
+          visibleFilePaths.has(file.path) ||
+          (file.document?.filePath && visibleFilePaths.has(file.document.filePath)),
+      ),
+    [documents, items, visibleFilePaths, workspacePath],
   );
 
   if (!files.length) {
-    return <div className="directory-tree-empty">当前目录中没有文件</div>;
+    return <div className="directory-tree-empty">{emptyLabel}</div>;
   }
 
   return (
     <div className="directory-file-list">
       {files.map((file) => {
         const preview = getFileListPreview(file.document);
+        const tags = file.document
+          ? metadataByDocumentId?.get(file.document.id)?.tags.slice(0, 3) ?? []
+          : [];
 
         return (
           <button
@@ -1254,6 +1444,13 @@ function DirectoryFileList({
               ) : null}
               {preview ? (
                 <span className="directory-file-list-preview">{preview}</span>
+              ) : null}
+              {tags.length ? (
+                <span className="directory-file-list-tags">
+                  {tags.map((tag) => (
+                    <span key={tag}>#{tag}</span>
+                  ))}
+                </span>
               ) : null}
             </span>
             {file.document?.updatedAt ? (
@@ -1391,18 +1588,19 @@ function WelcomeIllustration() {
 }
 
 export function App() {
-  const [workspace, setWorkspace] = useState(loadWorkspace);
-  const [mode, setMode] = useState<EditorMode>(() => loadAppSettings().editorMode);
+  const [workspace, setWorkspace] = useState(createStartupWorkspace);
+  const [mode, setMode] = useState<EditorMode>(defaultAppSettings.editorMode);
   const [topMenu, setTopMenu] = useState<TopMenu>(null);
-  const [theme, setTheme] = useState<AppTheme>(getInitialTheme);
-  const [settings, setSettings] = useState<AppSettings>(loadAppSettings);
+  const [theme, setTheme] = useState<AppTheme>("github");
+  const [settings, setSettings] = useState<AppSettings>(defaultAppSettings);
+  const [isPersistenceReady, setIsPersistenceReady] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [windowZoomFactor, setWindowZoomFactor] = useState(defaultWindowZoomFactor);
   const [isZoomIndicatorVisible, setIsZoomIndicatorVisible] = useState(false);
   const [isHomeOpen, setIsHomeOpen] = useState(true);
   const [isRecentExpanded, setIsRecentExpanded] = useState(false);
-  const [, setSaveState] = useState<SaveState>("idle");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
   const [, setBackupMessage] = useState("本地自动保存已启用");
   const [isDrawingOpen, setIsDrawingOpen] = useState(false);
   const [editingDrawingId, setEditingDrawingId] = useState<string | null>(null);
@@ -1429,6 +1627,14 @@ export function App() {
   const [replaceQuery, setReplaceQuery] = useState("");
   const [findMatchIndex, setFindMatchIndex] = useState(0);
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [newTagName, setNewTagName] = useState("");
+  const [propertyKeyDraft, setPropertyKeyDraft] = useState("");
+  const [propertyValueDraft, setPropertyValueDraft] = useState("");
+  const [isQuickCaptureOpen, setIsQuickCaptureOpen] = useState(false);
+  const [quickCaptureTitle, setQuickCaptureTitle] = useState("");
+  const [quickCaptureBody, setQuickCaptureBody] = useState("");
+  const [quickCaptureTags, setQuickCaptureTags] = useState("inbox");
   const [documentReloadTokens, setDocumentReloadTokens] = useState<
     Record<string, number>
   >({});
@@ -1438,19 +1644,7 @@ export function App() {
     useState<FileExplorerView>("tree");
   const [documentLoadingState, setDocumentLoadingState] =
     useState<DocumentLoadingState>(null);
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const storedWidth = Number(
-      getMigratedStorageItem(
-        window.localStorage,
-        noteDockStorageKeys.sidebarWidth,
-        legacyNoteDockStorageKeys.sidebarWidth,
-      ),
-    );
-
-    return Number.isFinite(storedWidth)
-      ? clamp(storedWidth, minSidebarWidth, maxSidebarWidth)
-      : defaultSidebarWidth;
-  });
+  const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   const [sidebarResizePreviewX, setSidebarResizePreviewX] = useState<
@@ -1472,9 +1666,7 @@ export function App() {
     ? !isImmersiveSidebarOpen
     : isSidebarCollapsed;
   const [missingAssetReferences, setMissingAssetReferences] = useState<string[]>([]);
-  const [recentDirectoryPaths, setRecentDirectoryPaths] = useState(
-    loadRecentDirectoryPaths,
-  );
+  const [recentDirectoryPaths, setRecentDirectoryPaths] = useState<string[]>([]);
   const [expandedDirectoryPaths, setExpandedDirectoryPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1505,6 +1697,61 @@ export function App() {
   const internalFileWritesRef = useRef(
     new Map<string, { content: string; expiresAt: number }>(),
   );
+
+  useEffect(() => {
+    let isStale = false;
+
+    async function hydratePersistedState() {
+      const mainState = await window.desktop?.loadAppState?.().catch(() => null);
+      const legacyState = getLegacyPersistedAppState();
+      const sourceState = hasPersistedAppState(mainState) ? mainState : legacyState;
+      const nextWorkspace = normalizeWorkspaceSnapshot(sourceState?.workspace);
+      const nextSettings = normalizeAppSettings(sourceState?.appSettings);
+      const nextTheme = normalizeTheme(sourceState?.theme);
+      const nextSidebarWidth = normalizeSidebarWidth(sourceState?.sidebarWidth);
+      const nextRecentDirectories = normalizePersistedDirectories(
+        sourceState?.recentDirectories,
+      );
+
+      if (isStale) {
+        return;
+      }
+
+      savedFileContentByPathRef.current = new Map(
+        nextWorkspace.documents
+          .filter((document) => document.filePath)
+          .map((document) => [document.filePath!, document.content]),
+      );
+      setWorkspace(nextWorkspace);
+      setSettings(nextSettings);
+      setMode(nextSettings.editorMode);
+      setTheme(nextTheme);
+      setSidebarWidth(nextSidebarWidth);
+      setRecentDirectoryPaths(nextRecentDirectories);
+      setIsPersistenceReady(true);
+
+      if (window.desktop?.saveAppState && legacyState) {
+        void window.desktop
+          .saveAppState(
+            createPersistedAppState({
+              recentDirectories: nextRecentDirectories,
+              settings: nextSettings,
+              sidebarWidth: nextSidebarWidth,
+              theme: nextTheme,
+              workspace: nextWorkspace,
+            }),
+          )
+          .then(() => clearBrowserPersistedAppState())
+          .catch(() => undefined);
+      }
+    }
+
+    void hydratePersistedState();
+
+    return () => {
+      isStale = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isImmersiveMode && immersiveRevealEdge) {
@@ -1541,6 +1788,39 @@ export function App() {
       workspace.documents.find((item) => item.id === workspace.activeDocumentId) ?? null,
     [workspace.activeDocumentId, workspace.documents],
   );
+  const workspaceKnowledge = useMemo(
+    () => createWorkspaceKnowledge(workspace.documents),
+    [workspace.documents],
+  );
+  const activeDocumentKnowledge = activeDocument
+    ? workspaceKnowledge.metadataByDocumentId.get(activeDocument.id) ?? null
+    : null;
+  const activeOutgoingLinks = activeDocument
+    ? workspaceKnowledge.outgoingLinksByDocumentId.get(activeDocument.id) ?? []
+    : [];
+  const activeBacklinks = activeDocument
+    ? workspaceKnowledge.backlinksByDocumentId.get(activeDocument.id) ?? []
+    : [];
+  const activeMissingLinks = activeOutgoingLinks.filter(
+    (link) => !link.targetDocument,
+  );
+  const visibleTaggedFilePaths = useMemo(() => {
+    if (!tagFilter) {
+      return undefined;
+    }
+
+    const tagKey = tagFilter.toLocaleLowerCase();
+    const filePaths = workspace.documents
+      .filter((document) =>
+        workspaceKnowledge.metadataByDocumentId
+          .get(document.id)
+          ?.tags.some((tag) => tag.toLocaleLowerCase() === tagKey),
+      )
+      .map((document) => document.filePath)
+      .filter((filePath): filePath is string => Boolean(filePath));
+
+    return new Set(filePaths);
+  }, [tagFilter, workspace.documents, workspaceKnowledge]);
   useEffect(() => {
     setActiveHtmlOutlineId(null);
   }, [activeDocument?.content, activeDocument?.id]);
@@ -1767,8 +2047,6 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem(appThemeStorageKey, theme);
-    removeLegacyStorageItem(window.localStorage, legacyNoteDockStorageKeys.theme);
   }, [theme]);
 
   useEffect(() => {
@@ -1806,10 +2084,6 @@ export function App() {
   );
 
   useEffect(() => {
-    window.localStorage.setItem(appSettingsStorageKey, JSON.stringify(settings));
-  }, [settings]);
-
-  useEffect(() => {
     const style = document.documentElement.style;
     const contentDensity = getEditorContentDensityStyle(
       settings.editorContentDensity,
@@ -1840,12 +2114,31 @@ export function App() {
   }, [settings]);
 
   useEffect(() => {
-    window.localStorage.setItem(noteDockStorageKeys.sidebarWidth, String(sidebarWidth));
-    removeLegacyStorageItem(
-      window.localStorage,
-      legacyNoteDockStorageKeys.sidebarWidth,
-    );
-  }, [sidebarWidth]);
+    if (!isPersistenceReady) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void savePersistedAppState(
+        createPersistedAppState({
+          recentDirectories: recentDirectoryPaths,
+          settings,
+          sidebarWidth,
+          theme,
+          workspace,
+        }),
+      );
+    }, 500);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    isPersistenceReady,
+    recentDirectoryPaths,
+    settings,
+    sidebarWidth,
+    theme,
+    workspace,
+  ]);
 
   useEffect(() => {
     setFindMatchIndex((current) => {
@@ -2012,18 +2305,11 @@ export function App() {
   }
 
   useEffect(() => {
-    window.localStorage.setItem(
-      recentDirectoryStorageKey,
-      JSON.stringify(recentDirectoryPaths),
-    );
-    removeLegacyStorageItem(
-      window.localStorage,
-      legacyNoteDockStorageKeys.recentDirectories,
-    );
-  }, [recentDirectoryPaths]);
-
-  useEffect(() => {
-    if (workspace.workspacePath || !window.desktop?.getDefaultWorkspaceDirectory) {
+    if (
+      !isPersistenceReady ||
+      workspace.workspacePath ||
+      !window.desktop?.getDefaultWorkspaceDirectory
+    ) {
       return;
     }
 
@@ -2032,7 +2318,7 @@ export function App() {
         current.workspacePath ? current : { ...current, workspacePath },
       );
     });
-  }, [workspace.workspacePath]);
+  }, [isPersistenceReady, workspace.workspacePath]);
 
   useEffect(() => {
     if (!workspace.workspacePath) {
@@ -2207,6 +2493,14 @@ export function App() {
   }, [isSidebarHidden, sidebarTab]);
 
   useEffect(() => {
+    return window.desktop?.onQuickCapture?.(() => {
+      setIsQuickCaptureOpen(true);
+      setIsActionsOpen(false);
+      setTopMenu(null);
+    });
+  }, []);
+
+  useEffect(() => {
     const pendingReveal = pendingWorkspaceSearchRevealRef.current;
 
     if (!pendingReveal || activeDocument?.filePath !== pendingReveal.filePath) {
@@ -2232,7 +2526,6 @@ export function App() {
     setSaveState("saving");
     const timer = window.setTimeout(() => {
       try {
-        saveWorkspace(workspace);
         const writableDocuments = workspace.documents.filter(
           (document) =>
             isWritableTextDocument(document) &&
@@ -2692,6 +2985,186 @@ export function App() {
       content,
       title: renameFromMarkdown(content, activeDocument.title),
     });
+  }
+
+  function getTagInputValues(value: string) {
+    const seen = new Set<string>();
+
+    return value
+      .split(/[,\s]+/)
+      .map(normalizeTagName)
+      .filter((tag) => {
+        const key = tag.toLocaleLowerCase();
+
+        if (!tag || seen.has(key)) {
+          return false;
+        }
+
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function addActiveDocumentTag() {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    const tag = normalizeTagName(newTagName);
+
+    if (!tag) {
+      return;
+    }
+
+    updateMarkdown(addMarkdownTag(activeDocument.content, tag));
+    setNewTagName("");
+  }
+
+  function removeActiveDocumentTag(tag: string) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    updateMarkdown(removeMarkdownTag(activeDocument.content, tag));
+  }
+
+  function saveActiveDocumentProperty() {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    const key = normalizePropertyKey(propertyKeyDraft);
+
+    if (!key) {
+      return;
+    }
+
+    updateMarkdown(
+      upsertMarkdownProperty(activeDocument.content, key, propertyValueDraft),
+    );
+    setPropertyKeyDraft("");
+    setPropertyValueDraft("");
+  }
+
+  function removeActiveDocumentProperty(key: string) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    updateMarkdown(removeMarkdownProperty(activeDocument.content, key));
+  }
+
+  function openKnowledgeDocument(document: MarkdownDocument) {
+    setActiveDocument(document.id);
+    setIsHomeOpen(false);
+    setSidebarTab("current");
+  }
+
+  async function createMarkdownDocumentWithContent(title: string, content: string) {
+    const directoryPath = await getCreationDirectory();
+    const localFile =
+      directoryPath && window.desktop?.createDocumentFile
+        ? await window.desktop.createDocumentFile({
+            content,
+            directoryPath,
+            extension: ".md",
+            title,
+          })
+        : null;
+    const document = localFile
+      ? createDocumentFromLocalFile(localFile)
+      : createDocument(title, content);
+
+    activateCreatedDocument(document, directoryPath);
+
+    if (directoryPath) {
+      await loadDirectoryTree(directoryPath);
+    }
+
+    return document;
+  }
+
+  async function createDocumentFromMissingWikiLink(target: string) {
+    const title = normalizeMarkdownTitle(getWikiLinkTitle(target) || target);
+    const content = createMarkdownNoteContent({
+      body: activeDocument ? `来自 [[${activeDocument.title}]]` : "",
+      properties: { created: new Date().toISOString() },
+      title,
+    });
+
+    try {
+      const document = await createMarkdownDocumentWithContent(title, content);
+      setSidebarTab("current");
+      return document;
+    } catch {
+      setSaveState("failed");
+      return null;
+    }
+  }
+
+  async function openWikiLinkTarget(target: string) {
+    const document = workspaceKnowledge.documentByLinkKey.get(
+      normalizeWikiLinkTarget(target),
+    );
+
+    if (document) {
+      openKnowledgeDocument(document);
+      return;
+    }
+
+    await createDocumentFromMissingWikiLink(target);
+  }
+
+  function insertWikiLinkFromPrompt() {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    const selectedText = getSelectedEditorText().trim();
+    const target = window.prompt("双链目标", selectedText || "");
+
+    if (target === null || !target.trim()) {
+      return;
+    }
+
+    insertMarkdown(`[[${target.trim()}]]`);
+  }
+
+  function openQuickCapture() {
+    setIsQuickCaptureOpen(true);
+    setTopMenu(null);
+    setIsActionsOpen(false);
+  }
+
+  async function createQuickCapture() {
+    const nowDate = new Date();
+    const fallbackTitle = `Capture ${nowDate
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .slice(0, 16)
+      .replace("T", " ")}`;
+    const title = normalizeMarkdownTitle(quickCaptureTitle || fallbackTitle);
+    const tags = getTagInputValues(quickCaptureTags || "inbox");
+    const content = createMarkdownNoteContent({
+      body: quickCaptureBody,
+      properties: {
+        created: nowDate.toISOString(),
+        source: "quick-capture",
+      },
+      tags,
+      title,
+    });
+
+    try {
+      await createMarkdownDocumentWithContent(title, content);
+      setQuickCaptureTitle("");
+      setQuickCaptureBody("");
+      setQuickCaptureTags("inbox");
+      setIsQuickCaptureOpen(false);
+      setSidebarTab("current");
+    } catch {
+      setSaveState("failed");
+    }
   }
 
   async function saveDataUrlAssetForDocument(
@@ -3883,6 +4356,9 @@ export function App() {
             break;
           case "openDocument":
             void openMarkdownFile();
+            break;
+          case "quickCapture":
+            openQuickCapture();
             break;
           case "save":
             void saveNow();
@@ -5092,7 +5568,15 @@ export function App() {
 
   async function saveNow() {
     try {
-      saveWorkspace(workspace);
+      await savePersistedAppState(
+        createPersistedAppState({
+          recentDirectories: recentDirectoryPaths,
+          settings,
+          sidebarWidth,
+          theme,
+          workspace,
+        }),
+      );
 
       if (
         isWritableTextDocument(activeDocument) &&
@@ -5451,6 +5935,7 @@ export function App() {
               <MenuItem label="Excalidraw 文件" onSelect={() => runTopMenuAction(() => void createStandaloneDrawingDocument())} />
             </MenuSubmenu>
             <MenuItem label="新建窗口" shortcut="Ctrl+Shift+N" onSelect={() => runTopMenuAction(openNewWindow)} />
+            <MenuItem label="快速捕捉..." shortcut="Ctrl+Alt+N" onSelect={() => runTopMenuAction(openQuickCapture)} />
             <MenuSeparator />
             <MenuItem label="打开..." shortcut="Ctrl+O" onSelect={() => runTopMenuAction(() => void openMarkdownFile())} />
             <MenuItem label="打开文件夹..." onSelect={() => runTopMenuAction(() => void openWorkspaceFolder())} />
@@ -5598,6 +6083,7 @@ export function App() {
             <MenuItem label="注释" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "comment" }))} />
             <MenuSeparator />
             <MenuItem label="超链接" shortcut="Ctrl+K" onSelect={() => runTopMenuAction(createLinkFromPrompt)} />
+            <MenuItem label="双链" onSelect={() => runTopMenuAction(insertWikiLinkFromPrompt)} />
             <MenuSubmenu label="图像">
               <MenuItem label="插入本地图片..." onSelect={() => runTopMenuAction(() => readFileInput(imageInputRef.current))} />
               <MenuSeparator />
@@ -5754,10 +6240,299 @@ export function App() {
     }
   }
 
+  function renderActiveDocumentOutline() {
+    if (!activeDocument) {
+      return (
+        <div className="outline-empty" aria-label="当前文件为空" />
+      );
+    }
+
+    if (!activeDocumentOutline.length) {
+      return <div className="outline-empty">当前文件没有可显示的标题</div>;
+    }
+
+    return (
+      <div className="outline-tree">
+        {activeDocumentOutline.map((entry) => {
+          const isHtmlOutline = isHtmlDocument(activeDocument);
+          const isActive = isHtmlOutline
+            ? activeHtmlOutlineId === entry.id
+            : "lineIndex" in entry &&
+              activeEditorLineIndex === entry.lineIndex;
+
+          return (
+            <button
+              className={
+                isActive
+                  ? "outline-item outline-item-active"
+                  : "outline-item"
+              }
+              key={entry.id}
+              style={
+                {
+                  "--outline-depth": `${Math.max(entry.level - 1, 0) * 14}px`,
+                } as CSSProperties
+              }
+              title={
+                isHtmlOutline && "anchor" in entry && entry.anchor
+                  ? `#${entry.anchor}`
+                  : entry.title
+              }
+              type="button"
+              onClick={() => {
+                setIsHomeOpen(false);
+
+                if (isHtmlOutline) {
+                  htmlDocumentViewerRef.current?.scrollToOutlineEntry(entry.id);
+                  setActiveHtmlOutlineId(entry.id);
+                  return;
+                }
+
+                if ("lineIndex" in entry) {
+                  typoraEditorRef.current?.scrollToLine(entry.lineIndex);
+                  setActiveEditorLineIndex(entry.lineIndex);
+                }
+              }}
+            >
+              <span>{entry.title}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderCurrentDocumentPanel() {
+    if (!activeDocument) {
+      return <div className="outline-empty" aria-label="当前文件为空" />;
+    }
+
+    const supportsKnowledge = isMarkdownDocument(activeDocument);
+    const frontmatterTagKeys = new Set(
+      activeDocumentKnowledge?.frontmatterTags.map((tag) =>
+        tag.toLocaleLowerCase(),
+      ) ?? [],
+    );
+
+    return (
+      <div className="current-document-panel">
+        <section className="knowledge-section">
+          <div className="knowledge-section-header">
+            <Hash size={15} />
+            <span>标签</span>
+          </div>
+          {supportsKnowledge ? (
+            <>
+              {activeDocumentKnowledge?.tags.length ? (
+                <div className="knowledge-chip-row">
+                  {activeDocumentKnowledge.tags.map((tag) => {
+                    const canRemove = frontmatterTagKeys.has(tag.toLocaleLowerCase());
+
+                    return (
+                      <span className="knowledge-chip" key={tag}>
+                        #{tag}
+                        {canRemove ? (
+                          <button
+                            type="button"
+                            aria-label={`移除标签 ${tag}`}
+                            onClick={() => removeActiveDocumentTag(tag)}
+                          >
+                            <X size={12} />
+                          </button>
+                        ) : null}
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="knowledge-empty">还没有标签</div>
+              )}
+              <form
+                className="knowledge-inline-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  addActiveDocumentTag();
+                }}
+              >
+                <input
+                  value={newTagName}
+                  onChange={(event) => setNewTagName(event.target.value)}
+                  placeholder="添加标签"
+                />
+                <button type="submit" aria-label="添加标签">
+                  <Plus size={14} />
+                </button>
+              </form>
+            </>
+          ) : (
+            <div className="knowledge-empty">当前文件不支持标签</div>
+          )}
+        </section>
+
+        <section className="knowledge-section">
+          <div className="knowledge-section-header">
+            <FileText size={15} />
+            <span>属性</span>
+          </div>
+          {supportsKnowledge ? (
+            <>
+              {activeDocumentKnowledge?.properties.length ? (
+                <div className="knowledge-property-list">
+                  {activeDocumentKnowledge.properties.map((property) => (
+                    <div className="knowledge-property-row" key={property.key}>
+                      <strong>{property.key}</strong>
+                      <span>{property.value}</span>
+                      <button
+                        type="button"
+                        aria-label={`移除属性 ${property.key}`}
+                        onClick={() => removeActiveDocumentProperty(property.key)}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="knowledge-empty">还没有属性</div>
+              )}
+              <form
+                className="knowledge-property-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  saveActiveDocumentProperty();
+                }}
+              >
+                <input
+                  value={propertyKeyDraft}
+                  onChange={(event) => setPropertyKeyDraft(event.target.value)}
+                  placeholder="属性名"
+                />
+                <input
+                  value={propertyValueDraft}
+                  onChange={(event) => setPropertyValueDraft(event.target.value)}
+                  placeholder="属性值"
+                />
+                <button type="submit" aria-label="保存属性">
+                  <Check size={14} />
+                </button>
+              </form>
+            </>
+          ) : (
+            <div className="knowledge-empty">当前文件不支持属性</div>
+          )}
+        </section>
+
+        <section className="knowledge-section">
+          <div className="knowledge-section-header">
+            <Link2 size={15} />
+            <span>双链</span>
+            {activeMissingLinks.length ? <em>{activeMissingLinks.length}</em> : null}
+          </div>
+          {supportsKnowledge && activeOutgoingLinks.length ? (
+            <div className="knowledge-link-list">
+              {activeOutgoingLinks.map((link) =>
+                link.targetDocument ? (
+                  <button
+                    key={`${link.raw}-${link.index}`}
+                    type="button"
+                    onClick={() => openKnowledgeDocument(link.targetDocument!)}
+                  >
+                    <span>{link.display}</span>
+                    <small>{getDocumentDisplayName(link.targetDocument)}</small>
+                  </button>
+                ) : (
+                  <button
+                    className="knowledge-link-missing"
+                    key={`${link.raw}-${link.index}`}
+                    type="button"
+                    onClick={() => void createDocumentFromMissingWikiLink(link.target)}
+                  >
+                    <span>{link.display}</span>
+                    <small>创建目标文件</small>
+                  </button>
+                ),
+              )}
+            </div>
+          ) : (
+            <div className="knowledge-empty">
+              {supportsKnowledge ? "还没有 [[双链]]" : "当前文件不支持双链"}
+            </div>
+          )}
+          {supportsKnowledge ? (
+            <button
+              className="knowledge-secondary-action"
+              type="button"
+              onClick={insertWikiLinkFromPrompt}
+            >
+              <Link2 size={14} />
+              插入双链
+            </button>
+          ) : null}
+        </section>
+
+        <section className="knowledge-section">
+          <div className="knowledge-section-header">
+            <BookOpenText size={15} />
+            <span>反链</span>
+            {activeBacklinks.length ? <em>{activeBacklinks.length}</em> : null}
+          </div>
+          {supportsKnowledge && activeBacklinks.length ? (
+            <div className="knowledge-link-list">
+              {activeBacklinks.map((backlink) => (
+                <button
+                  key={`${backlink.sourceDocument.id}-${backlink.link.index}`}
+                  type="button"
+                  onClick={() => openKnowledgeDocument(backlink.sourceDocument)}
+                >
+                  <span>{getDocumentDisplayName(backlink.sourceDocument)}</span>
+                  <small>[[{backlink.link.raw}]]</small>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="knowledge-empty">
+              {supportsKnowledge ? "还没有反链" : "当前文件不支持反链"}
+            </div>
+          )}
+        </section>
+
+        <section className="knowledge-section">
+          <div className="knowledge-section-header">
+            <ListTree size={15} />
+            <span>大纲</span>
+          </div>
+          {renderActiveDocumentOutline()}
+        </section>
+      </div>
+    );
+  }
+
   const selectedContentDensity =
     editorContentDensityOptions.find(
       (option) => option.value === settings.editorContentDensity,
     ) ?? editorContentDensityOptions[1];
+  const autoSaveStatus = {
+    failed: {
+      icon: <AlertTriangle size={14} />,
+      label: "自动保存失败",
+      title: "自动保存失败，请检查文件权限或磁盘状态",
+    },
+    idle: {
+      icon: <Check size={14} />,
+      label: "自动保存待命",
+      title: "自动保存已启用",
+    },
+    saved: {
+      icon: <Check size={14} />,
+      label: "已自动保存",
+      title: "最近的修改已保存到本地文件",
+    },
+    saving: {
+      icon: <RefreshCw size={14} />,
+      label: "自动保存中",
+      title: "正在保存当前修改",
+    },
+  } satisfies Record<SaveState, { icon: ReactNode; label: string; title: string }>;
   const fontSizeAdjustmentLabel = formatEditorFontSizeAdjustment(
     settings.editorFontSizeAdjustment,
   );
@@ -5932,9 +6707,40 @@ export function App() {
             }
           >
             {sidebarTab === "files" ? (
-              directoryTree ? (
+              <>
+                {workspaceKnowledge.tagSummaries.length ? (
+                  <div className="workspace-tag-filter">
+                    <button
+                      className={!tagFilter ? "workspace-tag-chip workspace-tag-chip-active" : "workspace-tag-chip"}
+                      type="button"
+                      onClick={() => setTagFilter(null)}
+                    >
+                      全部
+                    </button>
+                    {workspaceKnowledge.tagSummaries.slice(0, 8).map((summary) => (
+                      <button
+                        className={
+                          tagFilter === summary.tag
+                            ? "workspace-tag-chip workspace-tag-chip-active"
+                            : "workspace-tag-chip"
+                        }
+                        key={summary.tag}
+                        type="button"
+                        title={`#${summary.tag} (${summary.count})`}
+                        onClick={() => {
+                          setTagFilter(summary.tag);
+                          setFileExplorerView("list");
+                        }}
+                      >
+                        #{summary.tag}
+                        <span>{summary.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              {directoryTree ? (
                 directoryTree.children?.length ? (
-                  fileExplorerView === "tree" ? (
+                  fileExplorerView === "tree" && !tagFilter ? (
                     <div className="directory-tree-root">
                       <DirectoryTreeItems
                         activeDirectoryPath={getDirectoryPath(activeDocument?.filePath)}
@@ -5954,7 +6760,10 @@ export function App() {
                     <DirectoryFileList
                       activeFilePath={activeDocument?.filePath}
                       documents={workspace.documents}
+                      emptyLabel={tagFilter ? "没有匹配这个标签的文件" : undefined}
                       items={directoryTree.children ?? []}
+                      metadataByDocumentId={workspaceKnowledge.metadataByDocumentId}
+                      visibleFilePaths={visibleTaggedFilePaths}
                       workspacePath={workspace.workspacePath}
                       onFileContextMenu={openFileContextMenu}
                       onOpenFile={(filePath) => {
@@ -5982,6 +6791,8 @@ export function App() {
                   </button>
                 </div>
               )
+              }
+              </>
             ) : sidebarTab === "search" ? (
               <WorkspaceSearchPanel
                 groups={workspaceSearchGroups}
@@ -5995,58 +6806,8 @@ export function App() {
                 }}
                 onQueryChange={setWorkspaceSearchQuery}
               />
-            ) : activeDocument && activeDocumentOutline.length ? (
-              <div className="outline-tree">
-                {activeDocumentOutline.map((entry) => {
-                  const isHtmlOutline = isHtmlDocument(activeDocument);
-                  const isActive = isHtmlOutline
-                    ? activeHtmlOutlineId === entry.id
-                    : "lineIndex" in entry &&
-                      activeEditorLineIndex === entry.lineIndex;
-
-                  return (
-                    <button
-                      className={
-                        isActive
-                          ? "outline-item outline-item-active"
-                          : "outline-item"
-                      }
-                      key={entry.id}
-                      style={
-                        {
-                          "--outline-depth": `${Math.max(entry.level - 1, 0) * 14}px`,
-                        } as CSSProperties
-                      }
-                      title={
-                        isHtmlOutline && "anchor" in entry && entry.anchor
-                          ? `#${entry.anchor}`
-                          : entry.title
-                      }
-                      type="button"
-                      onClick={() => {
-                        setIsHomeOpen(false);
-
-                        if (isHtmlOutline) {
-                          htmlDocumentViewerRef.current?.scrollToOutlineEntry(entry.id);
-                          setActiveHtmlOutlineId(entry.id);
-                          return;
-                        }
-
-                        if ("lineIndex" in entry) {
-                          typoraEditorRef.current?.scrollToLine(entry.lineIndex);
-                          setActiveEditorLineIndex(entry.lineIndex);
-                        }
-                      }}
-                    >
-                      <span>{entry.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : activeDocument ? (
-              <div className="outline-empty">当前文件没有可显示的标题</div>
             ) : (
-              <div className="outline-empty" aria-label="当前文件为空" />
+              renderCurrentDocumentPanel()
             )}
           </div>
 
@@ -6066,6 +6827,10 @@ export function App() {
               <button type="button" onClick={createNewDocument}>
                 <FilePlus2 size={16} />
                 新建文件
+              </button>
+              <button type="button" onClick={openQuickCapture}>
+                <Inbox size={16} />
+                快速捕捉
               </button>
               <button type="button" onClick={() => void createStandaloneSheetDocument()}>
                 <Table2 size={16} />
@@ -6420,6 +7185,9 @@ export function App() {
                         onEditUniverSheet={(code) =>
                           void openUniverSheetEditor({ code, kind: "markdown" }, code)
                         }
+                        onOpenWikiLink={(target) => {
+                          void openWikiLinkTarget(target);
+                        }}
                       >
                         {activeDocument.content}
                       </MarkdownRenderer>
@@ -6457,6 +7225,14 @@ export function App() {
                 {missingAssetReferences.length} 个附件失效
               </span>
             )}
+            <span
+              className={`workspace-autosave-status workspace-autosave-status-${saveState}`}
+              title={autoSaveStatus[saveState].title}
+              aria-live="polite"
+            >
+              {autoSaveStatus[saveState].icon}
+              {autoSaveStatus[saveState].label}
+            </span>
             <span className="workspace-word-count">
               {isHtmlDocument(activeDocument)
                 ? "HTML preview"
@@ -6775,6 +7551,78 @@ export function App() {
                   )}
                 </div>
               </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root open={isQuickCaptureOpen} onOpenChange={setIsQuickCaptureOpen}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Content className="quick-capture-dialog">
+              <div className="create-file-header">
+                <div className="create-file-heading">
+                  <span className="create-file-icon">
+                    <Inbox size={18} />
+                  </span>
+                  <div>
+                    <Dialog.Title className="create-file-title">
+                      快速捕捉
+                    </Dialog.Title>
+                    <Dialog.Description>
+                      把临时想法保存为当前工作区中的 Markdown 笔记
+                    </Dialog.Description>
+                  </div>
+                </div>
+                <Dialog.Close asChild>
+                  <button className="icon-button" type="button" aria-label="关闭">
+                    <X size={16} />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              <form
+                className="quick-capture-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void createQuickCapture();
+                }}
+              >
+                <label>
+                  <span>标题</span>
+                  <input
+                    autoFocus
+                    value={quickCaptureTitle}
+                    onChange={(event) => setQuickCaptureTitle(event.target.value)}
+                    placeholder="可留空，自动使用时间命名"
+                  />
+                </label>
+                <label>
+                  <span>内容</span>
+                  <textarea
+                    value={quickCaptureBody}
+                    onChange={(event) => setQuickCaptureBody(event.target.value)}
+                    placeholder="写下临时想法、链接或待办"
+                  />
+                </label>
+                <label>
+                  <span>标签</span>
+                  <input
+                    value={quickCaptureTags}
+                    onChange={(event) => setQuickCaptureTags(event.target.value)}
+                    placeholder="inbox, idea"
+                  />
+                </label>
+                <div className="quick-capture-actions">
+                  <Dialog.Close asChild>
+                    <button className="secondary-button" type="button">
+                      取消
+                    </button>
+                  </Dialog.Close>
+                  <button className="primary-button" type="submit">
+                    保存捕捉
+                  </button>
+                </div>
+              </form>
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>

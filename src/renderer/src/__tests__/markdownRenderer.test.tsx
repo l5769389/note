@@ -15,4 +15,14 @@ describe("MarkdownRenderer", () => {
     expect(html).toContain('aria-label="未完成任务"');
     expect(html).toContain('aria-label="已完成任务"');
   });
+
+  it("renders wiki links without rewriting code spans", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer>{"See [[Daily Note|today]] and `[[Code]]`."}</MarkdownRenderer>,
+    );
+
+    expect(html).toContain('href="notedock-wikilink:Daily%20Note"');
+    expect(html).toContain(">today</a>");
+    expect(html).toContain("[[Code]]");
+  });
 });

@@ -19,7 +19,7 @@ export type EditorShortcutEvent = Pick<
 };
 
 export type AppShortcutAction =
-  | { command: "newMarkdownDocument" | "newWindow" | "openDocument" | "save" | "saveAs"; type: "file" }
+  | { command: "newMarkdownDocument" | "newWindow" | "openDocument" | "quickCapture" | "save" | "saveAs"; type: "file" }
   | { command: "exitFullScreen" | "resetZoom" | "showDocuments" | "showFiles" | "showOutline" | "toggleFullScreen" | "toggleSidebar" | "workspaceSearch" | "zoomIn" | "zoomOut"; type: "view" }
   | { replace?: boolean; type: "find" }
   | { action: Exclude<EditorShortcutAction, { type: "find" }>; type: "editor" };
@@ -250,6 +250,15 @@ export function getAppShortcutAction(
 
   if (windowZoomCommand) {
     return { command: windowZoomCommand, type: "view" };
+  }
+
+  if (
+    isAppShortcutModifier(event) &&
+    event.altKey &&
+    !event.shiftKey &&
+    key === "n"
+  ) {
+    return { command: "quickCapture", type: "file" };
   }
 
   if (hasOnlyAppModifier(event, true)) {

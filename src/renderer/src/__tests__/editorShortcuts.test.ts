@@ -159,6 +159,7 @@ describe("getAppShortcutAction", () => {
   it.each([
     ["Ctrl+N", { ctrlKey: true, key: "n" }, { command: "newMarkdownDocument", type: "file" }],
     ["Ctrl+Shift+N", { ctrlKey: true, key: "N", shiftKey: true }, { command: "newWindow", type: "file" }],
+    ["Ctrl+Alt+N", { altKey: true, ctrlKey: true, key: "n" }, { command: "quickCapture", type: "file" }],
     ["Ctrl+O", { ctrlKey: true, key: "o" }, { command: "openDocument", type: "file" }],
     ["Ctrl+S", { ctrlKey: true, key: "s" }, { command: "save", type: "file" }],
     ["Ctrl+Shift+S", { ctrlKey: true, key: "S", shiftKey: true }, { command: "saveAs", type: "file" }],

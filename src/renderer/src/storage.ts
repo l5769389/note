@@ -97,6 +97,10 @@ function getStoredFileExtension(filePath?: string) {
   return filePath?.match(/\.([^.\\/]+)$/)?.[0]?.toLowerCase();
 }
 
+function getBrowserStorage() {
+  return typeof window === "undefined" ? undefined : window.localStorage;
+}
+
 function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
   const documentType = document.documentType ?? getStoredDocumentType(document.filePath);
 
@@ -132,9 +136,36 @@ function serializeDocument(document: MarkdownDocument): MarkdownDocument {
     : document;
 }
 
-export function loadWorkspace(): WorkspaceSnapshot {
+export function normalizeWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
+  const parsed =
+    value && typeof value === "object" ? (value as Partial<WorkspaceSnapshot>) : null;
+
+  if (!parsed?.documents?.length || parsed.version !== 1) {
+    return createInitialWorkspace();
+  }
+
+  return {
+    ...parsed,
+    activeDocumentId: "",
+    documents: parsed.documents.map(normalizeStoredDocument),
+    updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : now(),
+    version: 1,
+  };
+}
+
+export function serializeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
+  return {
+    ...snapshot,
+    documents: snapshot.documents.map(serializeDocument),
+    updatedAt: now(),
+  };
+}
+
+export function loadWorkspaceFromStorage(
+  storage: Storage | undefined = getBrowserStorage(),
+): WorkspaceSnapshot {
   const raw = getMigratedStorageItem(
-    localStorage,
+    storage,
     STORAGE_KEY,
     legacyNoteDockStorageKeys.workspace,
   );
@@ -144,32 +175,29 @@ export function loadWorkspace(): WorkspaceSnapshot {
   }
 
   try {
-    const parsed = JSON.parse(raw) as WorkspaceSnapshot;
-
-    if (!parsed.documents?.length || parsed.version !== 1) {
-      return createInitialWorkspace();
-    }
-
-    return {
-      ...parsed,
-      activeDocumentId: "",
-      documents: parsed.documents.map(normalizeStoredDocument),
-    };
+    return normalizeWorkspaceSnapshot(JSON.parse(raw));
   } catch {
     return createInitialWorkspace();
   }
 }
 
-export function saveWorkspace(snapshot: WorkspaceSnapshot) {
-  localStorage.setItem(
+export function loadWorkspace(): WorkspaceSnapshot {
+  return loadWorkspaceFromStorage();
+}
+
+export function saveWorkspaceToStorage(
+  snapshot: WorkspaceSnapshot,
+  storage: Storage | undefined = getBrowserStorage(),
+) {
+  storage?.setItem(
     STORAGE_KEY,
-    JSON.stringify({
-      ...snapshot,
-      documents: snapshot.documents.map(serializeDocument),
-      updatedAt: now(),
-    }),
+    JSON.stringify(serializeWorkspaceSnapshot(snapshot)),
   );
-  removeLegacyStorageItem(localStorage, legacyNoteDockStorageKeys.workspace);
+  removeLegacyStorageItem(storage, legacyNoteDockStorageKeys.workspace);
+}
+
+export function saveWorkspace(snapshot: WorkspaceSnapshot) {
+  saveWorkspaceToStorage(snapshot);
 }
 
 export function renameFromMarkdown(markdown: string, fallback: string) {

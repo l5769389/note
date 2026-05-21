@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { IpcRendererEvent } from "electron";
+import type { PersistedAppState } from "../shared/appState";
 
 type WorkspaceFileChangePayload = {
   event: "add" | "change" | "unlink";
@@ -8,6 +9,9 @@ type WorkspaceFileChangePayload = {
 };
 
 contextBridge.exposeInMainWorld("desktop", {
+  loadAppState: () => ipcRenderer.invoke("app-state:load"),
+  saveAppState: (state: PersistedAppState) =>
+    ipcRenderer.invoke("app-state:save", state),
   getPathForFile: (file: unknown) =>
     webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0]),
   hasClipboardContent: () => ipcRenderer.invoke("clipboard:has-content"),
@@ -61,6 +65,17 @@ contextBridge.exposeInMainWorld("desktop", {
 
     return () => {
       ipcRenderer.removeListener("workspace:file-change", listener);
+    };
+  },
+  onQuickCapture: (callback: () => void) => {
+    const listener = () => {
+      callback();
+    };
+
+    ipcRenderer.on("quick-capture:open", listener);
+
+    return () => {
+      ipcRenderer.removeListener("quick-capture:open", listener);
     };
   },
   onZoomFactorChanged: (callback: (factor: number) => void) => {

@@ -20,12 +20,18 @@
   "build": {
     "appId": "com.local.notedock",
     "productName": "noteDock",
+    "electronDist": "node_modules/electron/dist",
+    "asar": true,
+    "compression": "maximum",
+    "afterPack": "scripts/after-pack.cjs",
     "directories": {
       "output": "release"
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*",
+      "!**/*.map"
     ],
     "extraResources": [
       {
@@ -53,7 +59,9 @@
       "uninstallerSidebar": "resources/uninstaller-sidebar.bmp"
     }
   },
-  "dependencies": {
+  "dependencies": {},
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^2.0.0",
     "@excalidraw/excalidraw": "^0.18.0",
     "@milkdown/kit": "^7.20.0",
     "@milkdown/plugin-math": "^7.5.9",
@@ -78,10 +86,7 @@
     "remark-deflist": "^1.0.0",
     "remark-gfm": "^4.0.0",
     "remark-math": "^6.0.0",
-    "xlsx": "^0.18.5"
-  },
-  "devDependencies": {
-    "@electron-toolkit/tsconfig": "^2.0.0",
+    "xlsx": "^0.18.5",
     "@types/node": "^25.7.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

@@ -45,6 +45,7 @@ type MarkdownRendererProps = {
   onEditMindMap?: (code: string) => void;
   onEditReactFlow?: (code: string) => void;
   onEditUniverSheet?: (code: string) => void;
+  onOpenWikiLink?: (target: string) => void;
 };
 
 const safeEmbeddedImagePattern =
@@ -52,6 +53,9 @@ const safeEmbeddedImagePattern =
 const localPreviewUrlPattern = /^typora-local:\/\//i;
 const languagePattern = /language-(\S+)/;
 const videoControlsSafeZone = 44;
+const wikiLinkHrefPrefix = "notedock-wikilink:";
+const wikiLinkPattern = /\[\[([^[\]\n]{1,180})\]\]/g;
+const markdownCodeRegionPattern = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g;
 
 const markdownAlertIcons: Record<TyporaAlertKind, LucideIcon> = {
   caution: OctagonAlert,
@@ -83,6 +87,10 @@ type HighlightNode = {
 registerMarkdownLanguages(refractor);
 
 function markdownUrlTransform(url: string, filePath?: string) {
+  if (url.startsWith(wikiLinkHrefPrefix)) {
+    return url;
+  }
+
   if (safeEmbeddedImagePattern.test(url)) {
     return url;
   }
@@ -101,7 +109,57 @@ function getRenderedResourceUrl(url: string | undefined, filePath?: string) {
     return url;
   }
 
+  if (url.startsWith(wikiLinkHrefPrefix)) {
+    return url;
+  }
+
   return markdownUrlTransform(url, filePath);
+}
+
+function renderWikiLinks(markdown: string) {
+  return markdown
+    .split(markdownCodeRegionPattern)
+    .map((part, index) =>
+      index % 2 === 1 ? part : renderWikiLinksInText(part),
+    )
+    .join("");
+}
+
+function renderWikiLinksInText(markdown: string) {
+  return markdown.replace(wikiLinkPattern, (_, raw: string) => {
+    const [targetPart, displayPart] = String(raw).split("|");
+    const target = targetPart?.trim();
+
+    if (!target) {
+      return `[[${raw}]]`;
+    }
+
+    const display =
+      displayPart?.trim() ||
+      target
+        .split("#")[0]
+        ?.replace(/\\/g, "/")
+        .split("/")
+        .filter(Boolean)
+        .at(-1)
+        ?.replace(/\.(?:md|markdown)$/i, "") ||
+      target;
+
+    return `[${display}](${wikiLinkHrefPrefix}${encodeURIComponent(target)})`;
+  });
+}
+
+function handleWikiLinkClick(
+  event: MouseEvent<HTMLAnchorElement>,
+  href: string | undefined,
+  onOpenWikiLink: ((target: string) => void) | undefined,
+) {
+  if (!href?.startsWith(wikiLinkHrefPrefix)) {
+    return;
+  }
+
+  event.preventDefault();
+  onOpenWikiLink?.(decodeURIComponent(href.slice(wikiLinkHrefPrefix.length)));
 }
 
 function renderHighlightedNode(node: HighlightNode, key: string): ReactNode {
@@ -445,12 +503,17 @@ export function MarkdownRenderer({
   onEditMindMap,
   onEditReactFlow,
   onEditUniverSheet,
+  onOpenWikiLink,
 }: MarkdownRendererProps) {
   return (
     <ReactMarkdown
       components={{
         a: ({ href, ...props }: ComponentPropsWithoutRef<"a">) => (
-          <a {...props} href={getRenderedResourceUrl(href, filePath)} />
+          <a
+            {...props}
+            href={getRenderedResourceUrl(href, filePath)}
+            onClick={(event) => handleWikiLinkClick(event, href, onOpenWikiLink)}
+          />
         ),
         blockquote: BlockquoteRenderer,
         code: CodeRenderer,
@@ -479,17 +542,25 @@ export function MarkdownRenderer({
       remarkPlugins={[remarkGfm, remarkDeflist, remarkMath]}
       urlTransform={(url) => markdownUrlTransform(url, filePath)}
     >
-      {children}
+      {renderWikiLinks(children)}
     </ReactMarkdown>
   );
 }
 
-export function InlineMarkdownRenderer({ children, filePath }: MarkdownRendererProps) {
+export function InlineMarkdownRenderer({
+  children,
+  filePath,
+  onOpenWikiLink,
+}: MarkdownRendererProps) {
   return (
     <ReactMarkdown
       components={{
         a: ({ href, ...props }: ComponentPropsWithoutRef<"a">) => (
-          <a {...props} href={getRenderedResourceUrl(href, filePath)} />
+          <a
+            {...props}
+            href={getRenderedResourceUrl(href, filePath)}
+            onClick={(event) => handleWikiLinkClick(event, href, onOpenWikiLink)}
+          />
         ),
         img: ({ src, ...props }: ComponentPropsWithoutRef<"img">) => (
           <MarkdownImageRenderer {...props} filePath={filePath} src={src} />
@@ -508,7 +579,7 @@ export function InlineMarkdownRenderer({ children, filePath }: MarkdownRendererP
       remarkPlugins={[remarkGfm, remarkDeflist, remarkMath]}
       urlTransform={(url) => markdownUrlTransform(url, filePath)}
     >
-      {children}
+      {renderWikiLinks(children)}
     </ReactMarkdown>
   );
 }

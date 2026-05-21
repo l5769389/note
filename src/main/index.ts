@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, net, protocol, shell, Tray } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions, SaveDialogOptions } from "electron";
 import chokidar, { type FSWatcher } from "chokidar";
 import { randomUUID } from "node:crypto";
@@ -8,6 +8,10 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  persistedAppStateVersion,
+  type PersistedAppState,
+} from "../shared/appState";
+import {
   getClipboardFormatMimeType,
   getMediaFileExtensionFromMimeType,
   getMediaMimeTypeForExtension,
@@ -16,6 +20,7 @@ import {
 const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 const appName = "noteDock";
 const appUserModelId = "com.local.notedock";
+const appStateFileName = "notedock-state-v1.json";
 const localPreviewProtocol = "typora-local";
 const windowZoomMax = 2;
 const windowZoomMin = 0.5;
@@ -44,6 +49,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
 const workspaceWatchers = new Map<number, FSWatcher>();
 const ignoredDirectoryNames = new Set([
   "build",
@@ -64,6 +71,65 @@ const workspaceAssetsDirectoryName = ".assets";
 const localSchemePattern = /^[a-z][a-z\d+.-]*:/i;
 
 type DocumentFileType = "markdown" | "html" | "pdf" | "word" | "excel" | "sheet" | "drawing";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeStringList(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : undefined;
+}
+
+function normalizePersistedAppState(value: unknown): PersistedAppState {
+  const record = isRecord(value) ? value : {};
+  const recentDirectories = normalizeStringList(record.recentDirectories);
+  const sidebarWidth =
+    typeof record.sidebarWidth === "number" && Number.isFinite(record.sidebarWidth)
+      ? record.sidebarWidth
+      : undefined;
+
+  return {
+    version: persistedAppStateVersion,
+    ...(record.appSettings !== undefined ? { appSettings: record.appSettings } : {}),
+    ...(recentDirectories ? { recentDirectories } : {}),
+    ...(sidebarWidth !== undefined ? { sidebarWidth } : {}),
+    ...(typeof record.theme === "string" ? { theme: record.theme } : {}),
+    ...(typeof record.updatedAt === "string" ? { updatedAt: record.updatedAt } : {}),
+    ...(record.workspace !== undefined ? { workspace: record.workspace } : {}),
+  };
+}
+
+function getAppStateFilePath() {
+  return join(app.getPath("userData"), appStateFileName);
+}
+
+async function readPersistedAppState(): Promise<PersistedAppState> {
+  try {
+    return normalizePersistedAppState(
+      JSON.parse(await readFile(getAppStateFilePath(), "utf-8")),
+    );
+  } catch {
+    return { version: persistedAppStateVersion };
+  }
+}
+
+async function writePersistedAppState(state: PersistedAppState) {
+  const filePath = getAppStateFilePath();
+  const nextState = normalizePersistedAppState({
+    ...state,
+    updatedAt: new Date().toISOString(),
+    version: persistedAppStateVersion,
+  });
+  const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(temporaryPath, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");
+  await rename(temporaryPath, filePath);
+
+  return nextState;
+}
 
 type DirectoryTreeItem = {
   children?: DirectoryTreeItem[];
@@ -744,6 +810,79 @@ function getAppIconPath() {
     : join(process.cwd(), "resources", "icon.ico");
 }
 
+function showMainWindow() {
+  const window = mainWindow ?? createMainWindow();
+
+  if (window.isDestroyed()) {
+    return;
+  }
+
+  if (window.isMinimized()) {
+    window.restore();
+  }
+
+  window.show();
+  window.focus();
+}
+
+function requestQuickCapture() {
+  showMainWindow();
+  mainWindow?.webContents.send("quick-capture:open");
+}
+
+function hideWindowToTray(window: BrowserWindow) {
+  if (window.isDestroyed()) {
+    return;
+  }
+
+  window.hide();
+}
+
+function quitApp() {
+  isQuitting = true;
+  tray?.destroy();
+  tray = null;
+  app.quit();
+}
+
+function updateTrayMenu() {
+  if (!tray) {
+    return;
+  }
+
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "显示 noteDock", click: showMainWindow },
+      { label: "快速捕捉", click: requestQuickCapture },
+      {
+        label: "隐藏窗口",
+        enabled: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
+        click: () => {
+          if (mainWindow) {
+            hideWindowToTray(mainWindow);
+          }
+        },
+      },
+      { type: "separator" },
+      { label: "退出", click: quitApp },
+    ]),
+  );
+}
+
+function createTray() {
+  if (tray) {
+    updateTrayMenu();
+    return tray;
+  }
+
+  tray = new Tray(getAppIconPath());
+  tray.setToolTip("noteDock");
+  tray.on("click", showMainWindow);
+  tray.on("double-click", showMainWindow);
+  updateTrayMenu();
+  return tray;
+}
+
 function getSenderWindow(event: IpcMainInvokeEvent) {
   return BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
 }
@@ -859,6 +998,7 @@ function createMainWindow(): BrowserWindow {
   });
 
   mainWindow = window;
+  createTray();
 
   window.webContents.on("before-input-event", (event, input) => {
     const zoomCommand = getWindowZoomShortcutCommand(input);
@@ -870,6 +1010,26 @@ function createMainWindow(): BrowserWindow {
     event.preventDefault();
     runWindowZoomShortcut(window, zoomCommand);
   });
+
+  window.on("close", (event) => {
+    if (isQuitting) {
+      return;
+    }
+
+    event.preventDefault();
+    hideWindowToTray(window);
+  });
+
+  window.on("minimize", () => {
+    if (isQuitting) {
+      return;
+    }
+
+    hideWindowToTray(window);
+  });
+
+  window.on("show", updateTrayMenu);
+  window.on("hide", updateTrayMenu);
 
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -899,6 +1059,14 @@ function createMainWindow(): BrowserWindow {
 
   void window.loadFile(join(__dirname, "../renderer/index.html"));
   return window;
+}
+
+function registerAppStateIpc() {
+  ipcMain.handle("app-state:load", () => readPersistedAppState());
+
+  ipcMain.handle("app-state:save", async (_, state: PersistedAppState) => {
+    return writePersistedAppState(state);
+  });
 }
 
 if (process.platform === "win32") {
@@ -1515,14 +1683,20 @@ function registerWindowIpc() {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   registerLocalPreviewProtocol();
+  registerAppStateIpc();
   registerFileIpc();
   registerWindowIpc();
+  createTray();
   createMainWindow();
+  globalShortcut.register("CommandOrControl+Alt+N", requestQuickCapture);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createMainWindow();
+      return;
     }
+
+    showMainWindow();
   });
 });
 
@@ -1533,6 +1707,11 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  isQuitting = true;
+  globalShortcut.unregisterAll();
+  tray?.destroy();
+  tray = null;
+
   for (const webContentsId of workspaceWatchers.keys()) {
     closeWorkspaceWatcher(webContentsId);
   }

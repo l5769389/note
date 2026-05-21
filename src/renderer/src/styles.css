@@ -5907,6 +5907,27 @@ button {
   line-height: 1.35;
 }
 
+.directory-file-list-tags {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.directory-file-list-tags span {
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2ff;
+  padding: 1px 6px;
+  color: #5b4ce6;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .directory-file-list-item time {
   max-width: 74px;
   color: #98a2b3;
@@ -6201,6 +6222,349 @@ button {
   text-align: center;
 }
 
+.workspace-tag-filter {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.workspace-tag-chip {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 24px;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  border: 1px solid #dde3ee;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 0 8px;
+  color: #526070;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tag-chip span {
+  color: #98a2b3;
+  font-size: 11px;
+}
+
+.workspace-tag-chip:hover,
+.workspace-tag-chip-active {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.workspace-tag-chip-active span {
+  color: #6d63d8;
+}
+
+.current-document-panel {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  padding-bottom: 16px;
+}
+
+.knowledge-section {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid #edf0f4;
+  padding-bottom: 12px;
+}
+
+.knowledge-section:last-child {
+  border-bottom: 0;
+}
+
+.knowledge-section-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.knowledge-section-header svg {
+  flex: 0 0 auto;
+  color: #667085;
+}
+
+.knowledge-section-header em {
+  display: grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  margin-left: auto;
+  background: #eef2ff;
+  color: #5b4ce6;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.knowledge-empty {
+  border: 1px dashed #d7dde7;
+  border-radius: 7px;
+  padding: 10px;
+  color: #8a93a3;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.knowledge-chip-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.knowledge-chip {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  border: 1px solid #dfe5ff;
+  border-radius: 999px;
+  background: #f4f2ff;
+  padding: 0 7px 0 9px;
+  color: #5144cc;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-chip button,
+.knowledge-property-row button {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: currentColor;
+}
+
+.knowledge-chip button:hover,
+.knowledge-property-row button:hover {
+  background: rgba(79, 70, 229, 0.12);
+}
+
+.knowledge-inline-form,
+.knowledge-property-form {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.knowledge-inline-form {
+  grid-template-columns: minmax(0, 1fr) 30px;
+}
+
+.knowledge-property-form {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px;
+}
+
+.knowledge-inline-form input,
+.knowledge-property-form input,
+.quick-capture-form input,
+.quick-capture-form textarea {
+  min-width: 0;
+  border: 1px solid #cfd6e2;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #111827;
+  font: inherit;
+  outline: 0;
+}
+
+.knowledge-inline-form input,
+.knowledge-property-form input {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.knowledge-inline-form input:focus,
+.knowledge-property-form input:focus,
+.quick-capture-form input:focus,
+.quick-capture-form textarea:focus {
+  border-color: #8b7cf6;
+  box-shadow: 0 0 0 3px rgba(91, 76, 230, 0.12);
+}
+
+.knowledge-inline-form button,
+.knowledge-property-form button {
+  display: grid;
+  height: 30px;
+  place-items: center;
+  border: 1px solid #d7dde7;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #4f46e5;
+}
+
+.knowledge-inline-form button:hover,
+.knowledge-property-form button:hover,
+.knowledge-secondary-action:hover {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+}
+
+.knowledge-property-list,
+.knowledge-link-list {
+  display: grid;
+  gap: 6px;
+}
+
+.knowledge-property-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(58px, 0.7fr) minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #edf0f4;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 6px 7px;
+}
+
+.knowledge-property-row strong,
+.knowledge-property-row span,
+.knowledge-link-list span,
+.knowledge-link-list small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-property-row strong {
+  color: #344054;
+  font-size: 12px;
+}
+
+.knowledge-property-row span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.knowledge-link-list button,
+.knowledge-secondary-action {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #edf0f4;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 7px 8px;
+  color: #344054;
+  text-align: left;
+}
+
+.knowledge-link-list button {
+  gap: 3px;
+}
+
+.knowledge-link-list button:hover {
+  border-color: #d7dde7;
+  background: #f8fafc;
+}
+
+.knowledge-link-list span {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.knowledge-link-list small {
+  color: #8a93a3;
+  font-size: 11px;
+}
+
+.knowledge-link-missing {
+  border-style: dashed !important;
+}
+
+.knowledge-link-missing span,
+.knowledge-link-missing small {
+  color: #b45309;
+}
+
+.knowledge-secondary-action {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.quick-capture-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 60;
+  display: grid;
+  width: min(520px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+  border: 1px solid #d7dde7;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.24);
+}
+
+.quick-capture-form {
+  display: grid;
+  gap: 12px;
+  padding: 0 18px 18px;
+}
+
+.quick-capture-form label {
+  display: grid;
+  gap: 6px;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.quick-capture-form input {
+  height: 36px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.quick-capture-form textarea {
+  min-height: 150px;
+  resize: vertical;
+  padding: 10px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.quick-capture-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
 .workspace {
   position: relative;
   z-index: 1;
@@ -6269,6 +6633,54 @@ button {
   color: #92400e;
   font-weight: 650;
   white-space: nowrap;
+}
+
+.workspace-autosave-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  margin-right: 10px;
+  border: 1px solid #dce4ee;
+  border-radius: 999px;
+  background: #f8fafc;
+  padding: 0 10px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.workspace-autosave-status svg {
+  flex: 0 0 auto;
+}
+
+.workspace-autosave-status-saving {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.workspace-autosave-status-saving svg {
+  animation: autosave-spin 0.9s linear infinite;
+}
+
+.workspace-autosave-status-saved {
+  border-color: rgba(22, 163, 74, 0.22);
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.workspace-autosave-status-failed {
+  border-color: rgba(220, 38, 38, 0.26);
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+@keyframes autosave-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .workspace-word-count {
@@ -8206,6 +8618,34 @@ button {
   color: #ffffff;
 }
 
+:root[data-theme="night"] .workspace-autosave-status,
+:root[data-theme="dark"] .workspace-autosave-status {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.78);
+  color: #cbd5e1;
+}
+
+:root[data-theme="night"] .workspace-autosave-status-saving,
+:root[data-theme="dark"] .workspace-autosave-status-saving {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(30, 64, 175, 0.18);
+  color: #93c5fd;
+}
+
+:root[data-theme="night"] .workspace-autosave-status-saved,
+:root[data-theme="dark"] .workspace-autosave-status-saved {
+  border-color: rgba(74, 222, 128, 0.24);
+  background: rgba(21, 128, 61, 0.16);
+  color: #86efac;
+}
+
+:root[data-theme="night"] .workspace-autosave-status-failed,
+:root[data-theme="dark"] .workspace-autosave-status-failed {
+  border-color: rgba(248, 113, 113, 0.26);
+  background: rgba(127, 29, 29, 0.22);
+  color: #fca5a5;
+}
+
 :root[data-theme="dark"] .document-loading-overlay,
 :root[data-theme="night"] .document-loading-overlay {
   background: rgba(15, 23, 42, 0.66);
@@ -8494,6 +8934,85 @@ button {
 
 :root[data-theme="dark"] .app-context-menu-shortcut {
   color: #9ca3af;
+}
+
+:root[data-theme="night"] .quick-capture-dialog,
+:root[data-theme="night"] .workspace-tag-chip,
+:root[data-theme="night"] .knowledge-property-row,
+:root[data-theme="night"] .knowledge-link-list button,
+:root[data-theme="night"] .knowledge-secondary-action,
+:root[data-theme="night"] .knowledge-inline-form input,
+:root[data-theme="night"] .knowledge-property-form input,
+:root[data-theme="night"] .knowledge-inline-form button,
+:root[data-theme="night"] .knowledge-property-form button,
+:root[data-theme="night"] .quick-capture-form input,
+:root[data-theme="night"] .quick-capture-form textarea {
+  border-color: #26344f;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .quick-capture-dialog,
+:root[data-theme="dark"] .workspace-tag-chip,
+:root[data-theme="dark"] .knowledge-property-row,
+:root[data-theme="dark"] .knowledge-link-list button,
+:root[data-theme="dark"] .knowledge-secondary-action,
+:root[data-theme="dark"] .knowledge-inline-form input,
+:root[data-theme="dark"] .knowledge-property-form input,
+:root[data-theme="dark"] .knowledge-inline-form button,
+:root[data-theme="dark"] .knowledge-property-form button,
+:root[data-theme="dark"] .quick-capture-form input,
+:root[data-theme="dark"] .quick-capture-form textarea {
+  border-color: #303746;
+  background: #111827;
+  color: #f3f4f6;
+}
+
+:root[data-theme="night"] .knowledge-section,
+:root[data-theme="dark"] .knowledge-section {
+  border-bottom-color: rgba(148, 163, 184, 0.18);
+}
+
+:root[data-theme="night"] .knowledge-empty,
+:root[data-theme="dark"] .knowledge-empty {
+  border-color: rgba(148, 163, 184, 0.28);
+  color: #94a3b8;
+}
+
+:root[data-theme="night"] .knowledge-section-header,
+:root[data-theme="night"] .knowledge-property-row strong,
+:root[data-theme="night"] .knowledge-link-list span,
+:root[data-theme="night"] .quick-capture-form label,
+:root[data-theme="dark"] .knowledge-section-header,
+:root[data-theme="dark"] .knowledge-property-row strong,
+:root[data-theme="dark"] .knowledge-link-list span,
+:root[data-theme="dark"] .quick-capture-form label {
+  color: #e2e8f0;
+}
+
+:root[data-theme="night"] .knowledge-section-header svg,
+:root[data-theme="night"] .knowledge-property-row span,
+:root[data-theme="night"] .knowledge-link-list small,
+:root[data-theme="dark"] .knowledge-section-header svg,
+:root[data-theme="dark"] .knowledge-property-row span,
+:root[data-theme="dark"] .knowledge-link-list small {
+  color: #94a3b8;
+}
+
+:root[data-theme="night"] .workspace-tag-chip:hover,
+:root[data-theme="night"] .workspace-tag-chip-active,
+:root[data-theme="night"] .knowledge-link-list button:hover,
+:root[data-theme="night"] .knowledge-inline-form button:hover,
+:root[data-theme="night"] .knowledge-property-form button:hover,
+:root[data-theme="night"] .knowledge-secondary-action:hover,
+:root[data-theme="dark"] .workspace-tag-chip:hover,
+:root[data-theme="dark"] .workspace-tag-chip-active,
+:root[data-theme="dark"] .knowledge-link-list button:hover,
+:root[data-theme="dark"] .knowledge-inline-form button:hover,
+:root[data-theme="dark"] .knowledge-property-form button:hover,
+:root[data-theme="dark"] .knowledge-secondary-action:hover {
+  background: rgba(129, 140, 248, 0.16);
+  color: #c4d7ff;
 }
 
 :root[data-theme="dark"] .markdown-preview code,
