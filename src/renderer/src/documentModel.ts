@@ -185,7 +185,20 @@ export function mergeDocumentByFilePath(
     return [document, ...documents];
   }
 
+  const hasIncomingMetadata = Boolean(
+    document.metadata?.tags.length ||
+      document.metadata?.properties.length ||
+      document.metadata?.documentLinks.length,
+  );
+
   return documents.map((item, index) =>
-    index === existingIndex ? { ...item, ...document, id: item.id } : item,
+    index === existingIndex
+      ? {
+          ...item,
+          ...document,
+          id: item.id,
+          metadata: hasIncomingMetadata ? document.metadata : item.metadata,
+        }
+      : item,
   );
 }

@@ -8,6 +8,24 @@ export type DocumentType =
   | "sheet"
   | "drawing";
 
+export type DocumentProperty = {
+  key: string;
+  value: string;
+};
+
+export type DocumentLinkReference = {
+  createdAt: string;
+  documentType: DocumentType;
+  filePath: string;
+  title: string;
+};
+
+export type DocumentMetadata = {
+  documentLinks: DocumentLinkReference[];
+  properties: DocumentProperty[];
+  tags: string[];
+};
+
 export type DrawingAsset = {
   id: string;
   name: string;
@@ -25,6 +43,7 @@ export type MarkdownDocument = {
   drawings: Record<string, DrawingAsset>;
   fileExtension?: string;
   filePath?: string;
+  metadata?: DocumentMetadata;
   createdAt: string;
   updatedAt: string;
 };

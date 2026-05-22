@@ -1,9 +1,6 @@
-import type { MarkdownDocument } from "./types";
+import type { DocumentProperty, MarkdownDocument } from "./types";
 
-export type NoteProperty = {
-  key: string;
-  value: string;
-};
+export type NoteProperty = DocumentProperty;
 
 export type NoteWikiLink = {
   display: string;
@@ -24,6 +21,8 @@ export type DocumentKnowledge = {
   frontmatterTags: string[];
   inlineTags: string[];
   links: NoteWikiLink[];
+  metadataProperties: NoteProperty[];
+  metadataTags: string[];
   properties: NoteProperty[];
   tags: string[];
 };
@@ -205,6 +204,55 @@ function getFrontmatterProperties(properties: Map<string, string | string[]>) {
     .filter((property) => property.value.trim().length > 0);
 }
 
+function getDocumentMetadataTags(document: MarkdownDocument) {
+  return uniqueValues(
+    (document.metadata?.tags ?? []).map(normalizeTagName).filter(Boolean),
+  );
+}
+
+function getDocumentMetadataProperties(document: MarkdownDocument): NoteProperty[] {
+  const seen = new Set<string>();
+
+  return (document.metadata?.properties ?? [])
+    .map((property) => ({
+      key: normalizePropertyKey(property.key),
+      value: property.value.trim(),
+    }))
+    .filter((property) => {
+      const key = property.key.toLocaleLowerCase();
+
+      if (!property.key || seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+}
+
+function mergeProperties(
+  primaryProperties: NoteProperty[],
+  fallbackProperties: NoteProperty[],
+) {
+  const seen = new Set<string>();
+  const result: NoteProperty[] = [];
+
+  [...primaryProperties, ...fallbackProperties].forEach((property) => {
+    const key = normalizePropertyKey(property.key);
+    const value = property.value.trim();
+    const normalizedKey = key.toLocaleLowerCase();
+
+    if (!key || !value || seen.has(normalizedKey)) {
+      return;
+    }
+
+    seen.add(normalizedKey);
+    result.push({ key, value });
+  });
+
+  return result;
+}
+
 export function parseInlineTags(content: string) {
   const tags: string[] = [];
   const stripped = stripMarkdownCode(content);
@@ -270,17 +318,24 @@ export function parseDocumentKnowledge(
   document: MarkdownDocument,
 ): DocumentKnowledge {
   const frontmatter = parseFrontmatter(document.content);
+  const metadataTags = getDocumentMetadataTags(document);
+  const metadataProperties = getDocumentMetadataProperties(document);
   const frontmatterTags = getFrontmatterTags(frontmatter.properties);
   const inlineTags = parseInlineTags(frontmatter.body);
   const links = parseWikiLinks(frontmatter.body);
-  const tags = uniqueValues([...frontmatterTags, ...inlineTags]);
+  const tags = uniqueValues([...metadataTags, ...frontmatterTags, ...inlineTags]);
 
   return {
     document,
     frontmatterTags,
     inlineTags,
     links,
-    properties: getFrontmatterProperties(frontmatter.properties),
+    metadataProperties,
+    metadataTags,
+    properties: mergeProperties(
+      metadataProperties,
+      getFrontmatterProperties(frontmatter.properties),
+    ),
     tags,
   };
 }

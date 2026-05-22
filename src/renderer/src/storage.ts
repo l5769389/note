@@ -1,4 +1,9 @@
-import type { DocumentType, MarkdownDocument, WorkspaceSnapshot } from "./types";
+import type {
+  DocumentMetadata,
+  DocumentType,
+  MarkdownDocument,
+  WorkspaceSnapshot,
+} from "./types";
 import {
   getMigratedStorageItem,
   legacyNoteDockStorageKeys,
@@ -49,6 +54,11 @@ export function createDocument(
     drawings: {},
     fileExtension,
     filePath,
+    metadata: {
+      documentLinks: [],
+      properties: [],
+      tags: [],
+    },
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -101,6 +111,92 @@ function getBrowserStorage() {
   return typeof window === "undefined" ? undefined : window.localStorage;
 }
 
+function normalizeMetadataString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeStoredMetadata(value: unknown): DocumentMetadata {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Partial<DocumentMetadata>)
+      : {};
+  const seenTags = new Set<string>();
+  const tags = Array.isArray(record.tags)
+    ? record.tags
+        .map(normalizeMetadataString)
+        .filter((tag) => {
+          const key = tag.toLocaleLowerCase();
+
+          if (!tag || seenTags.has(key)) {
+            return false;
+          }
+
+          seenTags.add(key);
+          return true;
+        })
+    : [];
+  const seenProperties = new Set<string>();
+  const properties = Array.isArray(record.properties)
+    ? record.properties
+        .map((property) => ({
+          key: normalizeMetadataString(property?.key),
+          value: normalizeMetadataString(property?.value),
+        }))
+        .filter((property) => {
+          const key = property.key.toLocaleLowerCase();
+
+          if (!property.key || seenProperties.has(key)) {
+            return false;
+          }
+
+          seenProperties.add(key);
+          return true;
+        })
+    : [];
+  const seenDocumentLinks = new Set<string>();
+  const documentLinks = Array.isArray(record.documentLinks)
+    ? record.documentLinks
+        .map((value) => {
+          const link =
+            value && typeof value === "object"
+              ? (value as Record<string, unknown>)
+              : {};
+          const filePath =
+            normalizeMetadataString(link.filePath) ||
+            normalizeMetadataString(link.path);
+
+          return {
+            createdAt:
+              normalizeMetadataString(link.createdAt) ||
+              normalizeMetadataString(link.updatedAt) ||
+              now(),
+            documentType: getStoredDocumentType(filePath),
+            filePath,
+            title:
+              normalizeMetadataString(link.title) ||
+              normalizeMetadataString(link.name) ||
+              filePath,
+          };
+        })
+        .filter((link) => {
+          const key = link.filePath.replace(/\\/g, "/").toLocaleLowerCase();
+
+          if (!link.filePath || seenDocumentLinks.has(key)) {
+            return false;
+          }
+
+          seenDocumentLinks.add(key);
+          return true;
+        })
+    : [];
+
+  return {
+    documentLinks,
+    properties,
+    tags,
+  };
+}
+
 function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
   const documentType = document.documentType ?? getStoredDocumentType(document.filePath);
 
@@ -122,9 +218,10 @@ function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
               ? ".xlsx"
               : documentType === "sheet"
                 ? ".univer"
-                : documentType === "drawing"
-                  ? ".excalidraw"
-                  : ".md"),
+              : documentType === "drawing"
+                ? ".excalidraw"
+                : ".md"),
+    metadata: normalizeStoredMetadata(document.metadata),
   };
 }
 

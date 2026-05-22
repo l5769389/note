@@ -45,6 +45,7 @@ import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
   type FocusEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
@@ -122,6 +123,7 @@ import {
   getDocumentDisplayName,
   getDocumentPathPreview,
   getDocumentType,
+  getDocumentTypeFromPath,
   isExcelDocument,
   isHtmlDocument,
   isDrawingDocument,
@@ -172,17 +174,13 @@ import {
   getMarkdownOutline,
 } from "./markdownStructure";
 import {
-  addMarkdownTag,
   createMarkdownNoteContent,
   createWorkspaceKnowledge,
   getWikiLinkTitle,
   normalizePropertyKey,
   normalizeTagName,
   normalizeWikiLinkTarget,
-  removeMarkdownProperty,
-  removeMarkdownTag,
-  upsertMarkdownProperty,
-  type DocumentKnowledge,
+  type NoteWikiLink,
 } from "./noteKnowledge";
 import { getHtmlOutline } from "./htmlStructure";
 import { fileToDataUrl } from "./services/imageUpload";
@@ -196,6 +194,8 @@ import {
 } from "./storage";
 import type {
   DirectoryTreeItem,
+  DocumentLinkReference,
+  DocumentMetadata,
   DrawingAsset,
   EditorMode,
   MarkdownDocument,
@@ -276,12 +276,25 @@ const WordDocumentViewer = lazy(() =>
 type MenubarMenu = "file" | "edit" | "paragraph" | "format" | "view" | "theme" | "help";
 type TopMenu = MenubarMenu | null;
 type ImmersiveRevealEdge = "top";
-type SidebarTab = "files" | "current" | "search";
+type SidebarTab = "files" | "current" | "relations" | "search";
 type FileExplorerView = "tree" | "list";
 type DocumentLoadingState = {
   detail?: string;
   title: string;
 } | null;
+type RelationPanelFilter = "all" | "document" | "content" | "missing";
+type WorkspaceRelationItem = {
+  id: string;
+  kind: "content" | "document";
+  link?: NoteWikiLink;
+  reference?: DocumentLinkReference;
+  searchText: string;
+  sourceDocument: MarkdownDocument;
+  status: "linked" | "missing";
+  targetDocument?: MarkdownDocument;
+  targetPath?: string;
+  title: string;
+};
 
 const defaultSidebarWidth = 334;
 const minSidebarWidth = 236;
@@ -294,6 +307,7 @@ const internalFileWriteGraceMs = 8000;
 const immersiveRevealHitSlop = 44;
 const defaultWindowZoomFactor = 1;
 const zoomIndicatorVisibleMs = 1500;
+const quickDocumentLinkShortcut = "Ctrl+Alt+L";
 const markdownTaskListLinePattern = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\[([ xX])\][ \t]*/;
 const markdownListLinePattern = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/;
 
@@ -920,6 +934,49 @@ function getPathLabel(path?: string) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
 }
 
+function getDocumentTypeName(type: MarkdownDocument["documentType"]) {
+  switch (type) {
+    case "drawing":
+      return "Excalidraw";
+    case "excel":
+      return "Excel";
+    case "html":
+      return "HTML";
+    case "pdf":
+      return "PDF";
+    case "sheet":
+      return "在线表格";
+    case "word":
+      return "Word";
+    case "markdown":
+    default:
+      return "Markdown";
+  }
+}
+
+function getDocumentTypeLabel(document: MarkdownDocument) {
+  return getDocumentTypeName(getDocumentType(document));
+}
+
+function isQuickDocumentLinkShortcut(
+  event: Pick<
+    KeyboardEvent | ReactKeyboardEvent,
+    "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey"
+  > & {
+    isComposing?: boolean;
+    nativeEvent?: { isComposing?: boolean };
+  },
+) {
+  return (
+    !event.isComposing &&
+    !event.nativeEvent?.isComposing &&
+    (event.ctrlKey || event.metaKey) &&
+    event.altKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === "l"
+  );
+}
+
 function normalizeDirectoryKey(path?: string) {
   return path?.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() ?? "";
 }
@@ -1107,6 +1164,7 @@ function DirectoryTree({
   level = 0,
   onDirectoryContextMenu,
   onFileContextMenu,
+  onQuickLinkFile,
   onOpenFile,
   onToggleDirectory,
 }: {
@@ -1123,6 +1181,7 @@ function DirectoryTree({
     event: ReactMouseEvent<HTMLButtonElement>,
     filePath: string,
   ) => void;
+  onQuickLinkFile?: (filePath: string) => void;
   onOpenFile: (filePath: string) => void;
   onToggleDirectory: (directoryPath: string) => void;
 }) {
@@ -1166,6 +1225,7 @@ function DirectoryTree({
           level={level + 1}
           onDirectoryContextMenu={onDirectoryContextMenu}
           onFileContextMenu={onFileContextMenu}
+          onQuickLinkFile={onQuickLinkFile}
           onOpenFile={onOpenFile}
           onToggleDirectory={onToggleDirectory}
         />
@@ -1182,6 +1242,7 @@ function DirectoryTreeItems({
   level,
   onDirectoryContextMenu,
   onFileContextMenu,
+  onQuickLinkFile,
   onOpenFile,
   onToggleDirectory,
 }: {
@@ -1198,6 +1259,7 @@ function DirectoryTreeItems({
     event: ReactMouseEvent<HTMLButtonElement>,
     filePath: string,
   ) => void;
+  onQuickLinkFile?: (filePath: string) => void;
   onOpenFile: (filePath: string) => void;
   onToggleDirectory: (directoryPath: string) => void;
 }) {
@@ -1214,6 +1276,7 @@ function DirectoryTreeItems({
             level={level}
             onDirectoryContextMenu={onDirectoryContextMenu}
             onFileContextMenu={onFileContextMenu}
+            onQuickLinkFile={onQuickLinkFile}
             onOpenFile={onOpenFile}
             onToggleDirectory={onToggleDirectory}
           />
@@ -1230,6 +1293,15 @@ function DirectoryTreeItems({
             type="button"
             onClick={() => onOpenFile(child.path)}
             onContextMenu={(event) => onFileContextMenu?.(event, child.path)}
+            onKeyDown={(event) => {
+              if (!isQuickDocumentLinkShortcut(event)) {
+                return;
+              }
+
+              event.preventDefault();
+              event.stopPropagation();
+              onQuickLinkFile?.(child.path);
+            }}
           >
             <span className="directory-tree-caret-placeholder" />
             <FileText size={17} />
@@ -1379,34 +1451,26 @@ function DirectoryFileList({
   documents,
   emptyLabel = "当前目录中没有文件",
   items,
-  metadataByDocumentId,
   onFileContextMenu,
   onOpenFile,
-  visibleFilePaths,
+  onQuickLinkFile,
   workspacePath,
 }: {
   activeFilePath?: string;
   documents: MarkdownDocument[];
   emptyLabel?: string;
   items: DirectoryTreeItem[];
-  metadataByDocumentId?: Map<string, DocumentKnowledge>;
   onFileContextMenu?: (
     event: ReactMouseEvent<HTMLButtonElement>,
     filePath: string,
   ) => void;
   onOpenFile: (filePath: string) => void;
-  visibleFilePaths?: Set<string>;
+  onQuickLinkFile?: (filePath: string) => void;
   workspacePath?: string;
 }) {
   const files = useMemo(
-    () =>
-      collectDirectoryFiles(documents, items, workspacePath).filter(
-        (file) =>
-          !visibleFilePaths ||
-          visibleFilePaths.has(file.path) ||
-          (file.document?.filePath && visibleFilePaths.has(file.document.filePath)),
-      ),
-    [documents, items, visibleFilePaths, workspacePath],
+    () => collectDirectoryFiles(documents, items, workspacePath),
+    [documents, items, workspacePath],
   );
 
   if (!files.length) {
@@ -1417,9 +1481,6 @@ function DirectoryFileList({
     <div className="directory-file-list">
       {files.map((file) => {
         const preview = getFileListPreview(file.document);
-        const tags = file.document
-          ? metadataByDocumentId?.get(file.document.id)?.tags.slice(0, 3) ?? []
-          : [];
 
         return (
           <button
@@ -1433,6 +1494,15 @@ function DirectoryFileList({
             type="button"
             onClick={() => onOpenFile(file.path)}
             onContextMenu={(event) => onFileContextMenu?.(event, file.path)}
+            onKeyDown={(event) => {
+              if (!isQuickDocumentLinkShortcut(event)) {
+                return;
+              }
+
+              event.preventDefault();
+              event.stopPropagation();
+              onQuickLinkFile?.(file.path);
+            }}
           >
             <FileText size={17} />
             <span className="directory-file-list-text">
@@ -1444,13 +1514,6 @@ function DirectoryFileList({
               ) : null}
               {preview ? (
                 <span className="directory-file-list-preview">{preview}</span>
-              ) : null}
-              {tags.length ? (
-                <span className="directory-file-list-tags">
-                  {tags.map((tag) => (
-                    <span key={tag}>#{tag}</span>
-                  ))}
-                </span>
               ) : null}
             </span>
             {file.document?.updatedAt ? (
@@ -1627,10 +1690,21 @@ export function App() {
   const [replaceQuery, setReplaceQuery] = useState("");
   const [findMatchIndex, setFindMatchIndex] = useState(0);
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [relationPanelQuery, setRelationPanelQuery] = useState("");
+  const [relationPanelFilter, setRelationPanelFilter] =
+    useState<RelationPanelFilter>("all");
   const [newTagName, setNewTagName] = useState("");
   const [propertyKeyDraft, setPropertyKeyDraft] = useState("");
   const [propertyValueDraft, setPropertyValueDraft] = useState("");
+  const [activeMetadataSuggestion, setActiveMetadataSuggestion] = useState<
+    "tag" | "propertyKey" | "propertyValue" | null
+  >(null);
+  const [wikiLinkTargetDraft, setWikiLinkTargetDraft] = useState("");
+  const [isKnowledgeEditorOpen, setIsKnowledgeEditorOpen] = useState(false);
+  const [isDocumentLinkPickerOpen, setIsDocumentLinkPickerOpen] = useState(false);
+  const [documentLinkQuery, setDocumentLinkQuery] = useState("");
+  const [documentLinkSourceDocumentId, setDocumentLinkSourceDocumentId] =
+    useState<string | null>(null);
   const [isQuickCaptureOpen, setIsQuickCaptureOpen] = useState(false);
   const [quickCaptureTitle, setQuickCaptureTitle] = useState("");
   const [quickCaptureBody, setQuickCaptureBody] = useState("");
@@ -1680,6 +1754,7 @@ export function App() {
   const zoomIndicatorTimerRef = useRef<number | null>(null);
   const mediaImportIdRef = useRef(0);
   const workspaceSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const wikiLinkInputRef = useRef<HTMLInputElement | null>(null);
   const pendingWorkspaceSearchRevealRef = useRef<WorkspaceSearchReveal | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const appDialogResolverRef = useRef<((confirmed: boolean) => void) | null>(
@@ -1804,23 +1879,249 @@ export function App() {
   const activeMissingLinks = activeOutgoingLinks.filter(
     (link) => !link.targetDocument,
   );
-  const visibleTaggedFilePaths = useMemo(() => {
-    if (!tagFilter) {
-      return undefined;
+  const activeRelatedDocuments = useMemo(
+    () =>
+      activeDocument
+        ? normalizeDocumentMetadata(activeDocument.metadata).documentLinks.map((link) => ({
+            document: resolveDocumentLinkReference(link),
+            link,
+          }))
+        : [],
+    [activeDocument?.metadata, activeDocument?.id, workspace.documents],
+  );
+  const workspaceRelationItems = useMemo<WorkspaceRelationItem[]>(() => {
+    const items: WorkspaceRelationItem[] = [];
+
+    workspace.documents.filter(isMarkdownDocument).forEach((sourceDocument) => {
+      const sourceTitle = getDocumentDisplayName(sourceDocument);
+
+      normalizeDocumentMetadata(sourceDocument.metadata).documentLinks.forEach(
+        (reference) => {
+          const targetDocument = resolveDocumentLinkReference(reference);
+          const targetTitle =
+            targetDocument ? getDocumentDisplayName(targetDocument) : reference.title;
+          const targetPath = targetDocument?.filePath ?? reference.filePath;
+
+          items.push({
+            id: `document:${sourceDocument.id}:${normalizeFilePathKey(reference.filePath)}`,
+            kind: "document",
+            reference,
+            searchText: [
+              sourceTitle,
+              sourceDocument.filePath,
+              targetTitle,
+              targetPath,
+              getDocumentTypeName(reference.documentType),
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLocaleLowerCase(),
+            sourceDocument,
+            status: targetDocument ? "linked" : "missing",
+            targetDocument,
+            targetPath,
+            title: targetTitle,
+          });
+        },
+      );
+
+      const outgoingLinks =
+        workspaceKnowledge.outgoingLinksByDocumentId.get(sourceDocument.id) ?? [];
+
+      outgoingLinks.forEach((link) => {
+        const targetTitle =
+          link.targetDocument ? getDocumentDisplayName(link.targetDocument) : link.display;
+        const targetPath = link.targetDocument?.filePath ?? link.target;
+
+        items.push({
+          id: `content:${sourceDocument.id}:${link.index}:${link.raw}`,
+          kind: "content",
+          link,
+          searchText: [
+            sourceTitle,
+            sourceDocument.filePath,
+            targetTitle,
+            targetPath,
+            link.raw,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLocaleLowerCase(),
+          sourceDocument,
+          status: link.targetDocument ? "linked" : "missing",
+          targetDocument: link.targetDocument,
+          targetPath,
+          title: targetTitle,
+        });
+      });
+    });
+
+    return items.sort((left, right) => {
+      const sourceOrder = getDocumentDisplayName(left.sourceDocument).localeCompare(
+        getDocumentDisplayName(right.sourceDocument),
+        "zh-CN",
+        { numeric: true },
+      );
+
+      if (sourceOrder !== 0) {
+        return sourceOrder;
+      }
+
+      return left.title.localeCompare(right.title, "zh-CN", { numeric: true });
+    });
+  }, [workspace.documents, workspaceKnowledge]);
+  const workspaceRelationStats = useMemo(() => {
+    const documentCount = workspaceRelationItems.filter(
+      (item) => item.kind === "document",
+    ).length;
+    const contentCount = workspaceRelationItems.filter(
+      (item) => item.kind === "content",
+    ).length;
+    const missingCount = workspaceRelationItems.filter(
+      (item) => item.status === "missing",
+    ).length;
+    const sourceCount = new Set(
+      workspaceRelationItems.map((item) => item.sourceDocument.id),
+    ).size;
+
+    return {
+      contentCount,
+      documentCount,
+      missingCount,
+      sourceCount,
+      totalCount: workspaceRelationItems.length,
+    };
+  }, [workspaceRelationItems]);
+  const filteredWorkspaceRelationItems = useMemo(() => {
+    const query = relationPanelQuery.trim().toLocaleLowerCase();
+
+    return workspaceRelationItems.filter((item) => {
+      const matchesFilter =
+        relationPanelFilter === "all" ||
+        (relationPanelFilter === "document" && item.kind === "document") ||
+        (relationPanelFilter === "content" && item.kind === "content") ||
+        (relationPanelFilter === "missing" && item.status === "missing");
+
+      return matchesFilter && (!query || item.searchText.includes(query));
+    });
+  }, [relationPanelFilter, relationPanelQuery, workspaceRelationItems]);
+  const documentLinkPickerSourceDocument = useMemo(() => {
+    const sourceDocument = documentLinkSourceDocumentId
+      ? workspace.documents.find((document) => document.id === documentLinkSourceDocumentId) ??
+        null
+      : activeDocument;
+
+    return sourceDocument && isMarkdownDocument(sourceDocument) ? sourceDocument : null;
+  }, [activeDocument, documentLinkSourceDocumentId, workspace.documents]);
+  const documentLinkPickerRelatedKeys = useMemo(() => {
+    if (!documentLinkPickerSourceDocument) {
+      return new Set<string>();
     }
 
-    const tagKey = tagFilter.toLocaleLowerCase();
-    const filePaths = workspace.documents
-      .filter((document) =>
-        workspaceKnowledge.metadataByDocumentId
-          .get(document.id)
-          ?.tags.some((tag) => tag.toLocaleLowerCase() === tagKey),
-      )
-      .map((document) => document.filePath)
-      .filter((filePath): filePath is string => Boolean(filePath));
+    return new Set(
+      normalizeDocumentMetadata(documentLinkPickerSourceDocument.metadata).documentLinks.map(
+        (link) => normalizeFilePathKey(link.filePath),
+      ),
+    );
+  }, [
+    documentLinkPickerSourceDocument?.id,
+    documentLinkPickerSourceDocument?.metadata,
+  ]);
+  const linkableDocuments = useMemo(
+    () =>
+      workspace.documents
+        .filter(
+          (document) =>
+            document.filePath &&
+            normalizeFilePathKey(document.filePath) !==
+              normalizeFilePathKey(documentLinkPickerSourceDocument?.filePath),
+        )
+        .sort((left, right) =>
+          getDocumentDisplayName(left).localeCompare(
+            getDocumentDisplayName(right),
+            "zh-CN",
+            { numeric: true },
+          ),
+        ),
+    [documentLinkPickerSourceDocument?.filePath, workspace.documents],
+  );
+  const filteredLinkableDocuments = useMemo(() => {
+    const query = documentLinkQuery.trim().toLocaleLowerCase();
 
-    return new Set(filePaths);
-  }, [tagFilter, workspace.documents, workspaceKnowledge]);
+    if (!query) {
+      return linkableDocuments;
+    }
+
+    return linkableDocuments.filter((document) => {
+      const haystack = [
+        getDocumentDisplayName(document),
+        document.filePath,
+        getDocumentTypeLabel(document),
+      ]
+        .join(" ")
+        .toLocaleLowerCase();
+
+      return haystack.includes(query);
+    });
+  }, [documentLinkQuery, linkableDocuments]);
+  const tagSuggestions = useMemo(
+    () => workspaceKnowledge.tagSummaries.map((summary) => summary.tag),
+    [workspaceKnowledge],
+  );
+  const propertyKeySuggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const suggestions: string[] = [];
+
+    workspaceKnowledge.metadataByDocumentId.forEach((knowledge) => {
+      knowledge.properties.forEach((property) => {
+        const key = property.key.trim();
+        const normalizedKey = key.toLocaleLowerCase();
+
+        if (!key || seen.has(normalizedKey)) {
+          return;
+        }
+
+        seen.add(normalizedKey);
+        suggestions.push(key);
+      });
+    });
+
+    return suggestions.sort((left, right) =>
+      left.localeCompare(right, "zh-CN", { numeric: true }),
+    );
+  }, [workspaceKnowledge]);
+  const propertyValueSuggestions = useMemo(() => {
+    const selectedKey = normalizePropertyKey(propertyKeyDraft).toLocaleLowerCase();
+
+    if (!selectedKey) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    const suggestions: string[] = [];
+
+    workspaceKnowledge.metadataByDocumentId.forEach((knowledge) => {
+      knowledge.properties.forEach((property) => {
+        if (property.key.toLocaleLowerCase() !== selectedKey) {
+          return;
+        }
+
+        const value = property.value.trim();
+        const normalizedValue = value.toLocaleLowerCase();
+
+        if (!value || seen.has(normalizedValue)) {
+          return;
+        }
+
+        seen.add(normalizedValue);
+        suggestions.push(value);
+      });
+    });
+
+    return suggestions.sort((left, right) =>
+      left.localeCompare(right, "zh-CN", { numeric: true }),
+    );
+  }, [propertyKeyDraft, workspaceKnowledge]);
   useEffect(() => {
     setActiveHtmlOutlineId(null);
   }, [activeDocument?.content, activeDocument?.id]);
@@ -2479,6 +2780,8 @@ export function App() {
 
   useEffect(() => {
     setActiveEditorLineIndex(0);
+    setIsKnowledgeEditorOpen(false);
+    setWikiLinkTargetDraft("");
   }, [activeDocument?.id]);
 
   useEffect(() => {
@@ -3005,6 +3308,96 @@ export function App() {
       });
   }
 
+  function normalizeDocumentMetadata(metadata?: DocumentMetadata): DocumentMetadata {
+    const seenTags = new Set<string>();
+    const tags =
+      metadata?.tags
+        ?.map(normalizeTagName)
+        .filter((tag) => {
+          const key = tag.toLocaleLowerCase();
+
+          if (!tag || seenTags.has(key)) {
+            return false;
+          }
+
+          seenTags.add(key);
+          return true;
+        }) ?? [];
+    const seenDocumentLinks = new Set<string>();
+    const documentLinks =
+      metadata?.documentLinks
+        ?.map((link) => ({
+          createdAt: link.createdAt || now(),
+          documentType: link.documentType ?? getDocumentTypeFromPath(link.filePath),
+          filePath: link.filePath.trim(),
+          title: (link.title ?? "").trim() || getPathLabel(link.filePath),
+        }))
+        .filter((link) => {
+          const key = normalizeFilePathKey(link.filePath);
+
+          if (!link.filePath || seenDocumentLinks.has(key)) {
+            return false;
+          }
+
+          seenDocumentLinks.add(key);
+          return true;
+        }) ?? [];
+    const seenProperties = new Set<string>();
+    const properties =
+      metadata?.properties
+        ?.map((property) => ({
+          key: normalizePropertyKey(property.key),
+          value: property.value.trim(),
+        }))
+        .filter((property) => {
+          const key = property.key.toLocaleLowerCase();
+
+          if (!property.key || seenProperties.has(key)) {
+            return false;
+          }
+
+          seenProperties.add(key);
+          return true;
+        }) ?? [];
+
+    return {
+      documentLinks,
+      properties,
+      tags,
+    };
+  }
+
+  function updateDocumentMetadata(
+    documentId: string,
+    updater: (metadata: DocumentMetadata) => DocumentMetadata,
+  ) {
+    setWorkspace((current) => {
+      const document = current.documents.find((item) => item.id === documentId);
+
+      if (!document || !isMarkdownDocument(document)) {
+        return current;
+      }
+
+      return updateDocument(current, {
+        ...document,
+        metadata: normalizeDocumentMetadata(
+          updater(normalizeDocumentMetadata(document.metadata)),
+        ),
+        updatedAt: now(),
+      });
+    });
+  }
+
+  function updateActiveDocumentMetadata(
+    updater: (metadata: DocumentMetadata) => DocumentMetadata,
+  ) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    updateDocumentMetadata(activeDocument.id, updater);
+  }
+
   function addActiveDocumentTag() {
     if (!activeDocument || !isMarkdownDocument(activeDocument)) {
       return;
@@ -3016,8 +3409,12 @@ export function App() {
       return;
     }
 
-    updateMarkdown(addMarkdownTag(activeDocument.content, tag));
+    updateActiveDocumentMetadata((metadata) => ({
+      ...metadata,
+      tags: [...metadata.tags, tag],
+    }));
     setNewTagName("");
+    setActiveMetadataSuggestion(null);
   }
 
   function removeActiveDocumentTag(tag: string) {
@@ -3025,7 +3422,14 @@ export function App() {
       return;
     }
 
-    updateMarkdown(removeMarkdownTag(activeDocument.content, tag));
+    const normalizedTag = normalizeTagName(tag).toLocaleLowerCase();
+
+    updateActiveDocumentMetadata((metadata) => ({
+      ...metadata,
+      tags: metadata.tags.filter(
+        (item) => item.toLocaleLowerCase() !== normalizedTag,
+      ),
+    }));
   }
 
   function saveActiveDocumentProperty() {
@@ -3039,11 +3443,25 @@ export function App() {
       return;
     }
 
-    updateMarkdown(
-      upsertMarkdownProperty(activeDocument.content, key, propertyValueDraft),
-    );
+    const value = propertyValueDraft.trim();
+
+    updateActiveDocumentMetadata((metadata) => {
+      const nextProperties = metadata.properties.filter(
+        (property) => property.key.toLocaleLowerCase() !== key.toLocaleLowerCase(),
+      );
+
+      if (value) {
+        nextProperties.push({ key, value });
+      }
+
+      return {
+        ...metadata,
+        properties: nextProperties,
+      };
+    });
     setPropertyKeyDraft("");
     setPropertyValueDraft("");
+    setActiveMetadataSuggestion(null);
   }
 
   function removeActiveDocumentProperty(key: string) {
@@ -3051,7 +3469,20 @@ export function App() {
       return;
     }
 
-    updateMarkdown(removeMarkdownProperty(activeDocument.content, key));
+    const propertyKey = normalizePropertyKey(key).toLocaleLowerCase();
+
+    updateActiveDocumentMetadata((metadata) => ({
+      ...metadata,
+      properties: metadata.properties.filter(
+        (property) => property.key.toLocaleLowerCase() !== propertyKey,
+      ),
+    }));
+  }
+
+  function openRelationDocument(document: MarkdownDocument) {
+    setActiveDocument(document.id);
+    setIsHomeOpen(false);
+    setSidebarTab("relations");
   }
 
   function openKnowledgeDocument(document: MarkdownDocument) {
@@ -3084,10 +3515,13 @@ export function App() {
     return document;
   }
 
-  async function createDocumentFromMissingWikiLink(target: string) {
+  async function createDocumentFromMissingWikiLink(
+    target: string,
+    sourceDocument = activeDocument,
+  ) {
     const title = normalizeMarkdownTitle(getWikiLinkTitle(target) || target);
     const content = createMarkdownNoteContent({
-      body: activeDocument ? `来自 [[${activeDocument.title}]]` : "",
+      body: sourceDocument ? `来自 [[${sourceDocument.title}]]` : "",
       properties: { created: new Date().toISOString() },
       title,
     });
@@ -3115,19 +3549,210 @@ export function App() {
     await createDocumentFromMissingWikiLink(target);
   }
 
-  function insertWikiLinkFromPrompt() {
+  function openWikiLinkInsertForm() {
     if (!activeDocument || !isMarkdownDocument(activeDocument)) {
       return;
     }
 
     const selectedText = getSelectedEditorText().trim();
-    const target = window.prompt("双链目标", selectedText || "");
+    setWikiLinkTargetDraft(selectedText);
+    setIsKnowledgeEditorOpen(true);
+    window.requestAnimationFrame(() => wikiLinkInputRef.current?.focus());
+  }
 
-    if (target === null || !target.trim()) {
+  function insertWikiLinkFromDraft() {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
       return;
     }
 
-    insertMarkdown(`[[${target.trim()}]]`);
+    const target = wikiLinkTargetDraft.trim();
+
+    if (!target) {
+      return;
+    }
+
+    insertMarkdown(`[[${target}]]`);
+    setWikiLinkTargetDraft("");
+    setIsKnowledgeEditorOpen(false);
+  }
+
+  function getDocumentByFilePath(filePath?: string) {
+    const fileKey = normalizeFilePathKey(filePath);
+
+    if (!fileKey) {
+      return undefined;
+    }
+
+    return workspace.documents.find(
+      (document) => normalizeFilePathKey(document.filePath) === fileKey,
+    );
+  }
+
+  function resolveDocumentLinkReference(reference: DocumentLinkReference) {
+    return getDocumentByFilePath(reference.filePath);
+  }
+
+  function createDocumentLinkReference(
+    document: MarkdownDocument,
+  ): DocumentLinkReference | null {
+    if (!document.filePath) {
+      return null;
+    }
+
+    return {
+      createdAt: now(),
+      documentType: getDocumentType(document),
+      filePath: document.filePath,
+      title: getDocumentDisplayName(document),
+    };
+  }
+
+  function createDocumentLinkReferenceFromFilePath(
+    filePath: string,
+  ): DocumentLinkReference {
+    const document = getDocumentByFilePath(filePath);
+
+    return (
+      (document && createDocumentLinkReference(document)) ?? {
+        createdAt: now(),
+        documentType: getDocumentTypeFromPath(filePath),
+        filePath,
+        title: getPathLabel(filePath),
+      }
+    );
+  }
+
+  function canRelateDocumentFile(filePath: string) {
+    return (
+      Boolean(activeDocument && isMarkdownDocument(activeDocument)) &&
+      normalizeFilePathKey(activeDocument?.filePath) !== normalizeFilePathKey(filePath)
+    );
+  }
+
+  function addDocumentLinkToDocument(
+    sourceDocument: MarkdownDocument | null | undefined,
+    reference: DocumentLinkReference,
+  ) {
+    if (!sourceDocument || !isMarkdownDocument(sourceDocument)) {
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description:
+          "需要先打开或右键选择一个 Markdown 文档，再把目录中的文件添加为相关文档。",
+        title: "没有可编辑的 Markdown 文档",
+        tone: "info",
+      });
+      return;
+    }
+
+    if (
+      normalizeFilePathKey(sourceDocument.filePath) ===
+      normalizeFilePathKey(reference.filePath)
+    ) {
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "当前文档不需要关联到自己，可以选择目录中的其他文档。",
+        title: "已是当前文档",
+        tone: "info",
+      });
+      return;
+    }
+
+    const metadata = normalizeDocumentMetadata(sourceDocument.metadata);
+    const referenceKey = normalizeFilePathKey(reference.filePath);
+    const isLinked = metadata.documentLinks.some(
+      (link) => normalizeFilePathKey(link.filePath) === referenceKey,
+    );
+
+    if (isLinked) {
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "这个文件已经在该文档的相关文档里。",
+        title: "已经添加过",
+        tone: "info",
+      });
+      return;
+    }
+
+    updateDocumentMetadata(sourceDocument.id, (currentMetadata) => ({
+      ...currentMetadata,
+      documentLinks: [...currentMetadata.documentLinks, reference],
+    }));
+  }
+
+  function addActiveDocumentLink(reference: DocumentLinkReference) {
+    addDocumentLinkToDocument(activeDocument, reference);
+  }
+
+  function addPickerDocumentLink(reference: DocumentLinkReference) {
+    addDocumentLinkToDocument(documentLinkPickerSourceDocument, reference);
+  }
+
+  function removeDocumentLinkFromDocument(documentId: string, filePath: string) {
+    const targetKey = normalizeFilePathKey(filePath);
+
+    updateDocumentMetadata(documentId, (metadata) => ({
+      ...metadata,
+      documentLinks: metadata.documentLinks.filter(
+        (link) => normalizeFilePathKey(link.filePath) !== targetKey,
+      ),
+    }));
+  }
+
+  function relateDocumentFromFile(filePath: string) {
+    if (!canRelateDocumentFile(filePath)) {
+      return;
+    }
+
+    addActiveDocumentLink(createDocumentLinkReferenceFromFilePath(filePath));
+  }
+
+  function removeActiveDocumentLink(filePath: string) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    const targetKey = normalizeFilePathKey(filePath);
+
+    removeDocumentLinkFromDocument(activeDocument.id, targetKey);
+  }
+
+  function openDocumentLinkPicker(sourceDocument?: MarkdownDocument | null) {
+    const pickerSource =
+      sourceDocument && isMarkdownDocument(sourceDocument)
+        ? sourceDocument
+        : activeDocument && isMarkdownDocument(activeDocument)
+          ? activeDocument
+          : null;
+
+    if (!pickerSource) {
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "需要先打开或右键选择一个 Markdown 文档，再选择要添加为相关文档的文件。",
+        title: "没有可编辑的 Markdown 文档",
+        tone: "info",
+      });
+      return;
+    }
+
+    setDocumentLinkSourceDocumentId(pickerSource.id);
+    setDocumentLinkQuery("");
+    if (pickerSource.id === activeDocument?.id) {
+      setIsKnowledgeEditorOpen(true);
+    }
+    setIsDocumentLinkPickerOpen(true);
+  }
+
+  async function openRelatedDocument(reference: DocumentLinkReference) {
+    const document = resolveDocumentLinkReference(reference);
+
+    if (document) {
+      openKnowledgeDocument(document);
+      return;
+    }
+
+    if (reference.filePath) {
+      await openFileFromTree(reference.filePath);
+    }
   }
 
   function openQuickCapture() {
@@ -3841,6 +4466,10 @@ export function App() {
   ) {
     const fileName = getPathLabel(filePath);
     const canUseFileIpc = Boolean(window.desktop);
+    const sourceDocument = getDocumentByFilePath(filePath);
+    const canUseFileAsLinkSource = Boolean(
+      sourceDocument && isMarkdownDocument(sourceDocument),
+    );
 
     openContextMenu(
       event,
@@ -3850,6 +4479,20 @@ export function App() {
           label: "打开",
           onSelect: () => void openFileFromTree(filePath),
         },
+        {
+          disabled: !canRelateDocumentFile(filePath),
+          icon: <Link2 size={15} />,
+          label: "添加到相关文档",
+          onSelect: () => relateDocumentFromFile(filePath),
+          shortcut: quickDocumentLinkShortcut,
+        },
+        {
+          disabled: !canUseFileAsLinkSource,
+          icon: <BookOpenText size={15} />,
+          label: "选择相关文档...",
+          onSelect: () => openDocumentLinkPicker(sourceDocument),
+        },
+        { type: "separator" },
         {
           disabled: !window.desktop?.duplicateDocumentFile,
           icon: <Copy size={15} />,
@@ -4317,6 +4960,13 @@ export function App() {
     setIsActionsOpen(false);
     setTopMenu(null);
     void refreshWorkspaceSearchDocuments();
+  }
+
+  function openKnowledgeRelationsPanel() {
+    setSidebarTab("relations");
+    showSidebar();
+    setIsActionsOpen(false);
+    setTopMenu(null);
   }
 
   function closeWorkspaceSearch() {
@@ -6083,7 +6733,6 @@ export function App() {
             <MenuItem label="注释" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "comment" }))} />
             <MenuSeparator />
             <MenuItem label="超链接" shortcut="Ctrl+K" onSelect={() => runTopMenuAction(createLinkFromPrompt)} />
-            <MenuItem label="双链" onSelect={() => runTopMenuAction(insertWikiLinkFromPrompt)} />
             <MenuSubmenu label="图像">
               <MenuItem label="插入本地图片..." onSelect={() => runTopMenuAction(() => readFileInput(imageInputRef.current))} />
               <MenuSeparator />
@@ -6099,6 +6748,7 @@ export function App() {
           <>
             <MenuItem label="显示 / 隐藏侧边栏" shortcut="Ctrl+Shift+L" onSelect={() => runTopMenuAction(toggleSidebarVisibility)} />
             <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(openWorkspaceSearch)} />
+            <MenuItem label="链接总览" onSelect={() => runTopMenuAction(openKnowledgeRelationsPanel)} />
             <MenuItem label="阅读设置..." onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
             <MenuSubmenu label="编辑模式">
               <MenuItem
@@ -6307,195 +6957,8 @@ export function App() {
       return <div className="outline-empty" aria-label="当前文件为空" />;
     }
 
-    const supportsKnowledge = isMarkdownDocument(activeDocument);
-    const frontmatterTagKeys = new Set(
-      activeDocumentKnowledge?.frontmatterTags.map((tag) =>
-        tag.toLocaleLowerCase(),
-      ) ?? [],
-    );
-
     return (
       <div className="current-document-panel">
-        <section className="knowledge-section">
-          <div className="knowledge-section-header">
-            <Hash size={15} />
-            <span>标签</span>
-          </div>
-          {supportsKnowledge ? (
-            <>
-              {activeDocumentKnowledge?.tags.length ? (
-                <div className="knowledge-chip-row">
-                  {activeDocumentKnowledge.tags.map((tag) => {
-                    const canRemove = frontmatterTagKeys.has(tag.toLocaleLowerCase());
-
-                    return (
-                      <span className="knowledge-chip" key={tag}>
-                        #{tag}
-                        {canRemove ? (
-                          <button
-                            type="button"
-                            aria-label={`移除标签 ${tag}`}
-                            onClick={() => removeActiveDocumentTag(tag)}
-                          >
-                            <X size={12} />
-                          </button>
-                        ) : null}
-                      </span>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="knowledge-empty">还没有标签</div>
-              )}
-              <form
-                className="knowledge-inline-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  addActiveDocumentTag();
-                }}
-              >
-                <input
-                  value={newTagName}
-                  onChange={(event) => setNewTagName(event.target.value)}
-                  placeholder="添加标签"
-                />
-                <button type="submit" aria-label="添加标签">
-                  <Plus size={14} />
-                </button>
-              </form>
-            </>
-          ) : (
-            <div className="knowledge-empty">当前文件不支持标签</div>
-          )}
-        </section>
-
-        <section className="knowledge-section">
-          <div className="knowledge-section-header">
-            <FileText size={15} />
-            <span>属性</span>
-          </div>
-          {supportsKnowledge ? (
-            <>
-              {activeDocumentKnowledge?.properties.length ? (
-                <div className="knowledge-property-list">
-                  {activeDocumentKnowledge.properties.map((property) => (
-                    <div className="knowledge-property-row" key={property.key}>
-                      <strong>{property.key}</strong>
-                      <span>{property.value}</span>
-                      <button
-                        type="button"
-                        aria-label={`移除属性 ${property.key}`}
-                        onClick={() => removeActiveDocumentProperty(property.key)}
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="knowledge-empty">还没有属性</div>
-              )}
-              <form
-                className="knowledge-property-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  saveActiveDocumentProperty();
-                }}
-              >
-                <input
-                  value={propertyKeyDraft}
-                  onChange={(event) => setPropertyKeyDraft(event.target.value)}
-                  placeholder="属性名"
-                />
-                <input
-                  value={propertyValueDraft}
-                  onChange={(event) => setPropertyValueDraft(event.target.value)}
-                  placeholder="属性值"
-                />
-                <button type="submit" aria-label="保存属性">
-                  <Check size={14} />
-                </button>
-              </form>
-            </>
-          ) : (
-            <div className="knowledge-empty">当前文件不支持属性</div>
-          )}
-        </section>
-
-        <section className="knowledge-section">
-          <div className="knowledge-section-header">
-            <Link2 size={15} />
-            <span>双链</span>
-            {activeMissingLinks.length ? <em>{activeMissingLinks.length}</em> : null}
-          </div>
-          {supportsKnowledge && activeOutgoingLinks.length ? (
-            <div className="knowledge-link-list">
-              {activeOutgoingLinks.map((link) =>
-                link.targetDocument ? (
-                  <button
-                    key={`${link.raw}-${link.index}`}
-                    type="button"
-                    onClick={() => openKnowledgeDocument(link.targetDocument!)}
-                  >
-                    <span>{link.display}</span>
-                    <small>{getDocumentDisplayName(link.targetDocument)}</small>
-                  </button>
-                ) : (
-                  <button
-                    className="knowledge-link-missing"
-                    key={`${link.raw}-${link.index}`}
-                    type="button"
-                    onClick={() => void createDocumentFromMissingWikiLink(link.target)}
-                  >
-                    <span>{link.display}</span>
-                    <small>创建目标文件</small>
-                  </button>
-                ),
-              )}
-            </div>
-          ) : (
-            <div className="knowledge-empty">
-              {supportsKnowledge ? "还没有 [[双链]]" : "当前文件不支持双链"}
-            </div>
-          )}
-          {supportsKnowledge ? (
-            <button
-              className="knowledge-secondary-action"
-              type="button"
-              onClick={insertWikiLinkFromPrompt}
-            >
-              <Link2 size={14} />
-              插入双链
-            </button>
-          ) : null}
-        </section>
-
-        <section className="knowledge-section">
-          <div className="knowledge-section-header">
-            <BookOpenText size={15} />
-            <span>反链</span>
-            {activeBacklinks.length ? <em>{activeBacklinks.length}</em> : null}
-          </div>
-          {supportsKnowledge && activeBacklinks.length ? (
-            <div className="knowledge-link-list">
-              {activeBacklinks.map((backlink) => (
-                <button
-                  key={`${backlink.sourceDocument.id}-${backlink.link.index}`}
-                  type="button"
-                  onClick={() => openKnowledgeDocument(backlink.sourceDocument)}
-                >
-                  <span>{getDocumentDisplayName(backlink.sourceDocument)}</span>
-                  <small>[[{backlink.link.raw}]]</small>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="knowledge-empty">
-              {supportsKnowledge ? "还没有反链" : "当前文件不支持反链"}
-            </div>
-          )}
-        </section>
-
         <section className="knowledge-section">
           <div className="knowledge-section-header">
             <ListTree size={15} />
@@ -6504,6 +6967,607 @@ export function App() {
           {renderActiveDocumentOutline()}
         </section>
       </div>
+    );
+  }
+
+  function renderKnowledgeRelationsPanel() {
+    const filters: Array<{
+      count: number;
+      label: string;
+      value: RelationPanelFilter;
+    }> = [
+      { count: workspaceRelationStats.totalCount, label: "全部", value: "all" },
+      {
+        count: workspaceRelationStats.documentCount,
+        label: "相关文档",
+        value: "document",
+      },
+      {
+        count: workspaceRelationStats.contentCount,
+        label: "正文引用",
+        value: "content",
+      },
+      {
+        count: workspaceRelationStats.missingCount,
+        label: "失效",
+        value: "missing",
+      },
+    ];
+
+    return (
+      <div className="knowledge-relations-panel">
+        <header className="knowledge-relations-header">
+          <div>
+            <strong>链接总览</strong>
+            <span>
+              {workspaceRelationStats.sourceCount
+                ? `${workspaceRelationStats.sourceCount} 个文件中有关系`
+                : "当前工作区还没有关系"}
+            </span>
+          </div>
+          <button
+            type="button"
+            title="刷新"
+            aria-label="刷新链接总览"
+            onClick={() => void refreshWorkspaceSearchDocuments()}
+          >
+            <RefreshCw size={15} />
+          </button>
+        </header>
+
+        <div className="knowledge-relations-search">
+          <Search size={16} />
+          <input
+            value={relationPanelQuery}
+            onChange={(event) => setRelationPanelQuery(event.target.value)}
+            placeholder="搜索文件、路径或引用"
+          />
+          {relationPanelQuery ? (
+            <button
+              type="button"
+              aria-label="清空搜索"
+              onClick={() => setRelationPanelQuery("")}
+            >
+              <X size={14} />
+            </button>
+          ) : null}
+        </div>
+
+        <div className="knowledge-relations-filters" role="tablist">
+          {filters.map((filter) => (
+            <button
+              className={
+                relationPanelFilter === filter.value
+                  ? "knowledge-relations-filter-active"
+                  : undefined
+              }
+              key={filter.value}
+              type="button"
+              role="tab"
+              aria-selected={relationPanelFilter === filter.value}
+              onClick={() => setRelationPanelFilter(filter.value)}
+            >
+              <span>{filter.label}</span>
+              <strong>{filter.count}</strong>
+            </button>
+          ))}
+        </div>
+
+        <div className="knowledge-relations-list">
+          {!workspaceRelationItems.length ? (
+            <div className="knowledge-relations-empty">
+              <Link2 size={24} />
+              <strong>还没有关系</strong>
+              <span>可以在文档元信息里添加相关文档，或在正文中使用 [[文件名]]。</span>
+            </div>
+          ) : !filteredWorkspaceRelationItems.length ? (
+            <div className="knowledge-relations-empty">
+              <Search size={24} />
+              <strong>没有匹配的关系</strong>
+              <span>换个关键词或切换筛选条件试试。</span>
+            </div>
+          ) : (
+            filteredWorkspaceRelationItems.map((item) => {
+              const sourceTitle = getDocumentDisplayName(item.sourceDocument);
+              const targetLabel = item.title || item.targetPath || "未命名";
+              const isMissing = item.status === "missing";
+              const relationLabel =
+                item.kind === "document" ? "相关文档" : "正文引用";
+
+              return (
+                <article
+                  className={[
+                    "knowledge-relation-card",
+                    isMissing ? "knowledge-relation-card-missing" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={item.id}
+                >
+                  <div className="knowledge-relation-main">
+                    <button
+                      className="knowledge-relation-source"
+                      type="button"
+                      title={item.sourceDocument.filePath}
+                      onClick={() => openRelationDocument(item.sourceDocument)}
+                    >
+                      <FileText size={14} />
+                      <span>{sourceTitle}</span>
+                    </button>
+                    <span className="knowledge-relation-arrow">→</span>
+                    <button
+                      className="knowledge-relation-target"
+                      type="button"
+                      title={item.targetPath}
+                      onClick={() => {
+                        if (item.targetDocument) {
+                          openRelationDocument(item.targetDocument);
+                          return;
+                        }
+
+                        if (item.reference?.filePath) {
+                          void openFileFromTree(item.reference.filePath);
+                        }
+                      }}
+                    >
+                      <BookOpenText size={14} />
+                      <span>{targetLabel}</span>
+                    </button>
+                  </div>
+                  <div className="knowledge-relation-meta">
+                    <span>{relationLabel}</span>
+                    {item.targetPath ? <small>{item.targetPath}</small> : null}
+                  </div>
+                  <div className="knowledge-relation-actions">
+                    {isMissing ? (
+                      <span className="knowledge-relation-status">失效</span>
+                    ) : (
+                      <span className="knowledge-relation-status knowledge-relation-status-ok">
+                        有效
+                      </span>
+                    )}
+                    {item.kind === "content" && isMissing && item.link ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void createDocumentFromMissingWikiLink(
+                            item.link!.target,
+                            item.sourceDocument,
+                          ).then(() => setSidebarTab("relations"));
+                        }}
+                      >
+                        创建
+                      </button>
+                    ) : null}
+                    {item.kind === "document" && item.reference ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeDocumentLinkFromDocument(
+                            item.sourceDocument.id,
+                            item.reference!.filePath,
+                          )
+                        }
+                      >
+                        移除
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function getMetadataSuggestionMatches(items: string[], query: string) {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+
+    return items
+      .filter((item) =>
+        normalizedQuery
+          ? item.toLocaleLowerCase().includes(normalizedQuery)
+          : true,
+      )
+      .slice(0, 8);
+  }
+
+  function renderMetadataSuggestionMenu(
+    field: "tag" | "propertyKey" | "propertyValue",
+    items: string[],
+    onSelect: (value: string) => void,
+  ) {
+    if (activeMetadataSuggestion !== field || !items.length) {
+      return null;
+    }
+
+    return (
+      <div className="document-meta-suggestion-menu" role="listbox">
+        {items.map((item) => (
+          <button
+            key={item}
+            type="button"
+            role="option"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onSelect(item);
+              setActiveMetadataSuggestion(null);
+            }}
+          >
+            {field === "tag" ? <Hash size={12} /> : <FileText size={12} />}
+            <span>{field === "tag" ? `#${item}` : item}</span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  function renderDocumentKnowledgeBar() {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return null;
+    }
+
+    const metadataTagKeys = new Set(
+      activeDocumentKnowledge?.metadataTags.map((tag) =>
+        tag.toLocaleLowerCase(),
+      ) ?? [],
+    );
+    const metadataPropertyKeys = new Set(
+      activeDocumentKnowledge?.metadataProperties.map((property) =>
+        property.key.toLocaleLowerCase(),
+      ) ?? [],
+    );
+    const tags = activeDocumentKnowledge?.tags ?? [];
+    const properties = activeDocumentKnowledge?.properties ?? [];
+    const hasDoubleLinkKnowledge =
+      activeRelatedDocuments.length > 0 ||
+      activeOutgoingLinks.length > 0 ||
+      activeBacklinks.length > 0 ||
+      activeMissingLinks.length > 0;
+
+    const renderRelatedDocumentChip = (
+      item: { document?: MarkdownDocument; link: DocumentLinkReference },
+      options: { editable?: boolean } = {},
+    ) => {
+      const isMissing = !item.document;
+      const title = item.document
+        ? getDocumentDisplayName(item.document)
+        : item.link.title || getPathLabel(item.link.filePath);
+      const documentType = item.document
+        ? getDocumentType(item.document)
+        : item.link.documentType ?? getDocumentTypeFromPath(item.link.filePath);
+
+      return (
+        <button
+          className={[
+            "document-meta-chip",
+            "document-meta-document-link-chip",
+            isMissing ? "document-meta-link-missing" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          key={normalizeFilePathKey(item.link.filePath)}
+          type="button"
+          title={item.link.filePath}
+          onClick={() => void openRelatedDocument(item.link)}
+        >
+          <BookOpenText size={13} />
+          <span className="document-meta-chip-main">{title}</span>
+          <span className="document-meta-type-badge">
+            {isMissing ? "失效" : getDocumentTypeName(documentType)}
+          </span>
+          {options.editable ? (
+              <span
+                className="document-meta-chip-remove"
+                role="button"
+                tabIndex={0}
+              aria-label={`移除相关文档 ${title}`}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                removeActiveDocumentLink(item.link.filePath);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  removeActiveDocumentLink(item.link.filePath);
+                }
+              }}
+            >
+              <X size={12} />
+            </span>
+          ) : null}
+        </button>
+      );
+    };
+
+    if (!isKnowledgeEditorOpen) {
+      return (
+        <section
+          className="document-knowledge-bar document-knowledge-bar-compact"
+          aria-label="文档元信息"
+        >
+          <div className="document-knowledge-summary">
+            <span className="document-knowledge-summary-title">
+              <Link2 size={14} />
+              链接
+            </span>
+            {hasDoubleLinkKnowledge ? (
+              <>
+                {activeOutgoingLinks.length ? (
+                  <span className="document-meta-chip document-meta-link-chip">
+                    <Link2 size={13} />
+                    笔记链接 {activeOutgoingLinks.length}
+                  </span>
+                ) : null}
+                {activeBacklinks.length ? (
+                  <span className="document-meta-chip document-meta-backlink-chip">
+                    <BookOpenText size={13} />
+                    反链 {activeBacklinks.length}
+                  </span>
+                ) : null}
+                {activeRelatedDocuments.length ? (
+                  <span className="document-meta-chip document-meta-document-link-chip">
+                    <BookOpenText size={13} />
+                    相关文档 {activeRelatedDocuments.length}
+                  </span>
+                ) : null}
+                {activeMissingLinks.length ? (
+                  <span className="document-meta-chip document-meta-missing-chip">
+                    缺失 {activeMissingLinks.length}
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              <span className="document-knowledge-placeholder">
+                可添加笔记链接和相关文档
+              </span>
+            )}
+            <button
+              className="document-knowledge-edit-button"
+              type="button"
+              onClick={() => setIsKnowledgeEditorOpen(true)}
+            >
+              编辑
+            </button>
+          </div>
+        </section>
+      );
+    }
+
+    return (
+      <section
+        className="document-knowledge-bar document-knowledge-bar-expanded"
+        aria-label="文档元信息"
+      >
+        <div className="document-knowledge-editor-header">
+          <div>
+            <strong>文档信息</strong>
+            <span>标签、属性和相关文档保存在元信息中，笔记链接会插入正文。</span>
+          </div>
+          <button
+            type="button"
+            aria-label="收起文档信息"
+            onClick={() => setIsKnowledgeEditorOpen(false)}
+          >
+            <X size={15} />
+          </button>
+        </div>
+        <div className="document-knowledge-row document-knowledge-row-suggest">
+          <span className="document-knowledge-label">
+            <Hash size={15} />
+            标签
+          </span>
+          {tags.map((tag) => {
+            const canRemove = metadataTagKeys.has(tag.toLocaleLowerCase());
+
+            return (
+              <span className="document-meta-chip document-meta-chip-tag" key={tag}>
+                #{tag}
+                {canRemove ? (
+                  <button
+                    type="button"
+                    aria-label={`移除标签 ${tag}`}
+                    onClick={() => removeActiveDocumentTag(tag)}
+                  >
+                    <X size={12} />
+                  </button>
+                ) : null}
+              </span>
+            );
+          })}
+          <form
+            className="document-meta-chip-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              addActiveDocumentTag();
+            }}
+          >
+            <span className="document-meta-suggest-field">
+              <input
+                value={newTagName}
+                onChange={(event) => setNewTagName(event.target.value)}
+                onFocus={() => setActiveMetadataSuggestion("tag")}
+                onBlur={() =>
+                  window.setTimeout(() => setActiveMetadataSuggestion(null), 120)
+                }
+                placeholder="添加标签"
+                aria-label="添加标签"
+              />
+              {renderMetadataSuggestionMenu(
+                "tag",
+                getMetadataSuggestionMatches(tagSuggestions, newTagName),
+                setNewTagName,
+              )}
+            </span>
+            <button type="submit" aria-label="添加标签">
+              <Plus size={13} />
+            </button>
+          </form>
+        </div>
+
+        <div className="document-knowledge-row document-knowledge-row-suggest">
+          <span className="document-knowledge-label">
+            <FileText size={15} />
+            属性
+          </span>
+          {properties.map((property) => (
+            <span className="document-meta-chip document-meta-chip-property" key={property.key}>
+              <strong>{property.key}</strong>
+              <span>{property.value}</span>
+              {metadataPropertyKeys.has(property.key.toLocaleLowerCase()) ? (
+                <button
+                  type="button"
+                  aria-label={`移除属性 ${property.key}`}
+                  onClick={() => removeActiveDocumentProperty(property.key)}
+                >
+                  <X size={12} />
+                </button>
+              ) : null}
+            </span>
+          ))}
+          <form
+            className="document-meta-property-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveActiveDocumentProperty();
+            }}
+          >
+            <span className="document-meta-suggest-field">
+              <input
+                value={propertyKeyDraft}
+                onChange={(event) => setPropertyKeyDraft(event.target.value)}
+                onFocus={() => setActiveMetadataSuggestion("propertyKey")}
+                onBlur={() =>
+                  window.setTimeout(() => setActiveMetadataSuggestion(null), 120)
+                }
+                placeholder="属性名"
+                aria-label="属性名"
+              />
+              {renderMetadataSuggestionMenu(
+                "propertyKey",
+                getMetadataSuggestionMatches(
+                  propertyKeySuggestions,
+                  propertyKeyDraft,
+                ),
+                setPropertyKeyDraft,
+              )}
+            </span>
+            <span className="document-meta-suggest-field document-meta-suggest-field-wide">
+              <input
+                value={propertyValueDraft}
+                onChange={(event) => setPropertyValueDraft(event.target.value)}
+                onFocus={() => setActiveMetadataSuggestion("propertyValue")}
+                onBlur={() =>
+                  window.setTimeout(() => setActiveMetadataSuggestion(null), 120)
+                }
+                placeholder="属性值"
+                aria-label="属性值"
+              />
+              {renderMetadataSuggestionMenu(
+                "propertyValue",
+                getMetadataSuggestionMatches(
+                  propertyValueSuggestions,
+                  propertyValueDraft,
+                ),
+                setPropertyValueDraft,
+              )}
+            </span>
+            <button type="submit" aria-label="保存属性">
+              <Check size={13} />
+            </button>
+          </form>
+        </div>
+
+        <div className="document-knowledge-row document-knowledge-relations-row">
+          <span className="document-knowledge-label">
+            <BookOpenText size={15} />
+            相关文档
+          </span>
+          {activeRelatedDocuments.map((item) =>
+            renderRelatedDocumentChip(item, { editable: true }),
+          )}
+          <button
+            className="document-meta-chip document-meta-add-link"
+            type="button"
+            onClick={() => openDocumentLinkPicker()}
+          >
+            <Plus size={13} />
+            添加相关文档
+          </button>
+        </div>
+
+        <div className="document-knowledge-row document-knowledge-row-links">
+          <span className="document-knowledge-label">
+            <Link2 size={15} />
+            笔记链接
+          </span>
+          {activeOutgoingLinks.map((link) =>
+            link.targetDocument ? (
+              <button
+                className="document-meta-chip document-meta-link-chip"
+                key={`${link.raw}-${link.index}`}
+                type="button"
+                title={getDocumentDisplayName(link.targetDocument)}
+                onClick={() => openKnowledgeDocument(link.targetDocument!)}
+              >
+                [[{link.display}]]
+              </button>
+            ) : (
+              <button
+                className="document-meta-chip document-meta-link-chip document-meta-link-missing"
+                key={`${link.raw}-${link.index}`}
+                type="button"
+                title="创建目标文件"
+                onClick={() => void createDocumentFromMissingWikiLink(link.target)}
+              >
+                [[{link.display}]]
+              </button>
+            ),
+          )}
+          {activeBacklinks.length ? (
+            <span className="document-meta-chip document-meta-backlink-chip">
+              <BookOpenText size={13} />
+              反链 {activeBacklinks.length}
+            </span>
+          ) : null}
+          {activeMissingLinks.length ? (
+            <span className="document-meta-chip document-meta-missing-chip">
+              缺失 {activeMissingLinks.length}
+            </span>
+          ) : null}
+          <button
+            className="document-meta-chip document-meta-add-link"
+            type="button"
+            onClick={openWikiLinkInsertForm}
+          >
+            <Plus size={13} />
+            插入笔记链接
+          </button>
+          <form
+            className="document-meta-link-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              insertWikiLinkFromDraft();
+            }}
+          >
+            <input
+              ref={wikiLinkInputRef}
+              value={wikiLinkTargetDraft}
+              onChange={(event) => setWikiLinkTargetDraft(event.target.value)}
+              placeholder="输入目标笔记"
+              aria-label="笔记链接目标"
+            />
+            <button type="submit">
+              <Check size={13} />
+              插入
+            </button>
+          </form>
+        </div>
+      </section>
     );
   }
 
@@ -6539,6 +7603,7 @@ export function App() {
   const windowZoomPercent = Math.round(windowZoomFactor * 100);
   const isDefaultWindowZoom =
     Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
+  const documentKnowledgeBar = renderDocumentKnowledgeBar();
 
   return (
     <>
@@ -6694,6 +7759,19 @@ export function App() {
             >
               {isWorkspaceSearchTabVisible ? "查找" : "当前文件"}
             </button>
+            <button
+              className={
+                sidebarTab === "relations"
+                  ? "explorer-tab explorer-tab-active"
+                  : "explorer-tab"
+              }
+              type="button"
+              role="tab"
+              aria-selected={sidebarTab === "relations"}
+              onClick={openKnowledgeRelationsPanel}
+            >
+              关系
+            </button>
           </div>
 
           <div
@@ -6703,44 +7781,16 @@ export function App() {
                 ? "文件目录"
                 : sidebarTab === "search"
                   ? "查找"
+                  : sidebarTab === "relations"
+                    ? "链接总览"
                   : "当前文件"
             }
           >
             {sidebarTab === "files" ? (
               <>
-                {workspaceKnowledge.tagSummaries.length ? (
-                  <div className="workspace-tag-filter">
-                    <button
-                      className={!tagFilter ? "workspace-tag-chip workspace-tag-chip-active" : "workspace-tag-chip"}
-                      type="button"
-                      onClick={() => setTagFilter(null)}
-                    >
-                      全部
-                    </button>
-                    {workspaceKnowledge.tagSummaries.slice(0, 8).map((summary) => (
-                      <button
-                        className={
-                          tagFilter === summary.tag
-                            ? "workspace-tag-chip workspace-tag-chip-active"
-                            : "workspace-tag-chip"
-                        }
-                        key={summary.tag}
-                        type="button"
-                        title={`#${summary.tag} (${summary.count})`}
-                        onClick={() => {
-                          setTagFilter(summary.tag);
-                          setFileExplorerView("list");
-                        }}
-                      >
-                        #{summary.tag}
-                        <span>{summary.count}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
               {directoryTree ? (
                 directoryTree.children?.length ? (
-                  fileExplorerView === "tree" && !tagFilter ? (
+                  fileExplorerView === "tree" ? (
                     <div className="directory-tree-root">
                       <DirectoryTreeItems
                         activeDirectoryPath={getDirectoryPath(activeDocument?.filePath)}
@@ -6750,6 +7800,7 @@ export function App() {
                         level={0}
                         onDirectoryContextMenu={openDirectoryContextMenu}
                         onFileContextMenu={openFileContextMenu}
+                        onQuickLinkFile={relateDocumentFromFile}
                         onOpenFile={(filePath) => {
                           void openFileFromTree(filePath);
                         }}
@@ -6760,12 +7811,10 @@ export function App() {
                     <DirectoryFileList
                       activeFilePath={activeDocument?.filePath}
                       documents={workspace.documents}
-                      emptyLabel={tagFilter ? "没有匹配这个标签的文件" : undefined}
                       items={directoryTree.children ?? []}
-                      metadataByDocumentId={workspaceKnowledge.metadataByDocumentId}
-                      visibleFilePaths={visibleTaggedFilePaths}
                       workspacePath={workspace.workspacePath}
                       onFileContextMenu={openFileContextMenu}
+                      onQuickLinkFile={relateDocumentFromFile}
                       onOpenFile={(filePath) => {
                         void openFileFromTree(filePath);
                       }}
@@ -6806,6 +7855,8 @@ export function App() {
                 }}
                 onQueryChange={setWorkspaceSearchQuery}
               />
+            ) : sidebarTab === "relations" ? (
+              renderKnowledgeRelationsPanel()
             ) : (
               renderCurrentDocumentPanel()
             )}
@@ -7121,6 +8172,7 @@ export function App() {
                   className={[
                     "editor-layout",
                     `editor-layout-${mode}`,
+                    documentKnowledgeBar ? "editor-layout-with-knowledge" : "",
                     isEditorDraggingMedia ? "editor-layout-drop-active" : "",
                   ]
                     .filter(Boolean)
@@ -7129,6 +8181,7 @@ export function App() {
                   onDragOver={handleEditorDragOver}
                   onDrop={handleEditorDrop}
                 >
+                  {documentKnowledgeBar}
                   {isEditorDraggingMedia && (
                     <div className="editor-drop-overlay" aria-hidden="true">
                       <div>
@@ -7623,6 +8676,118 @@ export function App() {
                   </button>
                 </div>
               </form>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root
+          modal={false}
+          open={isDocumentLinkPickerOpen}
+          onOpenChange={(open) => {
+            setIsDocumentLinkPickerOpen(open);
+            if (!open) {
+              setDocumentLinkSourceDocumentId(null);
+              setDocumentLinkQuery("");
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Content
+              className="document-link-picker-dialog"
+              onInteractOutside={(event) => event.preventDefault()}
+            >
+              <div className="create-file-header">
+                <div className="create-file-heading">
+                  <span className="create-file-icon">
+                    <BookOpenText size={18} />
+                  </span>
+                  <div>
+                    <Dialog.Title className="create-file-title">
+                      相关文档
+                    </Dialog.Title>
+                    <Dialog.Description>
+                      从当前工作区选择文件，添加到正在编辑的 Markdown 文档元信息中。
+                    </Dialog.Description>
+                    {documentLinkPickerSourceDocument ? (
+                      <p className="document-link-picker-source">
+                        关联到：
+                        <strong>
+                          {getDocumentDisplayName(documentLinkPickerSourceDocument)}
+                        </strong>
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <Dialog.Close asChild>
+                  <button className="icon-button" type="button" aria-label="关闭">
+                    <X size={16} />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              <div className="document-link-picker-search">
+                <Search size={16} />
+                <input
+                  autoFocus
+                  value={documentLinkQuery}
+                  onChange={(event) => setDocumentLinkQuery(event.target.value)}
+                  placeholder="搜索文件名、路径或类型"
+                />
+              </div>
+
+              <div className="document-link-picker-list" role="listbox">
+                {filteredLinkableDocuments.length ? (
+                  filteredLinkableDocuments.map((document) => {
+                    const reference = createDocumentLinkReference(document);
+                    const isLinked = Boolean(
+                      reference &&
+                        documentLinkPickerRelatedKeys.has(
+                          normalizeFilePathKey(reference.filePath),
+                        ),
+                    );
+
+                    return (
+                      <button
+                        className="document-link-picker-item"
+                        key={document.id}
+                        type="button"
+                        disabled={!reference || isLinked}
+                        onClick={() => {
+                          if (reference) {
+                            addPickerDocumentLink(reference);
+                          }
+                        }}
+                      >
+                        <FileText size={17} />
+                        <span className="document-link-picker-item-main">
+                          <strong>{getDocumentDisplayName(document)}</strong>
+                          <small>
+                            {getDocumentTypeLabel(document)}
+                            <span aria-hidden="true"> · </span>
+                            {getDocumentPathPreview(document, workspace.workspacePath)}
+                          </small>
+                        </span>
+                        <span
+                          className={[
+                            "document-link-picker-state",
+                            isLinked ? "document-link-picker-state-linked" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                        >
+                          {isLinked ? "已添加" : "添加"}
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="document-link-picker-empty">
+                    <BookOpenText size={24} />
+                    <strong>没有可添加的文件</strong>
+                    <span>当前工作区没有匹配的可打开文件。</span>
+                  </div>
+                )}
+              </div>
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
