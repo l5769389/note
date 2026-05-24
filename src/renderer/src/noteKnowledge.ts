@@ -317,12 +317,21 @@ export function parseWikiLinks(content: string) {
 export function parseDocumentKnowledge(
   document: MarkdownDocument,
 ): DocumentKnowledge {
-  const frontmatter = parseFrontmatter(document.content);
+  const shouldParseMarkdownBody = document.documentType === "markdown";
+  const frontmatter = shouldParseMarkdownBody
+    ? parseFrontmatter(document.content)
+    : {
+        body: "",
+        hasFrontmatter: false,
+        properties: new Map<string, string | string[]>(),
+      };
   const metadataTags = getDocumentMetadataTags(document);
   const metadataProperties = getDocumentMetadataProperties(document);
-  const frontmatterTags = getFrontmatterTags(frontmatter.properties);
-  const inlineTags = parseInlineTags(frontmatter.body);
-  const links = parseWikiLinks(frontmatter.body);
+  const frontmatterTags = shouldParseMarkdownBody
+    ? getFrontmatterTags(frontmatter.properties)
+    : [];
+  const inlineTags = shouldParseMarkdownBody ? parseInlineTags(frontmatter.body) : [];
+  const links = shouldParseMarkdownBody ? parseWikiLinks(frontmatter.body) : [];
   const tags = uniqueValues([...metadataTags, ...frontmatterTags, ...inlineTags]);
 
   return {
@@ -368,10 +377,6 @@ function getDocumentAliasKeys(document: MarkdownDocument) {
   return keys;
 }
 
-function isKnowledgeDocument(document: MarkdownDocument) {
-  return document.documentType === "markdown";
-}
-
 export function createWorkspaceKnowledge(
   documents: MarkdownDocument[],
 ): WorkspaceKnowledge {
@@ -381,7 +386,7 @@ export function createWorkspaceKnowledge(
   const documentByLinkKey = new Map<string, MarkdownDocument>();
   const tagCounts = new Map<string, number>();
 
-  documents.filter(isKnowledgeDocument).forEach((document) => {
+  documents.forEach((document) => {
     getDocumentAliasKeys(document).forEach((key) => {
       if (!documentByLinkKey.has(key)) {
         documentByLinkKey.set(key, document);
@@ -389,7 +394,7 @@ export function createWorkspaceKnowledge(
     });
   });
 
-  documents.filter(isKnowledgeDocument).forEach((document) => {
+  documents.forEach((document) => {
     const knowledge = parseDocumentKnowledge(document);
 
     metadataByDocumentId.set(document.id, knowledge);

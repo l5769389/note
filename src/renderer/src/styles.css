@@ -6245,6 +6245,460 @@ button {
   text-align: center;
 }
 
+.relations-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 90;
+  display: grid;
+  width: min(920px, calc(100vw - 48px));
+  height: min(780px, calc(100dvh - 56px));
+  grid-template-rows: auto minmax(0, 1fr);
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+  border: 1px solid rgba(203, 213, 225, 0.92);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98)),
+    #ffffff;
+  box-shadow:
+    0 30px 80px rgba(15, 23, 42, 0.24),
+    0 2px 10px rgba(15, 23, 42, 0.08);
+}
+
+.relation-dialog-overlay {
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.relations-dialog-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #e6ebf2;
+  padding: 16px 18px;
+}
+
+.relations-dialog-header > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.relations-dialog-title {
+  margin: 0;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.relations-dialog-description {
+  overflow: hidden;
+  margin: 0;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relations-dialog-body {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  overflow: hidden;
+  padding: 16px 18px 18px;
+}
+
+.relations-dialog-knowledge,
+.relations-dialog-links,
+.relations-dialog-empty {
+  min-width: 0;
+  border: 1px solid #e1e8f2;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+}
+
+.relations-dialog-empty {
+  display: grid;
+  min-height: 108px;
+  place-items: center;
+  color: #7a8495;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.relations-dialog-knowledge {
+  overflow: visible;
+}
+
+.relations-dialog .document-knowledge-bar {
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+}
+
+.relations-dialog .document-knowledge-bar-expanded {
+  padding: 14px;
+}
+
+.relations-dialog .document-knowledge-editor-header {
+  align-items: start;
+}
+
+.relations-dialog-links {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.relations-dialog-links .knowledge-relations-panel {
+  height: 100%;
+  padding: 14px;
+}
+
+.knowledge-relations-panel {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+
+.knowledge-relations-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.knowledge-relations-header > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.knowledge-relations-header strong {
+  color: #172033;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.knowledge-relations-header span {
+  color: #7a8495;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.knowledge-relations-header button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #667085;
+}
+
+.knowledge-relations-header button:hover {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.knowledge-relations-search {
+  display: flex;
+  min-width: 0;
+  height: 38px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #cfd6e2;
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 0 9px 0 11px;
+  color: #7a8495;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.knowledge-relations-search:focus-within {
+  border-color: #8b7cf6;
+  box-shadow: 0 0 0 3px rgba(91, 76, 230, 0.12);
+}
+
+.knowledge-relations-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: #111827;
+  font-size: 14px;
+  outline: 0;
+}
+
+.knowledge-relations-search button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #7a8495;
+}
+
+.knowledge-relations-search button:hover {
+  background: #f1f3f8;
+  color: #111827;
+}
+
+.knowledge-relations-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.knowledge-relations-filters button {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #e1e6ef;
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 0 11px;
+  color: #526070;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.knowledge-relations-filters button:hover,
+.knowledge-relations-filters .knowledge-relations-filter-active {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.knowledge-relations-filters strong {
+  display: grid;
+  min-width: 24px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: #f0f2f6;
+  color: #667085;
+  font-size: 12px;
+}
+
+.knowledge-relations-filter-active strong {
+  background: #ffffff;
+  color: #4f46e5;
+}
+
+.knowledge-relations-list {
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.knowledge-relations-empty {
+  display: grid;
+  min-height: 240px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed #d7dde7;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #8a93a3;
+  padding: 28px;
+  text-align: center;
+}
+
+.knowledge-relations-empty svg {
+  color: #9aa3b2;
+}
+
+.knowledge-relations-empty strong {
+  color: #344054;
+  font-size: 15px;
+}
+
+.knowledge-relations-empty span {
+  max-width: 420px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.knowledge-relation-card {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 14px;
+  border: 1px solid #e1e8f2;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94)),
+    #ffffff;
+  padding: 12px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.knowledge-relation-card-missing {
+  border-color: rgba(245, 158, 11, 0.34);
+  background:
+    linear-gradient(180deg, rgba(255, 251, 235, 0.96), rgba(255, 255, 255, 0.96)),
+    #ffffff;
+}
+
+.knowledge-relation-main {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.knowledge-relation-source,
+.knowledge-relation-target {
+  display: flex;
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid #e4e9f2;
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 0 10px;
+  color: #1f2937;
+  text-align: left;
+}
+
+.knowledge-relation-source:hover,
+.knowledge-relation-target:hover {
+  border-color: #c7d2fe;
+  background: #f8f7ff;
+  color: #4f46e5;
+}
+
+.knowledge-relation-source svg,
+.knowledge-relation-target svg {
+  flex: 0 0 auto;
+  color: #8a93a3;
+}
+
+.knowledge-relation-source span,
+.knowledge-relation-target span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-relation-target {
+  font-weight: 800;
+}
+
+.knowledge-relation-arrow {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.knowledge-relation-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1;
+}
+
+.knowledge-relation-meta span,
+.knowledge-relation-status {
+  display: inline-flex;
+  min-height: 23px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.knowledge-relation-meta span {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.knowledge-relation-meta small {
+  overflow: hidden;
+  min-width: 0;
+  color: #8a93a3;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-relation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.knowledge-relation-status {
+  background: #fff7ed;
+  color: #b45309;
+}
+
+.knowledge-relation-status-ok {
+  background: #ecfdf3;
+  color: #15803d;
+}
+
+.knowledge-relation-actions button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d7dde7;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0 10px;
+  color: #526070;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.knowledge-relation-actions button:hover {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
 .workspace-tag-filter {
   display: flex;
   min-width: 0;
@@ -7229,6 +7683,46 @@ button {
 .workspace-status-spacer {
   flex: 1;
   min-width: 0;
+}
+
+.workspace-relations-button {
+  display: inline-flex;
+  max-width: min(240px, 34vw);
+  min-height: 24px;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  border: 1px solid #dfe5ff;
+  border-radius: 999px;
+  margin-right: 10px;
+  background: #f4f2ff;
+  padding: 0 10px;
+  color: #5144cc;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.workspace-relations-button svg {
+  flex: 0 0 auto;
+}
+
+.workspace-relations-button span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.workspace-relations-button:hover {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.workspace-relations-button-warning {
+  border-color: rgba(245, 158, 11, 0.36);
+  background: #fffbeb;
+  color: #b45309;
 }
 
 .workspace-asset-warning {
@@ -9759,6 +10253,154 @@ button {
   background: rgba(129, 140, 248, 0.12);
 }
 
+:root[data-theme="night"] .relations-dialog,
+:root[data-theme="dark"] .relations-dialog {
+  border-color: rgba(148, 163, 184, 0.28);
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(17, 24, 39, 0.98)),
+    #111827;
+  color: #e5e7eb;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.42),
+    0 2px 10px rgba(0, 0, 0, 0.24);
+}
+
+:root[data-theme="night"] .relations-dialog-header,
+:root[data-theme="dark"] .relations-dialog-header {
+  border-bottom-color: rgba(148, 163, 184, 0.18);
+}
+
+:root[data-theme="night"] .relations-dialog-title,
+:root[data-theme="night"] .knowledge-relations-header strong,
+:root[data-theme="night"] .knowledge-relations-empty strong,
+:root[data-theme="dark"] .relations-dialog-title,
+:root[data-theme="dark"] .knowledge-relations-header strong,
+:root[data-theme="dark"] .knowledge-relations-empty strong {
+  color: #f8fafc;
+}
+
+:root[data-theme="night"] .relations-dialog-description,
+:root[data-theme="night"] .knowledge-relations-header span,
+:root[data-theme="night"] .knowledge-relations-empty,
+:root[data-theme="night"] .knowledge-relations-empty svg,
+:root[data-theme="night"] .knowledge-relation-meta small,
+:root[data-theme="night"] .relations-dialog-empty,
+:root[data-theme="dark"] .relations-dialog-description,
+:root[data-theme="dark"] .knowledge-relations-header span,
+:root[data-theme="dark"] .knowledge-relations-empty,
+:root[data-theme="dark"] .knowledge-relations-empty svg,
+:root[data-theme="dark"] .knowledge-relation-meta small,
+:root[data-theme="dark"] .relations-dialog-empty {
+  color: #94a3b8;
+}
+
+:root[data-theme="night"] .relations-dialog-knowledge,
+:root[data-theme="night"] .relations-dialog-links,
+:root[data-theme="night"] .relations-dialog-empty,
+:root[data-theme="dark"] .relations-dialog-knowledge,
+:root[data-theme="dark"] .relations-dialog-links,
+:root[data-theme="dark"] .relations-dialog-empty {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.62);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-theme="night"] .relations-dialog .document-knowledge-bar,
+:root[data-theme="dark"] .relations-dialog .document-knowledge-bar {
+  background: transparent;
+}
+
+:root[data-theme="night"] .knowledge-relations-header button,
+:root[data-theme="night"] .knowledge-relations-search,
+:root[data-theme="night"] .knowledge-relations-filters button,
+:root[data-theme="night"] .knowledge-relations-empty,
+:root[data-theme="night"] .knowledge-relation-card,
+:root[data-theme="night"] .knowledge-relation-source,
+:root[data-theme="night"] .knowledge-relation-target,
+:root[data-theme="night"] .knowledge-relation-actions button,
+:root[data-theme="dark"] .knowledge-relations-header button,
+:root[data-theme="dark"] .knowledge-relations-search,
+:root[data-theme="dark"] .knowledge-relations-filters button,
+:root[data-theme="dark"] .knowledge-relations-empty,
+:root[data-theme="dark"] .knowledge-relation-card,
+:root[data-theme="dark"] .knowledge-relation-source,
+:root[data-theme="dark"] .knowledge-relation-target,
+:root[data-theme="dark"] .knowledge-relation-actions button {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: #111827;
+  color: #dbe3ef;
+}
+
+:root[data-theme="night"] .knowledge-relations-search input,
+:root[data-theme="dark"] .knowledge-relations-search input {
+  color: #f8fafc;
+}
+
+:root[data-theme="night"] .knowledge-relations-header button:hover,
+:root[data-theme="night"] .knowledge-relations-search button:hover,
+:root[data-theme="night"] .knowledge-relations-filters button:hover,
+:root[data-theme="night"] .knowledge-relations-filters .knowledge-relations-filter-active,
+:root[data-theme="night"] .knowledge-relation-source:hover,
+:root[data-theme="night"] .knowledge-relation-target:hover,
+:root[data-theme="night"] .knowledge-relation-actions button:hover,
+:root[data-theme="dark"] .knowledge-relations-header button:hover,
+:root[data-theme="dark"] .knowledge-relations-search button:hover,
+:root[data-theme="dark"] .knowledge-relations-filters button:hover,
+:root[data-theme="dark"] .knowledge-relations-filters .knowledge-relations-filter-active,
+:root[data-theme="dark"] .knowledge-relation-source:hover,
+:root[data-theme="dark"] .knowledge-relation-target:hover,
+:root[data-theme="dark"] .knowledge-relation-actions button:hover {
+  border-color: rgba(129, 140, 248, 0.38);
+  background: rgba(129, 140, 248, 0.16);
+  color: #c4d7ff;
+}
+
+:root[data-theme="night"] .knowledge-relation-card,
+:root[data-theme="dark"] .knowledge-relation-card {
+  background:
+    linear-gradient(180deg, rgba(31, 41, 55, 0.9), rgba(17, 24, 39, 0.92)),
+    #111827;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+}
+
+:root[data-theme="night"] .knowledge-relation-card-missing,
+:root[data-theme="dark"] .knowledge-relation-card-missing {
+  border-color: rgba(245, 158, 11, 0.36);
+  background:
+    linear-gradient(180deg, rgba(69, 46, 12, 0.6), rgba(17, 24, 39, 0.92)),
+    #111827;
+}
+
+:root[data-theme="night"] .knowledge-relation-arrow,
+:root[data-theme="night"] .knowledge-relation-meta span,
+:root[data-theme="night"] .knowledge-relations-filter-active strong,
+:root[data-theme="dark"] .knowledge-relation-arrow,
+:root[data-theme="dark"] .knowledge-relation-meta span,
+:root[data-theme="dark"] .knowledge-relations-filter-active strong {
+  background: rgba(129, 140, 248, 0.18);
+  color: #c4b5fd;
+}
+
+:root[data-theme="night"] .knowledge-relations-filters strong,
+:root[data-theme="dark"] .knowledge-relations-filters strong {
+  background: rgba(148, 163, 184, 0.14);
+  color: #cbd5e1;
+}
+
+:root[data-theme="night"] .workspace-relations-button,
+:root[data-theme="dark"] .workspace-relations-button {
+  border-color: rgba(129, 140, 248, 0.28);
+  background: rgba(129, 140, 248, 0.14);
+  color: #c4d7ff;
+}
+
+:root[data-theme="night"] .workspace-relations-button-warning,
+:root[data-theme="dark"] .workspace-relations-button-warning {
+  border-color: rgba(245, 158, 11, 0.34);
+  background: rgba(245, 158, 11, 0.14);
+  color: #fbbf24;
+}
+
 :root[data-theme="dark"] .markdown-preview code,
 :root[data-theme="dark"] .typora-mdx-content code,
 :root[data-theme="dark"] .typora-editor code,
@@ -10118,6 +10760,47 @@ button {
   .workspace {
     grid-column: 1;
     grid-row: 2;
+  }
+
+  .relations-dialog {
+    width: calc(100vw - 20px);
+    height: calc(100dvh - 20px);
+    border-radius: 12px;
+  }
+
+  .relations-dialog-body {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .relations-dialog .document-knowledge-bar-expanded {
+    padding: 12px;
+  }
+
+  .knowledge-relations-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .knowledge-relation-card {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-relation-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-relation-arrow {
+    display: none;
+  }
+
+  .knowledge-relation-actions {
+    grid-column: auto;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+
+  .workspace-relations-button {
+    max-width: 34vw;
   }
 
   .toolbar {

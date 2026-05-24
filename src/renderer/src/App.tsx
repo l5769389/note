@@ -1,11 +1,9 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import {
-  AlertTriangle,
   BookOpenText,
   Bold,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardPaste,
@@ -16,7 +14,6 @@ import {
   FileText,
   Folder,
   FolderOpen,
-  Hash,
   Inbox,
   Italic,
   Link2,
@@ -37,87 +34,93 @@ import {
   Suspense,
   useDeferredValue,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ClipboardEvent,
   type CSSProperties,
   type DragEvent as ReactDragEvent,
-  type FocusEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-  type RefObject,
   type ReactNode,
 } from "react";
 import {
-  appThemeValues,
-  appSettingsStorageKey,
   defaultAppSettings,
   editorContentDensityOptions,
   editorFontSizeAdjustmentRange,
   formatEditorFontSizeAdjustment,
-  getAdjustedEditorFontSize,
-  getEditorCodeFontFamily,
-  getEditorContentDensityStyle,
-  getEditorFontFamily,
-  getInitialTheme,
-  loadAppSettings,
-  normalizeAppSettings,
   themeOptions,
   type AppSettings,
   type AppTheme,
 } from "./appSettings";
 import {
-  getMigratedStorageItem,
-  legacyNoteDockStorageKeys,
-  noteDockStorageKeys,
-  removeLegacyStorageItem,
-} from "./storageKeys";
-import { getMediaMimeTypeForFileName } from "../../shared/mediaTypes";
+  createPersistedAppState,
+  defaultSidebarWidth,
+  loadPersistedAppHydration,
+  migrateLegacyPersistedAppHydration,
+  maxSidebarWidth,
+  minSidebarWidth,
+  savePersistedAppState,
+} from "./appPersistence";
+import { usePersistedAppStateWriter } from "./appPersistenceHooks";
+import { createAssetFileName } from "./assetManager";
+import { DirectoryFileList } from "./components/DirectoryFileList";
+import { DirectoryTreeItems } from "./components/DirectoryTree";
 import {
-  createAssetFileName,
-  extractLocalAssetReferences,
-} from "./assetManager";
+  AppConfirmationDialog,
+  AboutDialog,
+  DocumentLoadingIndicator,
+  MenuItem,
+  MenuSeparator,
+  MenuSubmenu,
+  RecentFileMenuItem,
+} from "./components/AppChrome";
+import {
+  KnowledgeRelationsPanel,
+  type RelationPanelFilter,
+  type WorkspaceRelationItem,
+} from "./components/KnowledgeRelationsPanel";
+import {
+  DocumentKnowledgeBar,
+  type DocumentMetadataSuggestionField,
+} from "./components/DocumentKnowledgeBar";
 import { UniverSheetPreview } from "./components/UniverSheetPreview";
+import { WelcomeIllustration } from "./components/WelcomeIllustration";
+import { WorkspaceSearchPanel } from "./components/WorkspaceSearchPanel";
+import { WorkspaceStatusBar } from "./components/WorkspaceStatusBar";
 import type { HtmlDocumentViewerHandle } from "./components/HtmlDocumentViewer";
 import type { TyporaEditorHandle } from "./components/TyporaEditor";
 import appLogoUrl from "../../../resources/icon.png";
-import {
-  persistedAppStateVersion,
-  type PersistedAppState,
-} from "../../shared/appState";
 import type {
   TyporaEditCommand,
   TyporaFormatCommand,
   TyporaParagraphCommand,
 } from "./editorCommands";
+import { useFindMatchStateMaintenance } from "./findMatchState";
+import { useEditorCssVariables } from "./editorCssVariables";
+import { useGlobalAppShortcuts } from "./globalAppShortcuts";
+import { useImmersiveModeState } from "./immersiveModeState";
 import {
   getSelectAllContentScope,
-  getSelectAllShortcutScope,
   getAppShortcutAction,
-  isSelectAllShortcut,
   type AppShortcutAction,
 } from "./editorShortcuts";
 import { createMarkdownExportHtml } from "./exportDocument";
 import {
-  createParagraphCommandMarkdown,
-  updateMarkdownTaskStatus,
+  createMarkdownTable,
+  type TableSize,
 } from "./markdownCommands";
 import {
-  createClearInlineStyleEdit,
-  createMarkdownImageEdit,
-  createRemoveMarkdownLinkEdit,
-  createWrappedSelectionEdit,
-  findMarkdownLinkInRange,
+  getLineColumnAtOffset,
 } from "./markdownEditing";
 import {
-  getExcalidrawDrawingId,
-  getExcalidrawSceneReference,
-  parseImageMeta,
-  serializeImageMeta,
-} from "./imageMeta";
+  createSourceEditCommandEdit,
+  createSourceFormatCommandEdit,
+  createSourceParagraphCommandAction,
+  findSourceFormatCommandLink,
+  getSourceTextareaContextMenuInfo,
+  getSourceFormatWrap,
+} from "./sourceEditorCommands";
 import {
   createDocumentFromLocalFile,
   getDocumentDisplayName,
@@ -131,11 +134,38 @@ import {
   isPdfDocument,
   isSheetDocument,
   isWordDocument,
-  mergeDocumentByFilePath,
   normalizeMarkdownTitle,
   replaceExcalidrawImagePreview,
   updateDocument,
 } from "./documentModel";
+import {
+  createDefaultExcalidrawScene,
+  createDrawingAssetFromDocument,
+  createExcalidrawImageTitle,
+  findExcalidrawMarkdownImage,
+} from "./drawingDocument";
+import {
+  acknowledgeSavedFileContent as acknowledgeFileContent,
+  createSavedFileContentByPath,
+  hasUnsavedFileContent,
+  isMatchingInternalFileWrite as matchesInternalFileWrite,
+  rememberInternalFileWrite as trackInternalFileWrite,
+  type InternalFileWriteSnapshot,
+} from "./filePersistence";
+import {
+  addOpenedDocumentToWorkspace,
+  addCreatedDocumentToWorkspace,
+  applySavedDocumentToWorkspace,
+  createDocumentFromSavedFile,
+  exportMarkdownDocument,
+  getExportFailedAlert,
+  getExportReadonlyAlert,
+  getExportUnsupportedAlert,
+  getSaveAsFailedAlert,
+  getSaveAsReadonlyAlert,
+  writeExistingDocumentIfNeeded,
+  type ExportDocumentFormat,
+} from "./documentFileActions";
 import { getDirectoryPath } from "./localPreviewUrls";
 import { markdownAlertOptions } from "./markdownAlerts";
 import {
@@ -180,18 +210,29 @@ import {
   normalizePropertyKey,
   normalizeTagName,
   normalizeWikiLinkTarget,
-  type NoteWikiLink,
 } from "./noteKnowledge";
-import { getHtmlOutline } from "./htmlStructure";
-import { fileToDataUrl } from "./services/imageUpload";
 import {
-  createDocument,
-  loadWorkspaceFromStorage,
-  normalizeWorkspaceSnapshot,
-  renameFromMarkdown,
-  saveWorkspaceToStorage,
-  serializeWorkspaceSnapshot,
-} from "./storage";
+  getTagInputValues,
+  normalizeDocumentMetadata,
+} from "./documentMetadata";
+import { getHtmlOutline } from "./htmlStructure";
+import {
+  dataTransferHasFiles,
+  createMediaImportPlaceholder,
+  createVideoMarkdown,
+  createTimestampedVideoName,
+  getClipboardDirectMediaAction,
+  getClipboardMediaMimeType,
+  getDroppedMediaImportActions,
+  normalizeDataUrlMimeType,
+  readBrowserClipboardMedia,
+  readClipboardMediaFallbackAction,
+  replaceMediaImportPlaceholderContent,
+  shouldTryClipboardMediaFallback,
+  type MediaImportAction,
+} from "./mediaImport";
+import { fileToDataUrl } from "./services/imageUpload";
+import { createDocument, renameFromMarkdown } from "./storage";
 import type {
   DirectoryTreeItem,
   DocumentLinkReference,
@@ -210,8 +251,46 @@ import {
   getWorkspaceSearchMatchCount,
   isDocumentInsideWorkspace,
   type MarkdownSearchMatch,
-  type WorkspaceSearchGroup,
 } from "./workspaceSearch";
+import {
+  usePendingWorkspaceSearchReveal,
+  type WorkspaceSearchReveal,
+} from "./workspaceSearchReveal";
+import { quickDocumentLinkShortcut } from "./workspaceShortcuts";
+import { useAppDialog } from "./useAppDialog";
+import { useDocumentLoading } from "./useDocumentLoading";
+import { useMissingDocumentAssetReferences } from "./missingAssetReferences";
+import {
+  consumeInternalFileDelete,
+  getDiskChangeDecision,
+  getExternalChangeConfirm,
+  getExternalDeleteAlert,
+  getWorkspaceFileChangeContext,
+  mergeDiskDocumentIntoWorkspace,
+  shouldMergeInternalWriteBack,
+  type WorkspaceFileChangePayload,
+} from "./workspaceFileChanges";
+import {
+  normalizeDirectoryKey,
+  rememberRecentDirectoryPath,
+} from "./recentDirectories";
+import { useRecentFileAvailability } from "./recentFileAvailability";
+import { useWindowChromeState } from "./windowChromeState";
+import { useWorkspaceDirectoryWatcher } from "./workspaceDirectoryWatcher";
+import { useWorkspaceDirectoryTree } from "./workspaceDirectoryTree";
+import { useWorkspaceAutosave } from "./workspaceAutosave";
+import {
+  useActiveDocumentUiReset,
+  useQuickCaptureBridge,
+  useWorkspaceSearchAutoFocus,
+} from "./workspaceUiEffects";
+import {
+  formatRecentTimestamp,
+  getDocumentTypeLabel,
+  getDocumentTypeName,
+  getPathLabel,
+  normalizeFilePathKey,
+} from "./workspaceDisplay";
 
 const DrawingModal = lazy(() =>
   import("./components/DrawingModal").then((module) => ({
@@ -276,66 +355,22 @@ const WordDocumentViewer = lazy(() =>
 type MenubarMenu = "file" | "edit" | "paragraph" | "format" | "view" | "theme" | "help";
 type TopMenu = MenubarMenu | null;
 type ImmersiveRevealEdge = "top";
-type SidebarTab = "files" | "current" | "relations" | "search";
+type SidebarTab = "files" | "current" | "search";
 type FileExplorerView = "tree" | "list";
-type DocumentLoadingState = {
-  detail?: string;
-  title: string;
-} | null;
-type RelationPanelFilter = "all" | "document" | "content" | "missing";
-type WorkspaceRelationItem = {
-  id: string;
-  kind: "content" | "document";
-  link?: NoteWikiLink;
-  reference?: DocumentLinkReference;
-  searchText: string;
-  sourceDocument: MarkdownDocument;
-  status: "linked" | "missing";
-  targetDocument?: MarkdownDocument;
-  targetPath?: string;
-  title: string;
-};
 
-const defaultSidebarWidth = 334;
-const minSidebarWidth = 236;
-const maxSidebarWidth = 560;
 const homeRecentDocumentLimit = 3;
 const sidebarRecentDirectoryLimit = 5;
-const storedRecentDirectoryLimit = 12;
-const recentDirectoryStorageKey = noteDockStorageKeys.recentDirectories;
-const internalFileWriteGraceMs = 8000;
 const immersiveRevealHitSlop = 44;
 const defaultWindowZoomFactor = 1;
 const zoomIndicatorVisibleMs = 1500;
-const quickDocumentLinkShortcut = "Ctrl+Alt+L";
-const markdownTaskListLinePattern = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\[([ xX])\][ \t]*/;
-const markdownListLinePattern = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/;
 
 type FindPanelMode = "find" | "replace";
-
-type WorkspaceSearchReveal = {
-  filePath: string;
-  match: MarkdownSearchMatch;
-  query: string;
-};
 
 type RevealDocumentRangeOptions = {
   content?: string;
   occurrenceIndex?: number;
   preserveRendered?: boolean;
   query?: string;
-};
-
-type AppDialogTone = "info" | "warning" | "danger";
-
-type AppDialogState = {
-  title: string;
-  description: string;
-  detail?: string;
-  confirmLabel: string;
-  cancelLabel?: string;
-  tone: AppDialogTone;
-  type: "alert" | "confirm";
 };
 
 type AppContextMenuItem =
@@ -368,78 +403,6 @@ type EditorContextMenuInfo = {
   linkHref?: string;
   taskChecked?: boolean;
 };
-
-function createDefaultExcalidrawScene() {
-  return JSON.stringify(
-    {
-      type: "excalidraw",
-      version: 2,
-      source: "https://excalidraw.com",
-      elements: [],
-      appState: {
-        viewBackgroundColor: "#ffffff",
-        currentItemFontFamily: 1,
-      },
-      files: {},
-    },
-    null,
-    2,
-  );
-}
-
-function createDrawingAssetFromDocument(document: MarkdownDocument): DrawingAsset {
-  return {
-    id: document.id,
-    name: document.title || "Excalidraw",
-    dataUrl: "",
-    sceneJSON: document.content || createDefaultExcalidrawScene(),
-    createdAt: document.createdAt,
-  };
-}
-
-function findExcalidrawMarkdownImage(content: string, drawingId: string) {
-  const imagePattern = /!\[([^\]]*)]\((\S+?)(?:\s+"([^"]*)")?\)/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = imagePattern.exec(content))) {
-    const title = match[3];
-
-    if (getExcalidrawDrawingId(title) === drawingId) {
-      return {
-        alt: match[1] ?? "",
-        src: match[2] ?? "",
-        title,
-        sceneReference: getExcalidrawSceneReference(title),
-      };
-    }
-  }
-
-  return null;
-}
-
-function createExcalidrawImageTitle(
-  drawingId: string,
-  sceneReference: string | null,
-  previousTitle?: string,
-) {
-  const meta = parseImageMeta(previousTitle);
-  const titleText = [
-    meta.titleText
-      .replace(/(?:^|\s)excalidraw:[^\s"]+(?=\s|$)/gi, " ")
-      .replace(/(?:^|\s)scene=[^\s"]+(?=\s|$)/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim(),
-    `excalidraw:${drawingId}`,
-    sceneReference ? `scene=${sceneReference}` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return serializeImageMeta({
-    ...meta,
-    titleText,
-  });
-}
 
 const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
   { key: "file", label: "文件(F)" },
@@ -479,103 +442,14 @@ function getFileNameFromPath(filePath: string) {
   return filePath.split(/[\\/]/).pop() || filePath;
 }
 
-type TableSize = {
-  columns: number;
-  rows: number;
-};
-
 function readFileInput(fileInput: HTMLInputElement | null) {
   fileInput?.click();
-}
-
-function getClipboardMediaMimeType(name: string) {
-  return getMediaMimeTypeForFileName(name) ?? "";
-}
-
-function isClipboardMediaFile(file: File, kind: "image" | "video") {
-  const mimeType = file.type || getClipboardMediaMimeType(file.name);
-
-  return mimeType.startsWith(`${kind}/`);
-}
-
-function normalizeDataUrlMimeType(dataUrl: string, mimeType: string) {
-  if (!mimeType || dataUrl.startsWith(`data:${mimeType}`)) {
-    return dataUrl;
-  }
-
-  return dataUrl.replace(/^data:[^;,]*(?=[;,])/, `data:${mimeType}`);
 }
 
 function waitForNextPaint() {
   return new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   });
-}
-
-function createMarkdownTable({ columns, rows }: TableSize) {
-  const safeColumns = Math.max(1, columns);
-  const safeRows = Math.max(1, rows);
-  const emptyRow = Array.from({ length: safeColumns }, () => " ");
-  const separatorRow = Array.from({ length: safeColumns }, () => "---");
-  const bodyRows = Array.from({ length: Math.max(safeRows - 1, 0) }, () =>
-    `| ${emptyRow.join(" | ")} |`,
-  );
-
-  return [
-    "",
-    `| ${emptyRow.join(" | ")} |`,
-    `| ${separatorRow.join(" | ")} |`,
-    ...bodyRows,
-    "",
-  ].join("\n");
-}
-
-function getLineColumnAtOffset(content: string, offset: number) {
-  const safeOffset = Math.max(0, Math.min(offset, content.length));
-  const before = content.slice(0, safeOffset);
-  const lines = before.split("\n");
-
-  return {
-    column: lines.at(-1)?.length ?? 0,
-    lineIndex: lines.length - 1,
-  };
-}
-
-function HighlightedSearchSnippet({
-  query,
-  text,
-}: {
-  query: string;
-  text: string;
-}) {
-  const normalizedQuery = query.trim();
-
-  if (!normalizedQuery) {
-    return <>{text}</>;
-  }
-
-  const normalizedText = text.toLocaleLowerCase();
-  const normalizedNeedle = normalizedQuery.toLocaleLowerCase();
-  const parts: ReactNode[] = [];
-  let cursor = 0;
-
-  while (cursor < text.length) {
-    const index = normalizedText.indexOf(normalizedNeedle, cursor);
-
-    if (index < 0) {
-      parts.push(text.slice(cursor));
-      break;
-    }
-
-    if (index > cursor) {
-      parts.push(text.slice(cursor, index));
-    }
-
-    parts.push(<mark key={`${index}-${cursor}`}>{text.slice(index, index + normalizedNeedle.length)}</mark>);
-    cursor = index + normalizedNeedle.length;
-  }
-
-  return <>{parts}</>;
 }
 
 function getTextareaLineHeight(textarea: HTMLTextAreaElement) {
@@ -609,378 +483,6 @@ function centerTextareaRangeInView(
   });
 }
 
-function DocumentLoadingIndicator({
-  detail,
-  title,
-}: {
-  detail?: string;
-  title: string;
-}) {
-  return (
-    <div className="document-loading-card" role="status" aria-live="polite">
-      <span className="document-loading-spinner" aria-hidden="true" />
-      <div>
-        <strong>{title}</strong>
-        {detail ? <span>{detail}</span> : null}
-      </div>
-    </div>
-  );
-}
-
-function AboutDialog({
-  onOpenChange,
-  open,
-}: {
-  onOpenChange: (open: boolean) => void;
-  open: boolean;
-}) {
-  return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay about-dialog-overlay" />
-        <Dialog.Content className="about-dialog">
-          <div className="about-header">
-            <div className="about-brand">
-              <img src={appLogoUrl} alt="" draggable={false} />
-              <div>
-                <Dialog.Title className="about-title">noteDock</Dialog.Title>
-                <Dialog.Description className="about-subtitle">
-                  本地优先的 Markdown 笔记与文档阅读工具
-                </Dialog.Description>
-              </div>
-            </div>
-            <Dialog.Close asChild>
-              <button className="icon-button" type="button" aria-label="关闭关于 noteDock">
-                <X size={16} />
-              </button>
-            </Dialog.Close>
-          </div>
-          <div className="about-body">
-            <p>
-              noteDock 面向日常学习、项目笔记和资料阅读，提供实时渲染编辑、文件树、目录定位、HTML/PDF/Office 文档预览，以及轻量批注能力。
-            </p>
-            <div className="about-feature-grid" aria-label="noteDock 功能概览">
-              <span>实时渲染编辑</span>
-              <span>多格式预览</span>
-              <span>HTML 批注</span>
-            </div>
-            <p>
-              应用基于 Electron、React 与 Milkdown 构建，优先使用本地文件和本机存储，让笔记工作流保持简单、可控。
-            </p>
-            <div className="about-meta">
-              <span>版本 0.1.0</span>
-              <span>Electron + Milkdown</span>
-            </div>
-          </div>
-          <div className="dialog-actions about-actions">
-            <Dialog.Close asChild>
-              <button className="primary-button" type="button">
-                <Check size={16} />
-                知道了
-              </button>
-            </Dialog.Close>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-function MenuSeparator() {
-  return <div className="menubar-dropdown-separator" role="separator" />;
-}
-
-function MenuItem({
-  checked,
-  disabled,
-  label,
-  onSelect,
-  shortcut,
-  submenu,
-}: {
-  checked?: boolean;
-  disabled?: boolean;
-  label: ReactNode;
-  onSelect?: () => void;
-  shortcut?: string;
-  submenu?: boolean;
-}) {
-  const role = checked === undefined ? "menuitem" : "menuitemcheckbox";
-
-  return (
-    <button
-      aria-checked={checked === undefined ? undefined : checked}
-      className={[
-        "menubar-dropdown-item",
-        checked ? "menubar-dropdown-item-checked" : "",
-        disabled ? "menubar-dropdown-item-disabled" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      disabled={disabled}
-      onClick={onSelect}
-      role={role}
-      type="button"
-    >
-      <span className="menubar-dropdown-check">{checked ? <Check size={17} /> : null}</span>
-      <span className="menubar-dropdown-label">{label}</span>
-      <span className="menubar-dropdown-shortcut">{shortcut ? <kbd>{shortcut}</kbd> : null}</span>
-      {submenu && <ChevronRight className="menubar-dropdown-arrow" size={18} />}
-    </button>
-  );
-}
-
-function MenuSubmenu({
-  children,
-  label,
-  panelClassName,
-}: {
-  children: ReactNode;
-  label: ReactNode;
-  panelClassName?: string;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const submenuRef = useRef<HTMLDivElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [panelStyle, setPanelStyle] = useState<CSSProperties>({
-    left: -9999,
-    top: -9999,
-  });
-
-  function clearCloseTimer() {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  }
-
-  function scheduleClose() {
-    clearCloseTimer();
-    closeTimerRef.current = setTimeout(() => {
-      setIsOpen(false);
-      closeTimerRef.current = null;
-    }, 220);
-  }
-
-  function updatePanelPosition() {
-    const rect = submenuRef.current?.getBoundingClientRect();
-    const panel = panelRef.current;
-
-    if (rect) {
-      const panelHeight = panel?.offsetHeight || 320;
-      const panelWidth = panel?.offsetWidth || 176;
-      const maxTop = Math.max(8, window.innerHeight - panelHeight - 8);
-      const preferredLeft = rect.right - 2;
-      const left =
-        preferredLeft + panelWidth > window.innerWidth - 8
-          ? Math.max(8, rect.left - panelWidth + 2)
-          : preferredLeft;
-
-      setPanelStyle({
-        left,
-        top: Math.min(Math.max(8, rect.top - 8), maxTop),
-      });
-    }
-  }
-
-  function openSubmenu() {
-    clearCloseTimer();
-    setIsOpen(true);
-  }
-
-  function closeWhenPointerLeaves(event: ReactPointerEvent<HTMLDivElement>) {
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
-      return;
-    }
-
-    scheduleClose();
-  }
-
-  function closeWhenFocusLeaves(event: FocusEvent<HTMLDivElement>) {
-    const nextTarget = event.relatedTarget;
-    if (!nextTarget || !event.currentTarget.contains(nextTarget as Node)) {
-      setIsOpen(false);
-    }
-  }
-
-  useLayoutEffect(() => {
-    if (isOpen) {
-      updatePanelPosition();
-    }
-  }, [isOpen]);
-
-  useEffect(() => () => clearCloseTimer(), []);
-
-  return (
-    <div
-      ref={submenuRef}
-      className={["menubar-submenu", isOpen ? "menubar-submenu-open" : ""]
-        .filter(Boolean)
-        .join(" ")}
-      onBlur={closeWhenFocusLeaves}
-      onFocus={openSubmenu}
-      onPointerEnter={openSubmenu}
-      onPointerLeave={closeWhenPointerLeaves}
-    >
-      <button
-        aria-expanded={isOpen}
-        aria-haspopup="menu"
-        className="menubar-dropdown-item"
-        onClick={openSubmenu}
-        role="menuitem"
-        type="button"
-      >
-        <span className="menubar-dropdown-check" />
-        <span className="menubar-dropdown-label">{label}</span>
-        <span className="menubar-dropdown-shortcut" />
-        <ChevronRight className="menubar-dropdown-arrow" size={18} />
-      </button>
-      <div
-        ref={panelRef}
-        className={["menubar-submenu-panel", panelClassName ?? ""]
-          .filter(Boolean)
-          .join(" ")}
-        onPointerEnter={openSubmenu}
-        onPointerLeave={scheduleClose}
-        role="menu"
-        style={panelStyle}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function RecentFileMenuItem({
-  document,
-  exists,
-  onOpen,
-}: {
-  document: MarkdownDocument;
-  exists?: boolean;
-  onOpen: (document: MarkdownDocument) => void;
-}) {
-  const isMissing = exists === false;
-  const displayName = getDocumentDisplayName(document);
-  const pathLabel = isMissing
-    ? "文件不存在"
-    : document.filePath
-      ? getDocumentPathPreview(document)
-      : "未保存到本地";
-  const timeLabel = isMissing ? "不存在" : formatRecentTimestamp(document.updatedAt);
-
-  return (
-    <button
-      className={[
-        "menubar-dropdown-item",
-        "recent-file-menu-button",
-        isMissing ? "recent-file-menu-button-missing" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      disabled={isMissing}
-      onClick={() => onOpen(document)}
-      role="menuitem"
-      title={`${displayName}\n${pathLabel}`}
-      type="button"
-    >
-      <FileText className="recent-file-menu-icon" size={16} />
-      <span className="recent-file-menu-entry">
-        <strong>{displayName}</strong>
-        <small>{pathLabel}</small>
-      </span>
-      <span className="recent-file-menu-time">{timeLabel}</span>
-    </button>
-  );
-}
-
-function formatRecentTimestamp(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-  const time = new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-
-  if (date.toDateString() === today.toDateString()) {
-    return `今天 ${time}`;
-  }
-
-  if (date.toDateString() === yesterday.toDateString()) {
-    return `昨天 ${time}`;
-  }
-
-  return new Intl.DateTimeFormat("zh-CN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(date);
-}
-
-function getPathLabel(path?: string) {
-  if (!path) {
-    return "Desktop";
-  }
-
-  return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
-}
-
-function getDocumentTypeName(type: MarkdownDocument["documentType"]) {
-  switch (type) {
-    case "drawing":
-      return "Excalidraw";
-    case "excel":
-      return "Excel";
-    case "html":
-      return "HTML";
-    case "pdf":
-      return "PDF";
-    case "sheet":
-      return "在线表格";
-    case "word":
-      return "Word";
-    case "markdown":
-    default:
-      return "Markdown";
-  }
-}
-
-function getDocumentTypeLabel(document: MarkdownDocument) {
-  return getDocumentTypeName(getDocumentType(document));
-}
-
-function isQuickDocumentLinkShortcut(
-  event: Pick<
-    KeyboardEvent | ReactKeyboardEvent,
-    "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey"
-  > & {
-    isComposing?: boolean;
-    nativeEvent?: { isComposing?: boolean };
-  },
-) {
-  return (
-    !event.isComposing &&
-    !event.nativeEvent?.isComposing &&
-    (event.ctrlKey || event.metaKey) &&
-    event.altKey &&
-    !event.shiftKey &&
-    event.key.toLowerCase() === "l"
-  );
-}
-
-function normalizeDirectoryKey(path?: string) {
-  return path?.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() ?? "";
-}
-
 function createStartupWorkspace(): WorkspaceSnapshot {
   return {
     activeDocumentId: "",
@@ -988,666 +490,6 @@ function createStartupWorkspace(): WorkspaceSnapshot {
     updatedAt: new Date().toISOString(),
     version: 1,
   };
-}
-
-function getBrowserStorage() {
-  return typeof window === "undefined" ? undefined : window.localStorage;
-}
-
-function loadRecentDirectoryPaths(storage = getBrowserStorage()) {
-  try {
-    const raw = getMigratedStorageItem(
-      storage,
-      recentDirectoryStorageKey,
-      legacyNoteDockStorageKeys.recentDirectories,
-    );
-    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-
-    return Array.isArray(parsed)
-      ? parsed.filter((path): path is string => typeof path === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function normalizeTheme(value: unknown): AppTheme {
-  return appThemeValues.includes(value as AppTheme) ? (value as AppTheme) : "github";
-}
-
-function normalizeSidebarWidth(value: unknown) {
-  const width =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number(value)
-        : Number.NaN;
-
-  return Number.isFinite(width)
-    ? clamp(width, minSidebarWidth, maxSidebarWidth)
-    : defaultSidebarWidth;
-}
-
-function hasPersistedAppState(state: PersistedAppState | null | undefined) {
-  return Boolean(
-    state &&
-      (state.workspace !== undefined ||
-        state.appSettings !== undefined ||
-        state.theme !== undefined ||
-        state.sidebarWidth !== undefined ||
-        (state.recentDirectories?.length ?? 0) > 0),
-  );
-}
-
-function hasBrowserPersistedAppState(storage = getBrowserStorage()) {
-  if (!storage) {
-    return false;
-  }
-
-  try {
-    return [
-      ...Object.values(noteDockStorageKeys),
-      ...Object.values(legacyNoteDockStorageKeys),
-    ].some((key) => storage.getItem(key) !== null);
-  } catch {
-    return false;
-  }
-}
-
-function getLegacyPersistedAppState(
-  storage = getBrowserStorage(),
-): PersistedAppState | null {
-  if (!hasBrowserPersistedAppState(storage)) {
-    return null;
-  }
-
-  return {
-    appSettings: loadAppSettings(storage),
-    recentDirectories: loadRecentDirectoryPaths(storage),
-    sidebarWidth: normalizeSidebarWidth(
-      getMigratedStorageItem(
-        storage,
-        noteDockStorageKeys.sidebarWidth,
-        legacyNoteDockStorageKeys.sidebarWidth,
-      ),
-    ),
-    theme: getInitialTheme(storage),
-    version: persistedAppStateVersion,
-    workspace: loadWorkspaceFromStorage(storage),
-  };
-}
-
-function normalizePersistedDirectories(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((path): path is string => typeof path === "string")
-    : [];
-}
-
-function createPersistedAppState({
-  recentDirectories,
-  settings,
-  sidebarWidth,
-  theme,
-  workspace,
-}: {
-  recentDirectories: string[];
-  settings: AppSettings;
-  sidebarWidth: number;
-  theme: AppTheme;
-  workspace: ReturnType<typeof normalizeWorkspaceSnapshot>;
-}): PersistedAppState {
-  return {
-    appSettings: settings,
-    recentDirectories,
-    sidebarWidth,
-    theme,
-    updatedAt: new Date().toISOString(),
-    version: persistedAppStateVersion,
-    workspace: serializeWorkspaceSnapshot(workspace),
-  };
-}
-
-function saveLegacyPersistedAppState(state: PersistedAppState) {
-  const storage = getBrowserStorage();
-
-  if (!storage) {
-    return;
-  }
-
-  saveWorkspaceToStorage(normalizeWorkspaceSnapshot(state.workspace), storage);
-  storage.setItem(
-    appSettingsStorageKey,
-    JSON.stringify(normalizeAppSettings(state.appSettings)),
-  );
-  storage.setItem(noteDockStorageKeys.theme, normalizeTheme(state.theme));
-  storage.setItem(
-    noteDockStorageKeys.sidebarWidth,
-    String(normalizeSidebarWidth(state.sidebarWidth)),
-  );
-  storage.setItem(
-    recentDirectoryStorageKey,
-    JSON.stringify(normalizePersistedDirectories(state.recentDirectories)),
-  );
-}
-
-async function savePersistedAppState(state: PersistedAppState) {
-  if (window.desktop?.saveAppState) {
-    await window.desktop.saveAppState(state);
-    return;
-  }
-
-  saveLegacyPersistedAppState(state);
-}
-
-function clearBrowserPersistedAppState(storage = getBrowserStorage()) {
-  [...Object.values(noteDockStorageKeys), ...Object.values(legacyNoteDockStorageKeys)].forEach(
-    (key) => removeLegacyStorageItem(storage, key),
-  );
-}
-
-function collectDirectoryPaths(item: DirectoryTreeItem): string[] {
-  if (item.type !== "directory") {
-    return [];
-  }
-
-  return [
-    item.path,
-    ...(item.children ?? []).flatMap((child) => collectDirectoryPaths(child)),
-  ];
-}
-
-function DirectoryTree({
-  activeDirectoryPath,
-  activeFilePath,
-  expandedPaths,
-  item,
-  level = 0,
-  onDirectoryContextMenu,
-  onFileContextMenu,
-  onQuickLinkFile,
-  onOpenFile,
-  onToggleDirectory,
-}: {
-  activeDirectoryPath?: string;
-  activeFilePath?: string;
-  expandedPaths: Set<string>;
-  item: DirectoryTreeItem;
-  level?: number;
-  onDirectoryContextMenu?: (
-    event: ReactMouseEvent<HTMLButtonElement>,
-    directoryPath: string,
-  ) => void;
-  onFileContextMenu?: (
-    event: ReactMouseEvent<HTMLButtonElement>,
-    filePath: string,
-  ) => void;
-  onQuickLinkFile?: (filePath: string) => void;
-  onOpenFile: (filePath: string) => void;
-  onToggleDirectory: (directoryPath: string) => void;
-}) {
-  const isRoot = level === 0;
-  const isCurrentDirectory = item.path === activeDirectoryPath;
-  const hasChildren = Boolean(item.children?.length);
-  const isExpanded = expandedPaths.has(item.path);
-
-  return (
-    <div className={isRoot ? "directory-tree-root" : "directory-tree-branch"}>
-      <button
-        className={
-          isCurrentDirectory
-            ? "directory-tree-folder directory-tree-folder-active"
-            : "directory-tree-folder"
-        }
-        style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
-        title={item.name}
-        type="button"
-        onClick={() => onToggleDirectory(item.path)}
-        onContextMenu={(event) => onDirectoryContextMenu?.(event, item.path)}
-      >
-        {hasChildren ? (
-          isExpanded ? (
-            <ChevronDown className="directory-tree-caret" size={14} />
-          ) : (
-            <ChevronRight className="directory-tree-caret" size={14} />
-          )
-        ) : (
-          <span className="directory-tree-caret-placeholder" />
-        )}
-        {isRoot ? <FolderOpen size={18} /> : <Folder size={18} />}
-        <span>{item.name}</span>
-      </button>
-      {isExpanded ? (
-        <DirectoryTreeItems
-          activeDirectoryPath={activeDirectoryPath}
-          activeFilePath={activeFilePath}
-          expandedPaths={expandedPaths}
-          items={item.children ?? []}
-          level={level + 1}
-          onDirectoryContextMenu={onDirectoryContextMenu}
-          onFileContextMenu={onFileContextMenu}
-          onQuickLinkFile={onQuickLinkFile}
-          onOpenFile={onOpenFile}
-          onToggleDirectory={onToggleDirectory}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function DirectoryTreeItems({
-  activeDirectoryPath,
-  activeFilePath,
-  expandedPaths,
-  items,
-  level,
-  onDirectoryContextMenu,
-  onFileContextMenu,
-  onQuickLinkFile,
-  onOpenFile,
-  onToggleDirectory,
-}: {
-  activeDirectoryPath?: string;
-  activeFilePath?: string;
-  expandedPaths: Set<string>;
-  items: DirectoryTreeItem[];
-  level: number;
-  onDirectoryContextMenu?: (
-    event: ReactMouseEvent<HTMLButtonElement>,
-    directoryPath: string,
-  ) => void;
-  onFileContextMenu?: (
-    event: ReactMouseEvent<HTMLButtonElement>,
-    filePath: string,
-  ) => void;
-  onQuickLinkFile?: (filePath: string) => void;
-  onOpenFile: (filePath: string) => void;
-  onToggleDirectory: (directoryPath: string) => void;
-}) {
-  return (
-    <>
-      {items.map((child) =>
-        child.type === "directory" ? (
-          <DirectoryTree
-            activeDirectoryPath={activeDirectoryPath}
-            activeFilePath={activeFilePath}
-            expandedPaths={expandedPaths}
-            item={child}
-            key={child.path}
-            level={level}
-            onDirectoryContextMenu={onDirectoryContextMenu}
-            onFileContextMenu={onFileContextMenu}
-            onQuickLinkFile={onQuickLinkFile}
-            onOpenFile={onOpenFile}
-            onToggleDirectory={onToggleDirectory}
-          />
-        ) : (
-          <button
-            className={
-              child.path === activeFilePath
-                ? "directory-tree-file directory-tree-file-active"
-                : "directory-tree-file"
-            }
-            key={child.path}
-            style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
-            title={child.name}
-            type="button"
-            onClick={() => onOpenFile(child.path)}
-            onContextMenu={(event) => onFileContextMenu?.(event, child.path)}
-            onKeyDown={(event) => {
-              if (!isQuickDocumentLinkShortcut(event)) {
-                return;
-              }
-
-              event.preventDefault();
-              event.stopPropagation();
-              onQuickLinkFile?.(child.path);
-            }}
-          >
-            <span className="directory-tree-caret-placeholder" />
-            <FileText size={17} />
-            <span>{child.name}</span>
-          </button>
-        ),
-      )}
-    </>
-  );
-}
-
-type DirectoryFileListItem = {
-  directoryLabel: string;
-  document?: MarkdownDocument;
-  name: string;
-  path: string;
-};
-
-function normalizeFilePathKey(filePath?: string) {
-  return filePath?.replace(/\\/g, "/").toLowerCase() ?? "";
-}
-
-function stripMarkdownForFilePreview(content: string) {
-  return content
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
-    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s{0,3}>\s?/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/^\s*\d+[.)]\s+/gm, "")
-    .replace(/^\s*\|?[-:| ]{3,}\|?\s*$/gm, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function getFileListPreview(document?: MarkdownDocument) {
-  if (!document) {
-    return "";
-  }
-
-  if (isPdfDocument(document)) {
-    return "PDF 文档 · 只读预览";
-  }
-
-  if (isWordDocument(document)) {
-    return "Word 文档 · 只读预览";
-  }
-
-  if (isExcelDocument(document)) {
-    return "Excel 表格 · 只读预览";
-  }
-
-  if (isSheetDocument(document)) {
-    return "在线表格 · 可打开编辑";
-  }
-
-  if (isDrawingDocument(document)) {
-    return "Excalidraw 画板 · 可打开编辑";
-  }
-
-  const preview = stripMarkdownForFilePreview(document.content);
-
-  return preview;
-}
-
-function getDirectoryDisplayPath(filePath: string, workspacePath?: string) {
-  const directoryPath = getDirectoryPath(filePath);
-
-  if (!directoryPath) {
-    return "";
-  }
-
-  const normalizedDirectoryPath = directoryPath.replace(/\\/g, "/").replace(/\/+$/, "");
-  const normalizedWorkspacePath = workspacePath?.replace(/\\/g, "/").replace(/\/+$/, "");
-
-  if (!normalizedWorkspacePath) {
-    return normalizedDirectoryPath;
-  }
-
-  const lowerDirectoryPath = normalizedDirectoryPath.toLowerCase();
-  const lowerWorkspacePath = normalizedWorkspacePath.toLowerCase();
-
-  if (lowerDirectoryPath === lowerWorkspacePath) {
-    return "";
-  }
-
-  if (lowerDirectoryPath.startsWith(`${lowerWorkspacePath}/`)) {
-    return normalizedDirectoryPath.slice(normalizedWorkspacePath.length + 1);
-  }
-
-  return normalizedDirectoryPath;
-}
-
-function collectDirectoryFiles(
-  documents: MarkdownDocument[],
-  items: DirectoryTreeItem[],
-  workspacePath?: string,
-): DirectoryFileListItem[] {
-  const documentsByPath = new Map(
-    documents
-      .filter((document) => document.filePath)
-      .map((document) => [normalizeFilePathKey(document.filePath), document]),
-  );
-
-  return collectDirectoryFilesWithDocumentMap(
-    documentsByPath,
-    items,
-    workspacePath,
-  ).sort((left, right) =>
-    `${left.directoryLabel}/${left.name}`.localeCompare(
-      `${right.directoryLabel}/${right.name}`,
-      "zh-CN",
-      { numeric: true },
-    ),
-  );
-}
-
-function collectDirectoryFilesWithDocumentMap(
-  documentsByPath: Map<string, MarkdownDocument>,
-  items: DirectoryTreeItem[],
-  workspacePath?: string,
-): DirectoryFileListItem[] {
-  return items
-    .flatMap((item): DirectoryFileListItem[] =>
-      item.type === "directory"
-        ? collectDirectoryFilesWithDocumentMap(
-            documentsByPath,
-            item.children ?? [],
-            workspacePath,
-          )
-        : [
-            {
-              directoryLabel: getDirectoryDisplayPath(item.path, workspacePath),
-              document: documentsByPath.get(normalizeFilePathKey(item.path)),
-              name: item.name,
-              path: item.path,
-            },
-          ],
-    );
-}
-
-function DirectoryFileList({
-  activeFilePath,
-  documents,
-  emptyLabel = "当前目录中没有文件",
-  items,
-  onFileContextMenu,
-  onOpenFile,
-  onQuickLinkFile,
-  workspacePath,
-}: {
-  activeFilePath?: string;
-  documents: MarkdownDocument[];
-  emptyLabel?: string;
-  items: DirectoryTreeItem[];
-  onFileContextMenu?: (
-    event: ReactMouseEvent<HTMLButtonElement>,
-    filePath: string,
-  ) => void;
-  onOpenFile: (filePath: string) => void;
-  onQuickLinkFile?: (filePath: string) => void;
-  workspacePath?: string;
-}) {
-  const files = useMemo(
-    () => collectDirectoryFiles(documents, items, workspacePath),
-    [documents, items, workspacePath],
-  );
-
-  if (!files.length) {
-    return <div className="directory-tree-empty">{emptyLabel}</div>;
-  }
-
-  return (
-    <div className="directory-file-list">
-      {files.map((file) => {
-        const preview = getFileListPreview(file.document);
-
-        return (
-          <button
-            className={
-              file.path === activeFilePath
-                ? "directory-file-list-item directory-file-list-item-active"
-                : "directory-file-list-item"
-            }
-            key={file.path}
-            title={file.name}
-            type="button"
-            onClick={() => onOpenFile(file.path)}
-            onContextMenu={(event) => onFileContextMenu?.(event, file.path)}
-            onKeyDown={(event) => {
-              if (!isQuickDocumentLinkShortcut(event)) {
-                return;
-              }
-
-              event.preventDefault();
-              event.stopPropagation();
-              onQuickLinkFile?.(file.path);
-            }}
-          >
-            <FileText size={17} />
-            <span className="directory-file-list-text">
-              <span className="directory-file-list-title">{file.name}</span>
-              {file.directoryLabel ? (
-                <span className="directory-file-list-meta">
-                  {file.directoryLabel}
-                </span>
-              ) : null}
-              {preview ? (
-                <span className="directory-file-list-preview">{preview}</span>
-              ) : null}
-            </span>
-            {file.document?.updatedAt ? (
-              <time dateTime={file.document.updatedAt}>
-                {formatRecentTimestamp(file.document.updatedAt)}
-              </time>
-            ) : null}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function WorkspaceSearchPanel({
-  groups,
-  inputRef,
-  matchCount,
-  onClose,
-  onOpenMatch,
-  onQueryChange,
-  query,
-  workspacePath,
-}: {
-  groups: WorkspaceSearchGroup[];
-  inputRef: RefObject<HTMLInputElement>;
-  matchCount: number;
-  onClose: () => void;
-  onOpenMatch: (document: MarkdownDocument, match: MarkdownSearchMatch) => void;
-  onQueryChange: (value: string) => void;
-  query: string;
-  workspacePath?: string;
-}) {
-  const trimmedQuery = query.trim();
-
-  return (
-    <div className="workspace-search-panel">
-      <div className="workspace-search-input-row">
-        <Search size={16} />
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              onClose();
-            }
-          }}
-          placeholder="查找"
-        />
-        <div className="workspace-search-toggles" aria-hidden="true">
-          <span>Aa</span>
-          <span>W</span>
-          <span>.*</span>
-        </div>
-        {query && (
-          <button type="button" aria-label="清空查找" onClick={() => onQueryChange("")}>
-            <X size={14} />
-          </button>
-        )}
-      </div>
-
-      <div className="workspace-search-meta">
-        {trimmedQuery
-          ? matchCount
-            ? `在 ${groups.length} 个文件中找到 ${matchCount} 处`
-            : "没有找到匹配内容"
-          : workspacePath
-            ? "输入关键词后搜索当前文件夹"
-            : "先打开一个本地文件夹"}
-      </div>
-
-      <div className="workspace-search-results">
-        {!trimmedQuery ? (
-          <div className="workspace-search-empty">
-            输入内容后会在当前文件夹内搜索 .md 和 .html 文件。
-          </div>
-        ) : groups.length ? (
-          groups.map((group) => (
-            <section
-              className="workspace-search-group"
-              key={group.document.filePath ?? group.document.id}
-            >
-              <div
-                className="workspace-search-file"
-                title={getDocumentDisplayName(group.document)}
-              >
-                <FileText size={15} />
-                <strong>{getDocumentDisplayName(group.document)}</strong>
-                <span>{group.matches.length}</span>
-              </div>
-              {group.matches.map((match) => (
-                <button
-                  className="workspace-search-match"
-                  key={`${group.document.filePath ?? group.document.id}-${match.start}`}
-                  type="button"
-                  onClick={() => onOpenMatch(group.document, match)}
-                >
-                  <span className="workspace-search-line">{match.line}</span>
-                  <span className="workspace-search-snippet">
-                    <HighlightedSearchSnippet
-                      query={trimmedQuery}
-                      text={match.snippet || "空白行"}
-                    />
-                  </span>
-                </button>
-              ))}
-            </section>
-          ))
-        ) : (
-          <div className="workspace-search-empty">没有匹配结果。</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function WelcomeIllustration() {
-  return (
-    <div className="welcome-illustration" aria-hidden="true">
-      <div className="welcome-sheet welcome-sheet-back">
-        <span />
-      </div>
-      <div className="welcome-sheet">
-        <strong>#</strong>
-        <span />
-        <span />
-        <span />
-      </div>
-      <div className="welcome-markdown-badge">M↓</div>
-      <div className="welcome-code-badge">{"</>"}</div>
-      <div className="welcome-pen" />
-    </div>
-  );
 }
 
 export function App() {
@@ -1679,11 +521,17 @@ export function App() {
     initialData: UniverSheetData;
     target: UniverSheetEditTarget;
   } | null>(null);
+  const {
+    appDialog,
+    closeAppDialog,
+    showAppAlert,
+    showAppConfirm,
+  } = useAppDialog();
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
-  const [appDialog, setAppDialog] = useState<AppDialogState | null>(null);
+  const [isRelationsDialogOpen, setIsRelationsDialogOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<AppContextMenuState | null>(null);
   const [findPanelMode, setFindPanelMode] = useState<FindPanelMode>("find");
   const [findQuery, setFindQuery] = useState("");
@@ -1696,9 +544,8 @@ export function App() {
   const [newTagName, setNewTagName] = useState("");
   const [propertyKeyDraft, setPropertyKeyDraft] = useState("");
   const [propertyValueDraft, setPropertyValueDraft] = useState("");
-  const [activeMetadataSuggestion, setActiveMetadataSuggestion] = useState<
-    "tag" | "propertyKey" | "propertyValue" | null
-  >(null);
+  const [activeMetadataSuggestion, setActiveMetadataSuggestion] =
+    useState<DocumentMetadataSuggestionField | null>(null);
   const [wikiLinkTargetDraft, setWikiLinkTargetDraft] = useState("");
   const [isKnowledgeEditorOpen, setIsKnowledgeEditorOpen] = useState(false);
   const [isDocumentLinkPickerOpen, setIsDocumentLinkPickerOpen] = useState(false);
@@ -1716,8 +563,8 @@ export function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [fileExplorerView, setFileExplorerView] =
     useState<FileExplorerView>("tree");
-  const [documentLoadingState, setDocumentLoadingState] =
-    useState<DocumentLoadingState>(null);
+  const { clearDocumentLoading, documentLoadingState, showDocumentLoading } =
+    useDocumentLoading();
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
@@ -1727,23 +574,24 @@ export function App() {
   const [isEditorDraggingMedia, setIsEditorDraggingMedia] = useState(false);
   const [isImmersiveSidebarOpen, setIsImmersiveSidebarOpen] = useState(false);
   const [newFileName, setNewFileName] = useState("Untitled");
-  const [directoryTree, setDirectoryTree] = useState<DirectoryTreeItem | null>(
-    null,
-  );
-  const [recentFileAvailability, setRecentFileAvailability] = useState<
-    Record<string, boolean>
-  >({});
+  const {
+    applyDirectoryTree,
+    directoryTree,
+    expandedDirectoryPaths,
+    loadDirectoryTree,
+    setExpandedDirectoryPaths,
+  } = useWorkspaceDirectoryTree({
+    onLoadFailure: () => setSaveState("failed"),
+    readDirectoryTree: window.desktop?.readDirectoryTree,
+    workspacePath: workspace.workspacePath,
+  });
   const isImmersiveMode = isFullScreen;
   const [immersiveRevealEdge, setImmersiveRevealEdge] =
     useState<ImmersiveRevealEdge | null>(null);
   const isSidebarHidden = isImmersiveMode
     ? !isImmersiveSidebarOpen
     : isSidebarCollapsed;
-  const [missingAssetReferences, setMissingAssetReferences] = useState<string[]>([]);
   const [recentDirectoryPaths, setRecentDirectoryPaths] = useState<string[]>([]);
-  const [expandedDirectoryPaths, setExpandedDirectoryPaths] = useState<Set<string>>(
-    () => new Set(),
-  );
   const [activeEditorLineIndex, setActiveEditorLineIndex] = useState(0);
   const [activeHtmlOutlineId, setActiveHtmlOutlineId] = useState<string | null>(
     null,
@@ -1757,68 +605,42 @@ export function App() {
   const wikiLinkInputRef = useRef<HTMLInputElement | null>(null);
   const pendingWorkspaceSearchRevealRef = useRef<WorkspaceSearchReveal | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
-  const appDialogResolverRef = useRef<((confirmed: boolean) => void) | null>(
-    null,
-  );
   const externalConflictPathsRef = useRef(new Set<string>());
   const internalFileDeletesRef = useRef(new Set<string>());
   const savedFileContentByPathRef = useRef(
-    new Map(
-      workspace.documents
-        .filter((document) => document.filePath)
-        .map((document) => [document.filePath!, document.content]),
-    ),
+    createSavedFileContentByPath(workspace.documents),
   );
   const internalFileWritesRef = useRef(
-    new Map<string, { content: string; expiresAt: number }>(),
+    new Map<string, InternalFileWriteSnapshot>(),
   );
 
   useEffect(() => {
     let isStale = false;
 
     async function hydratePersistedState() {
-      const mainState = await window.desktop?.loadAppState?.().catch(() => null);
-      const legacyState = getLegacyPersistedAppState();
-      const sourceState = hasPersistedAppState(mainState) ? mainState : legacyState;
-      const nextWorkspace = normalizeWorkspaceSnapshot(sourceState?.workspace);
-      const nextSettings = normalizeAppSettings(sourceState?.appSettings);
-      const nextTheme = normalizeTheme(sourceState?.theme);
-      const nextSidebarWidth = normalizeSidebarWidth(sourceState?.sidebarWidth);
-      const nextRecentDirectories = normalizePersistedDirectories(
-        sourceState?.recentDirectories,
+      const hydration = await loadPersistedAppHydration(
+        window.desktop?.loadAppState,
       );
 
       if (isStale) {
         return;
       }
 
-      savedFileContentByPathRef.current = new Map(
-        nextWorkspace.documents
-          .filter((document) => document.filePath)
-          .map((document) => [document.filePath!, document.content]),
+      savedFileContentByPathRef.current = createSavedFileContentByPath(
+        hydration.workspace.documents,
       );
-      setWorkspace(nextWorkspace);
-      setSettings(nextSettings);
-      setMode(nextSettings.editorMode);
-      setTheme(nextTheme);
-      setSidebarWidth(nextSidebarWidth);
-      setRecentDirectoryPaths(nextRecentDirectories);
+      setWorkspace(hydration.workspace);
+      setSettings(hydration.settings);
+      setMode(hydration.settings.editorMode);
+      setTheme(hydration.theme);
+      setSidebarWidth(hydration.sidebarWidth);
+      setRecentDirectoryPaths(hydration.recentDirectories);
       setIsPersistenceReady(true);
 
-      if (window.desktop?.saveAppState && legacyState) {
-        void window.desktop
-          .saveAppState(
-            createPersistedAppState({
-              recentDirectories: nextRecentDirectories,
-              settings: nextSettings,
-              sidebarWidth: nextSidebarWidth,
-              theme: nextTheme,
-              workspace: nextWorkspace,
-            }),
-          )
-          .then(() => clearBrowserPersistedAppState())
-          .catch(() => undefined);
-      }
+      void migrateLegacyPersistedAppHydration(
+        hydration,
+        window.desktop?.saveAppState,
+      ).catch(() => undefined);
     }
 
     void hydratePersistedState();
@@ -1828,17 +650,13 @@ export function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!isImmersiveMode && immersiveRevealEdge) {
-      setImmersiveRevealEdge(null);
-    }
-  }, [immersiveRevealEdge, isImmersiveMode]);
-
-  useEffect(() => {
-    if (!isImmersiveMode && isImmersiveSidebarOpen) {
-      setIsImmersiveSidebarOpen(false);
-    }
-  }, [isImmersiveMode, isImmersiveSidebarOpen]);
+  useImmersiveModeState({
+    immersiveRevealEdge,
+    isImmersiveMode,
+    isImmersiveSidebarOpen,
+    setImmersiveRevealEdge,
+    setIsImmersiveSidebarOpen,
+  });
 
   useEffect(() => {
     if (!contextMenu) {
@@ -1862,6 +680,10 @@ export function App() {
     () =>
       workspace.documents.find((item) => item.id === workspace.activeDocumentId) ?? null,
     [workspace.activeDocumentId, workspace.documents],
+  );
+  const missingAssetReferences = useMissingDocumentAssetReferences(
+    activeDocument,
+    window.desktop?.checkAssetReferences,
   );
   const workspaceKnowledge = useMemo(
     () => createWorkspaceKnowledge(workspace.documents),
@@ -1892,7 +714,7 @@ export function App() {
   const workspaceRelationItems = useMemo<WorkspaceRelationItem[]>(() => {
     const items: WorkspaceRelationItem[] = [];
 
-    workspace.documents.filter(isMarkdownDocument).forEach((sourceDocument) => {
+    workspace.documents.forEach((sourceDocument) => {
       const sourceTitle = getDocumentDisplayName(sourceDocument);
 
       normalizeDocumentMetadata(sourceDocument.metadata).documentLinks.forEach(
@@ -1925,8 +747,9 @@ export function App() {
         },
       );
 
-      const outgoingLinks =
-        workspaceKnowledge.outgoingLinksByDocumentId.get(sourceDocument.id) ?? [];
+      const outgoingLinks = isMarkdownDocument(sourceDocument)
+        ? workspaceKnowledge.outgoingLinksByDocumentId.get(sourceDocument.id) ?? []
+        : [];
 
       outgoingLinks.forEach((link) => {
         const targetTitle =
@@ -1970,48 +793,58 @@ export function App() {
       return left.title.localeCompare(right.title, "zh-CN", { numeric: true });
     });
   }, [workspace.documents, workspaceKnowledge]);
+  const visibleWorkspaceRelationItems = useMemo(() => {
+    const linkedItems = workspaceRelationItems.filter(
+      (item) => item.status === "linked",
+    );
+
+    if (!activeDocument) {
+      return linkedItems;
+    }
+
+    return linkedItems.filter(
+      (item) =>
+        item.sourceDocument.id === activeDocument.id ||
+        item.targetDocument?.id === activeDocument.id,
+    );
+  }, [activeDocument?.id, workspaceRelationItems]);
   const workspaceRelationStats = useMemo(() => {
-    const documentCount = workspaceRelationItems.filter(
+    const documentCount = visibleWorkspaceRelationItems.filter(
       (item) => item.kind === "document",
     ).length;
-    const contentCount = workspaceRelationItems.filter(
+    const contentCount = visibleWorkspaceRelationItems.filter(
       (item) => item.kind === "content",
     ).length;
-    const missingCount = workspaceRelationItems.filter(
-      (item) => item.status === "missing",
-    ).length;
     const sourceCount = new Set(
-      workspaceRelationItems.map((item) => item.sourceDocument.id),
+      visibleWorkspaceRelationItems.map((item) => item.sourceDocument.id),
     ).size;
 
     return {
       contentCount,
       documentCount,
-      missingCount,
       sourceCount,
-      totalCount: workspaceRelationItems.length,
+      totalCount: visibleWorkspaceRelationItems.length,
     };
-  }, [workspaceRelationItems]);
+  }, [visibleWorkspaceRelationItems]);
   const filteredWorkspaceRelationItems = useMemo(() => {
     const query = relationPanelQuery.trim().toLocaleLowerCase();
 
-    return workspaceRelationItems.filter((item) => {
+    return visibleWorkspaceRelationItems.filter((item) => {
       const matchesFilter =
         relationPanelFilter === "all" ||
         (relationPanelFilter === "document" && item.kind === "document") ||
-        (relationPanelFilter === "content" && item.kind === "content") ||
-        (relationPanelFilter === "missing" && item.status === "missing");
+        (relationPanelFilter === "content" && item.kind === "content");
 
       return matchesFilter && (!query || item.searchText.includes(query));
     });
-  }, [relationPanelFilter, relationPanelQuery, workspaceRelationItems]);
+  }, [relationPanelFilter, relationPanelQuery, visibleWorkspaceRelationItems]);
   const documentLinkPickerSourceDocument = useMemo(() => {
     const sourceDocument = documentLinkSourceDocumentId
       ? workspace.documents.find((document) => document.id === documentLinkSourceDocumentId) ??
         null
       : activeDocument;
 
-    return sourceDocument && isMarkdownDocument(sourceDocument) ? sourceDocument : null;
+    return sourceDocument ?? null;
   }, [activeDocument, documentLinkSourceDocumentId, workspace.documents]);
   const documentLinkPickerRelatedKeys = useMemo(() => {
     if (!documentLinkPickerSourceDocument) {
@@ -2157,6 +990,11 @@ export function App() {
       ),
     [recentDocuments],
   );
+  const [recentFileAvailability, setRecentFileAvailability] =
+    useRecentFileAvailability(
+      recentDocumentFilePaths,
+      window.desktop?.pathExists,
+    );
   const recentDirectories = useMemo(() => {
     const currentDirectoryKey = normalizeDirectoryKey(workspace.workspacePath);
     const seen = new Set<string>();
@@ -2240,13 +1078,6 @@ export function App() {
     [activeDocument, activeDocument?.content, findQuery],
   );
   const activeFindMatch = findMatches[findMatchIndex] ?? null;
-  const activeAssetReferences = useMemo(
-    () =>
-      isMarkdownDocument(activeDocument)
-        ? extractLocalAssetReferences(activeDocument!.content)
-        : [],
-    [activeDocument],
-  );
   const visibleFindResultStart = Math.max(
     0,
     Math.min(Math.max(findMatchIndex - 3, 0), Math.max(findMatches.length - 8, 0)),
@@ -2262,53 +1093,11 @@ export function App() {
     }
   }, [hasMoreRecentDocuments, isRecentExpanded]);
 
-  useEffect(() => {
-    if (
-      !activeDocument?.filePath ||
-      !activeAssetReferences.length ||
-      !window.desktop?.checkAssetReferences
-    ) {
-      setMissingAssetReferences([]);
-      return undefined;
-    }
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void window.desktop
-        ?.checkAssetReferences?.({
-          documentFilePath: activeDocument.filePath!,
-          references: activeAssetReferences.map((reference) => reference.reference),
-        })
-        .then((missing) => {
-          if (!cancelled) {
-            setMissingAssetReferences(missing);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setMissingAssetReferences([]);
-          }
-        });
-    }, 500);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [activeAssetReferences, activeDocument?.filePath]);
-
-  useEffect(() => {
-    if (!workspace.workspacePath || !window.desktop?.watchWorkspaceDirectory) {
-      void window.desktop?.unwatchWorkspaceDirectory?.();
-      return;
-    }
-
-    void window.desktop.watchWorkspaceDirectory(workspace.workspacePath);
-
-    return () => {
-      void window.desktop?.unwatchWorkspaceDirectory?.();
-    };
-  }, [workspace.workspacePath]);
+  useWorkspaceDirectoryWatcher(
+    workspace.workspacePath,
+    window.desktop?.watchWorkspaceDirectory,
+    window.desktop?.unwatchWorkspaceDirectory,
+  );
 
   useEffect(() => {
     if (!window.desktop?.onWorkspaceFileChanged) {
@@ -2321,59 +1110,16 @@ export function App() {
   }, [activeDocument, workspace.documents, workspace.workspacePath]);
 
   useEffect(() => {
-    if (!recentDocumentFilePaths.length || !window.desktop?.pathExists) {
-      setRecentFileAvailability({});
-      return;
-    }
-
-    let isStale = false;
-
-    void Promise.all(
-      recentDocumentFilePaths.map(async (filePath) => [
-        filePath,
-        await window.desktop!.pathExists(filePath),
-      ] as const),
-    ).then((entries) => {
-      if (isStale) {
-        return;
-      }
-
-      setRecentFileAvailability(Object.fromEntries(entries));
-    });
-
-    return () => {
-      isStale = true;
-    };
-  }, [recentDocumentFilePaths]);
-
-  useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
-  useEffect(() => {
-    let isStale = false;
-
-    void window.desktop?.getWindowState?.().then((state) => {
-      if (isStale || !state) {
-        return;
-      }
-
-      setIsFullScreen(state.fullScreen);
-      setIsAlwaysOnTop(state.alwaysOnTop);
-    });
-
-    void window.desktop?.getZoomFactor?.().then((factor) => {
-      if (isStale || typeof factor !== "number" || !Number.isFinite(factor)) {
-        return;
-      }
-
-      setWindowZoomFactor(factor);
-    });
-
-    return () => {
-      isStale = true;
-    };
-  }, []);
+  useWindowChromeState({
+    getWindowState: window.desktop?.getWindowState,
+    getZoomFactor: window.desktop?.getZoomFactor,
+    setIsAlwaysOnTop,
+    setIsFullScreen,
+    setWindowZoomFactor,
+  });
 
   useEffect(
     () => () => {
@@ -2384,82 +1130,25 @@ export function App() {
     [],
   );
 
-  useEffect(() => {
-    const style = document.documentElement.style;
-    const contentDensity = getEditorContentDensityStyle(
-      settings.editorContentDensity,
-    );
+  useEditorCssVariables(settings);
 
-    style.setProperty(
-      "--editor-font-family",
-      getEditorFontFamily(settings.editorFontFamily),
-    );
-    style.setProperty(
-      "--editor-code-font-family",
-      getEditorCodeFontFamily(settings.editorCodeFontFamily),
-    );
-    style.setProperty(
-      "--editor-font-size",
-      getAdjustedEditorFontSize(
-        contentDensity.fontSize,
-        settings.editorFontSizeAdjustment,
-      ),
-    );
-    style.setProperty("--editor-line-height", contentDensity.lineHeight);
-    style.setProperty("--editor-content-width", contentDensity.contentWidth);
-    style.setProperty("--editor-paragraph-margin", contentDensity.paragraphMargin);
-    style.setProperty("--editor-list-margin", contentDensity.listMargin);
-    style.setProperty("--editor-block-margin", contentDensity.blockMargin);
-    style.setProperty("--editor-code-block-margin", contentDensity.codeBlockMargin);
-    style.setProperty("--editor-table-cell-padding", contentDensity.tableCellPadding);
-  }, [settings]);
-
-  useEffect(() => {
-    if (!isPersistenceReady) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      void savePersistedAppState(
-        createPersistedAppState({
-          recentDirectories: recentDirectoryPaths,
-          settings,
-          sidebarWidth,
-          theme,
-          workspace,
-        }),
-      );
-    }, 500);
-
-    return () => window.clearTimeout(timer);
-  }, [
-    isPersistenceReady,
-    recentDirectoryPaths,
+  usePersistedAppStateWriter({
+    isReady: isPersistenceReady,
+    recentDirectories: recentDirectoryPaths,
     settings,
     sidebarWidth,
     theme,
     workspace,
-  ]);
+  });
 
-  useEffect(() => {
-    setFindMatchIndex((current) => {
-      if (!findMatches.length) {
-        return 0;
-      }
-
-      return Math.min(current, findMatches.length - 1);
-    });
-  }, [findMatches.length]);
-
-  useEffect(() => {
-    setFindMatchIndex(0);
-  }, [activeDocument?.id, findQuery]);
-
-  useEffect(() => {
-    if (!isFindReplaceOpen || !findQuery || !findMatches.length) {
-      clearFindHighlight();
-    }
-  }, [findMatches.length, findQuery, isFindReplaceOpen]);
+  useFindMatchStateMaintenance({
+    activeDocumentId: activeDocument?.id,
+    clearFindHighlight,
+    findQuery,
+    isFindReplaceOpen,
+    matchCount: findMatches.length,
+    setFindMatchIndex,
+  });
 
   function updateSetting<K extends keyof AppSettings>(
     key: K,
@@ -2571,38 +1260,10 @@ export function App() {
     window.addEventListener("pointercancel", stopSidebarResize);
   }
 
-  async function loadDirectoryTree(directoryPath = workspace.workspacePath) {
-    if (!directoryPath || !window.desktop?.readDirectoryTree) {
-      setDirectoryTree(null);
-      return;
-    }
-
-    try {
-      const tree = await window.desktop.readDirectoryTree(directoryPath);
-
-      setDirectoryTree(tree);
-      setExpandedDirectoryPaths((current) => {
-        const next = new Set(current);
-        next.add(tree.path);
-        return next;
-      });
-    } catch {
-      setDirectoryTree(null);
-      setSaveState("failed");
-    }
-  }
-
   function rememberRecentDirectory(path?: string) {
-    const key = normalizeDirectoryKey(path);
-
-    if (!path || !key) {
-      return;
-    }
-
-    setRecentDirectoryPaths((current) => [
-      path,
-      ...current.filter((item) => normalizeDirectoryKey(item) !== key),
-    ].slice(0, storedRecentDirectoryLimit));
+    setRecentDirectoryPaths((current) =>
+      rememberRecentDirectoryPath(current, path),
+    );
   }
 
   useEffect(() => {
@@ -2620,14 +1281,6 @@ export function App() {
       );
     });
   }, [isPersistenceReady, workspace.workspacePath]);
-
-  useEffect(() => {
-    if (!workspace.workspacePath) {
-      return;
-    }
-
-    void loadDirectoryTree(workspace.workspacePath);
-  }, [workspace.workspacePath]);
 
   useEffect(() => {
     if (!topMenu && !isActionsOpen) {
@@ -2663,209 +1316,46 @@ export function App() {
     };
   }, [isActionsOpen, topMenu]);
 
-  useEffect(() => {
-    function shouldIgnoreAppShortcutTarget(target: EventTarget | null) {
-      if (!(target instanceof Element)) {
-        return false;
-      }
+  useGlobalAppShortcuts({
+    editorRef,
+    isCreateFileOpen,
+    isFullScreen,
+    isSettingsOpen,
+    onAction: runAppShortcutAction,
+  });
 
-      if (target instanceof HTMLTextAreaElement) {
-        return target !== editorRef.current;
-      }
+  useActiveDocumentUiReset({
+    activeDocumentId: activeDocument?.id,
+    resetActiveEditorLine: () => setActiveEditorLineIndex(0),
+    resetKnowledgeEditor: () => setIsKnowledgeEditorOpen(false),
+    resetWikiLinkDraft: () => setWikiLinkTargetDraft(""),
+  });
 
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLSelectElement
-      ) {
-        return true;
-      }
+  useWorkspaceSearchAutoFocus({
+    inputRef: workspaceSearchInputRef,
+    isSidebarHidden,
+    sidebarTab,
+  });
 
-      return Boolean(
-        target.closest("[contenteditable='true']") &&
-          !target.closest(".ProseMirror"),
-      );
-    }
+  useQuickCaptureBridge(window.desktop?.onQuickCapture, openQuickCapture);
 
-    function selectContentScopeContents(scope: Element) {
-      const ownerDocument = scope.ownerDocument;
-      const selection = ownerDocument.getSelection();
+  usePendingWorkspaceSearchReveal({
+    activeDocument,
+    onReveal: revealWorkspaceSearchMatch,
+    pendingRevealRef: pendingWorkspaceSearchRevealRef,
+    revealKey: mode,
+  });
 
-      if (!selection) {
-        return;
-      }
-
-      const range = ownerDocument.createRange();
-      range.selectNodeContents(scope);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
-
-    function handleScopedSelectAll(event: KeyboardEvent) {
-      if (!isSelectAllShortcut(event)) {
-        return false;
-      }
-
-      const scope = getSelectAllShortcutScope(event.target);
-
-      if (scope === "input") {
-        return false;
-      }
-
-      event.preventDefault();
-
-      if (scope !== "content" || isCreateFileOpen || isSettingsOpen) {
-        return true;
-      }
-
-      const contentScope = getSelectAllContentScope(event.target);
-
-      if (contentScope) {
-        selectContentScopeContents(contentScope);
-      }
-
-      return true;
-    }
-
-    function isEditorShortcutTarget(target: EventTarget | null) {
-      return (
-        target instanceof Element &&
-        (target === editorRef.current || Boolean(target.closest(".ProseMirror")))
-      );
-    }
-
-    function handleGlobalEditShortcuts(event: KeyboardEvent) {
-      if (handleScopedSelectAll(event)) {
-        return;
-      }
-
-      const action = getAppShortcutAction(event, {
-        isEditorTarget: isEditorShortcutTarget(event.target),
-        isFullScreen,
-      });
-
-      if (!action) {
-        return;
-      }
-
-      const isFullScreenAction =
-        action.type === "view" &&
-        (action.command === "toggleFullScreen" ||
-          action.command === "exitFullScreen");
-      const isWindowZoomAction =
-        action.type === "view" &&
-        (action.command === "resetZoom" ||
-          action.command === "zoomIn" ||
-          action.command === "zoomOut");
-
-      if (
-        !isFullScreenAction &&
-        !isWindowZoomAction &&
-        (isCreateFileOpen ||
-          isSettingsOpen ||
-          shouldIgnoreAppShortcutTarget(event.target))
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-      runAppShortcutAction(action);
-    }
-
-    window.addEventListener("keydown", handleGlobalEditShortcuts, true);
-
-    return () => {
-      window.removeEventListener("keydown", handleGlobalEditShortcuts, true);
-    };
-  }, [activeDocument, isCreateFileOpen, isFullScreen, isSettingsOpen, mode]);
-
-  useEffect(() => {
-    setActiveEditorLineIndex(0);
-    setIsKnowledgeEditorOpen(false);
-    setWikiLinkTargetDraft("");
-  }, [activeDocument?.id]);
-
-  useEffect(() => {
-    if (sidebarTab !== "search" || isSidebarHidden) {
-      return;
-    }
-
-    requestAnimationFrame(() => {
-      workspaceSearchInputRef.current?.focus();
-      workspaceSearchInputRef.current?.select();
-    });
-  }, [isSidebarHidden, sidebarTab]);
-
-  useEffect(() => {
-    return window.desktop?.onQuickCapture?.(() => {
-      setIsQuickCaptureOpen(true);
-      setIsActionsOpen(false);
-      setTopMenu(null);
-    });
-  }, []);
-
-  useEffect(() => {
-    const pendingReveal = pendingWorkspaceSearchRevealRef.current;
-
-    if (!pendingReveal || activeDocument?.filePath !== pendingReveal.filePath) {
-      return;
-    }
-
-    pendingWorkspaceSearchRevealRef.current = null;
-
-    if (!isMarkdownDocument(activeDocument)) {
-      return;
-    }
-
-    requestAnimationFrame(() => {
-      revealWorkspaceSearchMatch(
-        activeDocument,
-        pendingReveal.match,
-        pendingReveal.query,
-      );
-    });
-  }, [activeDocument?.content, activeDocument?.filePath, activeDocument?.id, mode]);
-
-  useEffect(() => {
-    setSaveState("saving");
-    const timer = window.setTimeout(() => {
-      try {
-        const writableDocuments = workspace.documents.filter(
-          (document) =>
-            isWritableTextDocument(document) &&
-            document.filePath &&
-            !externalConflictPathsRef.current.has(normalizeFilePathKey(document.filePath)) &&
-            savedFileContentByPathRef.current.get(document.filePath) !== document.content,
-        );
-
-        if (!writableDocuments.length || !window.desktop?.writeMarkdownFile) {
-          setSaveState("saved");
-          return;
-        }
-
-        void Promise.all(
-          writableDocuments.map((document) => {
-            rememberInternalFileWrite(document.filePath!, document.content);
-            return window.desktop!.writeMarkdownFile({
-              content: document.content,
-              filePath: document.filePath!,
-            });
-          }),
-        )
-          .then(() => {
-            writableDocuments.forEach((document) => {
-              acknowledgeSavedFileContent(document.filePath!, document.content);
-            });
-            setSaveState("saved");
-            void loadDirectoryTree();
-          })
-          .catch(() => setSaveState("failed"));
-      } catch {
-        setSaveState("failed");
-      }
-    }, 650);
-
-    return () => window.clearTimeout(timer);
-  }, [workspace]);
+  useWorkspaceAutosave({
+    acknowledgeSavedFileContent,
+    externalConflictPaths: externalConflictPathsRef.current,
+    loadDirectoryTree,
+    rememberInternalFileWrite,
+    savedFileContentByPath: savedFileContentByPathRef.current,
+    setSaveState,
+    workspace,
+    writeMarkdownFile: window.desktop?.writeMarkdownFile,
+  });
 
   function setActiveDocument(documentId: string) {
     setIsHomeOpen(false);
@@ -2915,12 +1405,9 @@ export function App() {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
       }
 
-      setWorkspace((current) => ({
-        ...current,
-        activeDocumentId: document.id,
-        documents: mergeDocumentByFilePath(current.documents, document),
-        workspacePath: directoryPath || current.workspacePath,
-      }));
+      setWorkspace((current) =>
+        addCreatedDocumentToWorkspace(current, document, directoryPath),
+      );
       setIsCreateFileOpen(false);
       setIsHomeOpen(false);
       setNewFileName("Untitled");
@@ -2946,12 +1433,9 @@ export function App() {
       savedFileContentByPathRef.current.set(document.filePath, document.content);
     }
 
-    setWorkspace((current) => ({
-      ...current,
-      activeDocumentId: document.id,
-      documents: mergeDocumentByFilePath(current.documents, document),
-      workspacePath: directoryPath || current.workspacePath,
-    }));
+    setWorkspace((current) =>
+      addCreatedDocumentToWorkspace(current, document, directoryPath),
+    );
     setIsHomeOpen(false);
     setIsActionsOpen(false);
     setTopMenu(null);
@@ -3039,8 +1523,7 @@ export function App() {
       documents: nextDocuments,
       workspacePath: directoryPath,
     }));
-    setDirectoryTree(tree);
-    setExpandedDirectoryPaths(new Set(tree ? collectDirectoryPaths(tree) : []));
+    applyDirectoryTree(tree);
     setIsHomeOpen(true);
     setIsActionsOpen(false);
     setTopMenu(null);
@@ -3141,12 +1624,7 @@ export function App() {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
       }
 
-      setWorkspace((current) => ({
-        ...current,
-        activeDocumentId: document.id,
-        documents: mergeDocumentByFilePath(current.documents, document),
-        workspacePath: current.workspacePath || filePath.split(/[\\/]/).slice(0, -1).join("\\"),
-      }));
+      setWorkspace((current) => addOpenedDocumentToWorkspace(current, document));
       rememberRecentDirectory(getDirectoryPath(document.filePath));
       setIsHomeOpen(false);
     } catch {
@@ -3170,15 +1648,7 @@ export function App() {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
       }
 
-      setWorkspace((current) => ({
-        ...current,
-        activeDocumentId: document.id,
-        documents: mergeDocumentByFilePath(current.documents, document),
-        workspacePath:
-          current.workspacePath ||
-          getDirectoryPath(document.filePath) ||
-          current.workspacePath,
-      }));
+      setWorkspace((current) => addOpenedDocumentToWorkspace(current, document));
       rememberRecentDirectory(getDirectoryPath(document.filePath));
       setIsHomeOpen(false);
       await loadDirectoryTree(getDirectoryPath(document.filePath));
@@ -3290,83 +1760,6 @@ export function App() {
     });
   }
 
-  function getTagInputValues(value: string) {
-    const seen = new Set<string>();
-
-    return value
-      .split(/[,\s]+/)
-      .map(normalizeTagName)
-      .filter((tag) => {
-        const key = tag.toLocaleLowerCase();
-
-        if (!tag || seen.has(key)) {
-          return false;
-        }
-
-        seen.add(key);
-        return true;
-      });
-  }
-
-  function normalizeDocumentMetadata(metadata?: DocumentMetadata): DocumentMetadata {
-    const seenTags = new Set<string>();
-    const tags =
-      metadata?.tags
-        ?.map(normalizeTagName)
-        .filter((tag) => {
-          const key = tag.toLocaleLowerCase();
-
-          if (!tag || seenTags.has(key)) {
-            return false;
-          }
-
-          seenTags.add(key);
-          return true;
-        }) ?? [];
-    const seenDocumentLinks = new Set<string>();
-    const documentLinks =
-      metadata?.documentLinks
-        ?.map((link) => ({
-          createdAt: link.createdAt || now(),
-          documentType: link.documentType ?? getDocumentTypeFromPath(link.filePath),
-          filePath: link.filePath.trim(),
-          title: (link.title ?? "").trim() || getPathLabel(link.filePath),
-        }))
-        .filter((link) => {
-          const key = normalizeFilePathKey(link.filePath);
-
-          if (!link.filePath || seenDocumentLinks.has(key)) {
-            return false;
-          }
-
-          seenDocumentLinks.add(key);
-          return true;
-        }) ?? [];
-    const seenProperties = new Set<string>();
-    const properties =
-      metadata?.properties
-        ?.map((property) => ({
-          key: normalizePropertyKey(property.key),
-          value: property.value.trim(),
-        }))
-        .filter((property) => {
-          const key = property.key.toLocaleLowerCase();
-
-          if (!property.key || seenProperties.has(key)) {
-            return false;
-          }
-
-          seenProperties.add(key);
-          return true;
-        }) ?? [];
-
-    return {
-      documentLinks,
-      properties,
-      tags,
-    };
-  }
-
   function updateDocumentMetadata(
     documentId: string,
     updater: (metadata: DocumentMetadata) => DocumentMetadata,
@@ -3374,7 +1767,7 @@ export function App() {
     setWorkspace((current) => {
       const document = current.documents.find((item) => item.id === documentId);
 
-      if (!document || !isMarkdownDocument(document)) {
+      if (!document) {
         return current;
       }
 
@@ -3391,7 +1784,7 @@ export function App() {
   function updateActiveDocumentMetadata(
     updater: (metadata: DocumentMetadata) => DocumentMetadata,
   ) {
-    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+    if (!activeDocument) {
       return;
     }
 
@@ -3399,7 +1792,7 @@ export function App() {
   }
 
   function addActiveDocumentTag() {
-    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+    if (!activeDocument) {
       return;
     }
 
@@ -3418,7 +1811,7 @@ export function App() {
   }
 
   function removeActiveDocumentTag(tag: string) {
-    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+    if (!activeDocument) {
       return;
     }
 
@@ -3433,7 +1826,7 @@ export function App() {
   }
 
   function saveActiveDocumentProperty() {
-    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+    if (!activeDocument) {
       return;
     }
 
@@ -3465,7 +1858,7 @@ export function App() {
   }
 
   function removeActiveDocumentProperty(key: string) {
-    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+    if (!activeDocument) {
       return;
     }
 
@@ -3482,7 +1875,8 @@ export function App() {
   function openRelationDocument(document: MarkdownDocument) {
     setActiveDocument(document.id);
     setIsHomeOpen(false);
-    setSidebarTab("relations");
+    setSidebarTab("current");
+    setIsRelationsDialogOpen(false);
   }
 
   function openKnowledgeDocument(document: MarkdownDocument) {
@@ -3624,7 +2018,7 @@ export function App() {
 
   function canRelateDocumentFile(filePath: string) {
     return (
-      Boolean(activeDocument && isMarkdownDocument(activeDocument)) &&
+      Boolean(activeDocument) &&
       normalizeFilePathKey(activeDocument?.filePath) !== normalizeFilePathKey(filePath)
     );
   }
@@ -3633,12 +2027,12 @@ export function App() {
     sourceDocument: MarkdownDocument | null | undefined,
     reference: DocumentLinkReference,
   ) {
-    if (!sourceDocument || !isMarkdownDocument(sourceDocument)) {
+    if (!sourceDocument) {
       void showAppAlert({
         confirmLabel: "知道了",
         description:
-          "需要先打开或右键选择一个 Markdown 文档，再把目录中的文件添加为相关文档。",
-        title: "没有可编辑的 Markdown 文档",
+          "需要先打开或右键选择一个文档，再把目录中的文件添加为相关文档。",
+        title: "没有可编辑的文档",
         tone: "info",
       });
       return;
@@ -3707,7 +2101,7 @@ export function App() {
   }
 
   function removeActiveDocumentLink(filePath: string) {
-    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+    if (!activeDocument) {
       return;
     }
 
@@ -3717,18 +2111,13 @@ export function App() {
   }
 
   function openDocumentLinkPicker(sourceDocument?: MarkdownDocument | null) {
-    const pickerSource =
-      sourceDocument && isMarkdownDocument(sourceDocument)
-        ? sourceDocument
-        : activeDocument && isMarkdownDocument(activeDocument)
-          ? activeDocument
-          : null;
+    const pickerSource = sourceDocument ?? activeDocument ?? null;
 
     if (!pickerSource) {
       void showAppAlert({
         confirmLabel: "知道了",
-        description: "需要先打开或右键选择一个 Markdown 文档，再选择要添加为相关文档的文件。",
-        title: "没有可编辑的 Markdown 文档",
+        description: "需要先打开或右键选择一个文档，再选择要添加为相关文档的文件。",
+        title: "没有可编辑的文档",
         tone: "info",
       });
       return;
@@ -3845,14 +2234,6 @@ export function App() {
     void window.desktop?.newWindow?.();
   }
 
-  function showDocumentLoading(title: string, detail?: string) {
-    setDocumentLoadingState({ detail, title });
-  }
-
-  function clearDocumentLoading() {
-    setDocumentLoadingState(null);
-  }
-
   async function openRecentDocument(document: MarkdownDocument) {
     if (!document.filePath) {
       setActiveDocument(document.id);
@@ -3894,15 +2275,9 @@ export function App() {
 
       savedFileContentByPathRef.current.set(nextDocument.filePath!, nextDocument.content);
       rememberRecentDirectory(getDirectoryPath(nextDocument.filePath));
-      setWorkspace((current) => ({
-        ...current,
-        activeDocumentId: document.id,
-        documents: mergeDocumentByFilePath(current.documents, nextDocument),
-        workspacePath:
-          current.workspacePath ||
-          getDirectoryPath(nextDocument.filePath) ||
-          current.workspacePath,
-      }));
+      setWorkspace((current) =>
+        addOpenedDocumentToWorkspace(current, nextDocument, document.id),
+      );
       setIsHomeOpen(false);
     } catch {
       setRecentFileAvailability((current) => ({
@@ -3940,15 +2315,9 @@ export function App() {
     }
     rememberRecentDirectory(getDirectoryPath(nextDocument.filePath));
 
-    setWorkspace((current) => ({
-      ...current,
-      activeDocumentId: document.id,
-      documents: mergeDocumentByFilePath(current.documents, nextDocument),
-      workspacePath:
-        current.workspacePath ||
-        getDirectoryPath(nextDocument.filePath) ||
-        current.workspacePath,
-    }));
+    setWorkspace((current) =>
+      addOpenedDocumentToWorkspace(current, nextDocument, document.id),
+    );
   }
 
   function setDrawingDialogOpen(open: boolean) {
@@ -4009,95 +2378,25 @@ export function App() {
     setIsDrawingOpen(true);
   }
 
-  function isWritableTextDocument(document?: MarkdownDocument | null) {
-    return (
-      isMarkdownDocument(document) ||
-      isHtmlDocument(document) ||
-      isSheetDocument(document) ||
-      isDrawingDocument(document)
-    );
-  }
-
-  function isDocumentDirty(document: MarkdownDocument) {
-    return Boolean(
-      document.filePath &&
-        isWritableTextDocument(document) &&
-        savedFileContentByPathRef.current.get(document.filePath) !== document.content,
-    );
-  }
-
-  function pruneExpiredInternalFileWrites(now = Date.now()) {
-    internalFileWritesRef.current.forEach((snapshot, fileKey) => {
-      if (snapshot.expiresAt <= now) {
-        internalFileWritesRef.current.delete(fileKey);
-      }
-    });
-  }
-
   function rememberInternalFileWrite(filePath: string, content: string) {
-    const fileKey = normalizeFilePathKey(filePath);
-
-    if (!fileKey) {
-      return;
-    }
-
-    const now = Date.now();
-    pruneExpiredInternalFileWrites(now);
-    internalFileWritesRef.current.set(fileKey, {
-      content,
-      expiresAt: now + internalFileWriteGraceMs,
-    });
+    trackInternalFileWrite(internalFileWritesRef.current, filePath, content);
   }
 
   function isMatchingInternalFileWrite(filePath: string, content: string) {
-    const fileKey = normalizeFilePathKey(filePath);
-
-    if (!fileKey) {
-      return false;
-    }
-
-    pruneExpiredInternalFileWrites();
-    return internalFileWritesRef.current.get(fileKey)?.content === content;
+    return matchesInternalFileWrite(
+      internalFileWritesRef.current,
+      filePath,
+      content,
+    );
   }
 
   function acknowledgeSavedFileContent(filePath: string, content: string) {
-    const fileKey = normalizeFilePathKey(filePath);
-    const knownDocumentPath = workspace.documents.find(
-      (document) => normalizeFilePathKey(document.filePath) === fileKey,
-    )?.filePath;
-
-    savedFileContentByPathRef.current.set(filePath, content);
-    if (knownDocumentPath && knownDocumentPath !== filePath) {
-      savedFileContentByPathRef.current.set(knownDocumentPath, content);
-    }
-    externalConflictPathsRef.current.delete(fileKey);
-  }
-
-  function openAppDialog(dialog: AppDialogState) {
-    return new Promise<boolean>((resolve) => {
-      appDialogResolverRef.current?.(false);
-      appDialogResolverRef.current = resolve;
-      setAppDialog(dialog);
-    });
-  }
-
-  function closeAppDialog(confirmed: boolean) {
-    appDialogResolverRef.current?.(confirmed);
-    appDialogResolverRef.current = null;
-    setAppDialog(null);
-  }
-
-  function showAppAlert(dialog: Omit<AppDialogState, "type" | "cancelLabel">) {
-    return openAppDialog({
-      ...dialog,
-      type: "alert",
-    });
-  }
-
-  function showAppConfirm(dialog: Omit<AppDialogState, "type">) {
-    return openAppDialog({
-      ...dialog,
-      type: "confirm",
+    acknowledgeFileContent({
+      content,
+      documents: workspace.documents,
+      externalConflictPaths: externalConflictPathsRef.current,
+      filePath,
+      savedFileContentByPath: savedFileContentByPathRef.current,
     });
   }
 
@@ -4230,17 +2529,11 @@ export function App() {
       return {};
     }
 
-    const range = getSelectedTextareaLineRange(editor);
-    const line = range.content.slice(range.lineStart, range.lineEnd);
-    const taskMatch = line.match(markdownTaskListLinePattern);
-    const link = findMarkdownLinkInRange(range);
-
-    return {
-      isListItem: markdownListLinePattern.test(line),
-      isTaskListItem: Boolean(taskMatch),
-      linkHref: link?.href,
-      taskChecked: taskMatch ? taskMatch[1]?.toLowerCase() === "x" : undefined,
-    };
+    return getSourceTextareaContextMenuInfo({
+      content: editor.value,
+      selectionEnd: editor.selectionEnd,
+      selectionStart: editor.selectionStart,
+    });
   }
 
   async function getEditorContextMenuInfo(
@@ -4467,9 +2760,7 @@ export function App() {
     const fileName = getPathLabel(filePath);
     const canUseFileIpc = Boolean(window.desktop);
     const sourceDocument = getDocumentByFilePath(filePath);
-    const canUseFileAsLinkSource = Boolean(
-      sourceDocument && isMarkdownDocument(sourceDocument),
-    );
+    const canUseFileAsLinkSource = Boolean(sourceDocument);
 
     openContextMenu(
       event,
@@ -4563,17 +2854,13 @@ export function App() {
     }));
   }
 
-  async function handleWorkspaceFileChange(payload: {
-    event: "add" | "change" | "unlink";
-    filePath: string;
-    updatedAt?: string;
-  }) {
-    const fileKey = normalizeFilePathKey(payload.filePath);
-    const changedDocument = workspace.documents.find(
-      (document) => normalizeFilePathKey(document.filePath) === fileKey,
-    );
-    const isCurrentDocument =
-      normalizeFilePathKey(activeDocument?.filePath) === fileKey;
+  async function handleWorkspaceFileChange(payload: WorkspaceFileChangePayload) {
+    const { changedDocument, fileKey, isCurrentDocument } =
+      getWorkspaceFileChangeContext({
+        activeDocument,
+        documents: workspace.documents,
+        payload,
+      });
 
     void loadDirectoryTree();
 
@@ -4586,7 +2873,7 @@ export function App() {
     }
 
     if (payload.event === "unlink") {
-      if (internalFileDeletesRef.current.delete(fileKey)) {
+      if (consumeInternalFileDelete(internalFileDeletesRef.current, fileKey)) {
         return;
       }
 
@@ -4597,14 +2884,7 @@ export function App() {
 
       if (isCurrentDocument) {
         externalConflictPathsRef.current.add(fileKey);
-        void showAppAlert({
-          confirmLabel: "知道了",
-          description:
-            "编辑器会暂时保留当前内容。再次保存时会弹出保存位置，你可以沿用原文件名重新保存。",
-          detail: payload.filePath,
-          title: "当前文件已在外部被删除",
-          tone: "danger",
-        });
+        void showAppAlert(getExternalDeleteAlert(payload.filePath));
       }
 
       return;
@@ -4639,45 +2919,49 @@ export function App() {
           (document) => normalizeFilePathKey(document.filePath) === fileKey,
         );
 
-        if (!currentDocument || currentDocument.content !== diskDocument.content) {
+        if (
+          !shouldMergeInternalWriteBack({
+            currentDocument,
+            diskDocument,
+          })
+        ) {
           return current;
         }
 
-        return {
-          ...current,
-          documents: mergeDocumentByFilePath(current.documents, diskDocument),
-        };
+        return mergeDiskDocumentIntoWorkspace(current, diskDocument);
       });
       return;
     }
 
-    const hasLocalChanges = isDocumentDirty(changedDocument);
+    const hasLocalChanges = hasUnsavedFileContent(
+      changedDocument,
+      savedFileContentByPathRef.current,
+    );
 
-    if (diskDocument.content === changedDocument.content) {
+    const diskChangeDecision = getDiskChangeDecision({
+      changedDocument,
+      diskDocument,
+      hasLocalChanges,
+      isCurrentDocument,
+    });
+
+    if (diskChangeDecision === "same-content") {
       acknowledgeSavedFileContent(payload.filePath, diskDocument.content);
-      setWorkspace((current) => ({
-        ...current,
-        documents: mergeDocumentByFilePath(current.documents, diskDocument),
-      }));
+      setWorkspace((current) => mergeDiskDocumentIntoWorkspace(current, diskDocument));
       return;
     }
 
-    if (hasLocalChanges) {
+    if (diskChangeDecision === "keep-background-conflict") {
+      externalConflictPathsRef.current.add(fileKey);
+      return;
+    }
+
+    if (diskChangeDecision === "confirm-current-reload") {
       externalConflictPathsRef.current.add(fileKey);
 
-      if (!isCurrentDocument) {
-        return;
-      }
-
-      const shouldReload = await showAppConfirm({
-        cancelLabel: "保留当前内容",
-        confirmLabel: "重新加载",
-        description:
-          "重新加载会使用磁盘上的最新内容，并丢弃编辑器中尚未保存的内容；保留当前内容则会暂停该文件的自动保存，直到你手动保存或重新加载。",
-        detail: payload.filePath,
-        title: "当前文件已在外部修改",
-        tone: "warning",
-      });
+      const shouldReload = await showAppConfirm(
+        getExternalChangeConfirm(payload.filePath),
+      );
 
       if (!shouldReload) {
         return;
@@ -4692,10 +2976,7 @@ export function App() {
       ...current,
       [payload.filePath]: true,
     }));
-    setWorkspace((current) => ({
-      ...current,
-      documents: mergeDocumentByFilePath(current.documents, diskDocument),
-    }));
+    setWorkspace((current) => mergeDiskDocumentIntoWorkspace(current, diskDocument));
   }
 
   function openReactFlowEditor(target: ReactFlowEditTarget, code?: string) {
@@ -4963,8 +3244,7 @@ export function App() {
   }
 
   function openKnowledgeRelationsPanel() {
-    setSidebarTab("relations");
-    showSidebar();
+    setIsRelationsDialogOpen(true);
     setIsActionsOpen(false);
     setTopMenu(null);
   }
@@ -5313,12 +3593,7 @@ export function App() {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
       }
 
-      setWorkspace((current) => ({
-        ...current,
-        activeDocumentId: document.id,
-        documents: mergeDocumentByFilePath(current.documents, document),
-        workspacePath: current.workspacePath || getDirectoryPath(document.filePath),
-      }));
+      setWorkspace((current) => addOpenedDocumentToWorkspace(current, document));
       setIsHomeOpen(false);
       setTopMenu(null);
       setSaveState("saved");
@@ -5369,91 +3644,6 @@ export function App() {
     return activeDocument.content.slice(editor.selectionStart, editor.selectionEnd);
   }
 
-  function wrapTextareaSelection(prefix: string, suffix: string, placeholder: string) {
-    const editor = editorRef.current;
-
-    if (!editor || !activeDocument) {
-      insertMarkdown(`${prefix}${placeholder}${suffix}`);
-      return;
-    }
-
-    const edit = createWrappedSelectionEdit(
-      activeDocument.content,
-      editor.selectionStart,
-      editor.selectionEnd,
-      prefix,
-      suffix,
-      placeholder,
-    );
-
-    setTextareaContent(editor, edit.content, edit.selectionStart, edit.selectionEnd);
-  }
-
-  function clearTextareaInlineStyle() {
-    const editor = editorRef.current;
-
-    if (!editor || !activeDocument) {
-      return;
-    }
-
-    const edit = createClearInlineStyleEdit(getSelectedTextareaLineRange(editor));
-
-    setTextareaContent(
-      editor,
-      edit.content,
-      edit.selectionStart,
-      edit.selectionEnd,
-    );
-  }
-
-  function getTextareaLinkRange() {
-    const editor = editorRef.current;
-
-    if (!editor || !activeDocument) {
-      return null;
-    }
-
-    return findMarkdownLinkInRange(getSelectedTextareaLineRange(editor));
-  }
-
-  function removeTextareaLink() {
-    const editor = editorRef.current;
-    const link = getTextareaLinkRange();
-
-    if (!editor || !activeDocument || !link) {
-      return;
-    }
-
-    const edit = createRemoveMarkdownLinkEdit(activeDocument.content, link);
-
-    setTextareaContent(
-      editor,
-      edit.content,
-      edit.selectionStart,
-      edit.selectionEnd,
-    );
-  }
-
-  function updateTextareaImage(command: TyporaFormatCommand) {
-    const editor = editorRef.current;
-
-    if (!editor || !activeDocument) {
-      return false;
-    }
-
-    const edit = createMarkdownImageEdit(getSelectedTextareaLineRange(editor), {
-      align: command.type === "imageAlign" ? command.align : undefined,
-      resetWidth: command.type === "imageResetSize",
-    });
-
-    if (!edit) {
-      return false;
-    }
-
-    setTextareaContent(editor, edit.content, edit.selectionStart, edit.selectionEnd);
-    return true;
-  }
-
   function runFormatCommand(command: TyporaFormatCommand) {
     if (
       (!activeDocument || !isMarkdownDocument(activeDocument)) &&
@@ -5468,54 +3658,45 @@ export function App() {
       return;
     }
 
-    switch (command.type) {
-      case "bold":
-        wrapTextareaSelection("**", "**", "加粗文本");
-        break;
-      case "italic":
-        wrapTextareaSelection("*", "*", "斜体文本");
-        break;
-      case "underline":
-        wrapTextareaSelection("<u>", "</u>", "下划线文本");
-        break;
-      case "inlineCode":
-        wrapTextareaSelection("`", "`", "code");
-        break;
-      case "strikethrough":
-        wrapTextareaSelection("~~", "~~", "删除线文本");
-        break;
-      case "comment":
-        wrapTextareaSelection("<!-- ", " -->", "注释");
-        break;
-      case "link":
-        wrapTextareaSelection("[", `](${command.href.trim() || "https://"})`, "链接文本");
-        break;
-      case "removeLink":
-        removeTextareaLink();
-        break;
-      case "copyLink": {
-        const href = getTextareaLinkRange()?.href;
+    const editor = editorRef.current;
 
-        if (href) {
-          void navigator.clipboard?.writeText(href);
-        }
-        break;
+    if (!editor || !activeDocument) {
+      const wrap = getSourceFormatWrap(command);
+
+      if (wrap) {
+        insertMarkdown(`${wrap.prefix}${wrap.placeholder}${wrap.suffix}`);
       }
-      case "openLink": {
-        const href = getTextareaLinkRange()?.href;
 
-        if (href) {
+      return;
+    }
+
+    if (command.type === "copyLink" || command.type === "openLink") {
+      const href = findSourceFormatCommandLink({
+        content: activeDocument.content,
+        selectionEnd: editor.selectionEnd,
+        selectionStart: editor.selectionStart,
+      })?.href;
+
+      if (href) {
+        if (command.type === "copyLink") {
+          void navigator.clipboard?.writeText(href);
+        } else {
           window.open(href, "_blank", "noopener,noreferrer");
         }
-        break;
       }
-      case "clearStyle":
-        clearTextareaInlineStyle();
-        break;
-      case "imageAlign":
-      case "imageResetSize":
-        updateTextareaImage(command);
-        break;
+
+      return;
+    }
+
+    const edit = createSourceFormatCommandEdit({
+      command,
+      content: activeDocument.content,
+      selectionEnd: editor.selectionEnd,
+      selectionStart: editor.selectionStart,
+    });
+
+    if (edit) {
+      setTextareaContent(editor, edit.content, edit.selectionStart, edit.selectionEnd);
     }
   }
 
@@ -5535,84 +3716,6 @@ export function App() {
     insertMarkdown(createMarkdownTable(size));
   }
 
-  function createTimestampedMediaName(
-    mimeType: string,
-    fallbackExtension: string,
-    prefix: string,
-  ) {
-    const extension =
-      mimeType
-        .split("/")
-        .at(1)
-        ?.replace("jpeg", "jpg")
-        .replace("svg+xml", "svg")
-        .replace("quicktime", "mov")
-        .replace("x-matroska", "mkv")
-        .replace("ogg", "ogv") ||
-      fallbackExtension;
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .replace("T", "-")
-      .slice(0, 19);
-
-    return `${prefix}-${timestamp}.${extension}`;
-  }
-
-  function createTimestampedImageName(mimeType: string) {
-    return createTimestampedMediaName(mimeType, "png", "screenshot");
-  }
-
-  function createTimestampedVideoName(mimeType: string) {
-    return createTimestampedMediaName(mimeType, "webm", "recording");
-  }
-
-  function escapeHtmlAttribute(value: string) {
-    return value
-      .replace(/&/g, "&amp;")
-      .replace(/"/g, "&quot;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  }
-
-  function createVideoMarkdown(fileName: string, reference: string) {
-    const title = escapeHtmlAttribute(fileName);
-    const src = escapeHtmlAttribute(reference);
-
-    return `<video controls preload="metadata" src="${src}" title="${title}"></video>\n\n`;
-  }
-
-  function createMediaImportPlaceholder(
-    importId: string,
-    fileName: string,
-    status: string,
-    progress?: number,
-  ) {
-    const progressLabel =
-      typeof progress === "number" ? `${Math.max(1, Math.round(progress * 100))}%` : "";
-    const safeId = escapeHtmlAttribute(importId);
-    const safeName = escapeHtmlAttribute(fileName || "video");
-    const safeStatus = escapeHtmlAttribute(status);
-
-    return [
-      `<div class="notedock-media-import" data-notedock-import-id="${safeId}">`,
-      `  <strong>正在导入视频</strong>`,
-      `  <span>${safeName}</span>`,
-      `  <em>${safeStatus}${progressLabel ? ` · ${progressLabel}` : ""}</em>`,
-      `</div>`,
-      "",
-      "",
-    ].join("\n");
-  }
-
-  function getMediaImportPattern(importId: string) {
-    const escapedId = importId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-    return new RegExp(
-      `<div\\b(?=[^>]*data-notedock-import-id="${escapedId}")[^>]*>[\\s\\S]*?<\\/div>\\n{0,2}`,
-    );
-  }
-
   function replaceMediaImportPlaceholder(
     importId: string,
     replacement: string,
@@ -5627,28 +3730,21 @@ export function App() {
         return current;
       }
 
-      let didReplace = false;
-      const nextContent = currentDocument.content.replace(
-        getMediaImportPattern(importId),
-        () => {
-          didReplace = true;
-          return replacement;
-        },
+      const result = replaceMediaImportPlaceholderContent(
+        currentDocument.content,
+        importId,
+        replacement,
+        options.appendIfMissing ? { appendIfMissing: true } : undefined,
       );
-      const content = didReplace
-        ? nextContent
-        : options.appendIfMissing
-          ? `${currentDocument.content.trimEnd()}\n\n${replacement}`
-          : currentDocument.content;
 
-      if (content === currentDocument.content) {
+      if (!result.didChange) {
         return current;
       }
 
       return updateDocument(current, {
         ...currentDocument,
-        content,
-        title: renameFromMarkdown(content, currentDocument.title),
+        content: result.content,
+        title: renameFromMarkdown(result.content, currentDocument.title),
         updatedAt: now(),
       });
     });
@@ -5852,36 +3948,26 @@ export function App() {
     }
   }
 
-  function dataTransferHasFiles(dataTransfer: DataTransfer) {
-    return (
-      Array.from(dataTransfer.types).includes("Files") ||
-      Array.from(dataTransfer.items).some((item) => item.kind === "file")
-    );
-  }
-
-  function getDroppedMediaFiles(dataTransfer: DataTransfer) {
-    return Array.from(dataTransfer.files).filter(
-      (file) =>
-        isClipboardMediaFile(file, "video") ||
-        isClipboardMediaFile(file, "image"),
-    );
-  }
-
-  function getLocalPathForDroppedFile(file: File) {
-    try {
-      const resolvedPath = window.desktop?.getPathForFile?.(file);
-
-      if (resolvedPath) {
-        return resolvedPath;
+  async function handleMediaImportAction(action: MediaImportAction) {
+    switch (action.action) {
+      case "imageFile":
+        await handleImageFile(action.file);
+        return;
+      case "videoFile":
+        await handleVideoFile(action.file);
+        return;
+      case "videoFilePath":
+        await handleVideoFilePath(action);
+        return;
+      case "imageDataUrl":
+        await handleImageDataUrl(action.fileName, action.dataUrl);
+        return;
+      case "videoDataUrl": {
+        const importTarget = await insertVideoImportPlaceholder(action.fileName);
+        await handleVideoDataUrl(action.fileName, action.dataUrl, importTarget);
+        return;
       }
-    } catch {
-      // Older Electron builds exposed path directly on File. Keep that as a
-      // compatibility fallback for local drag-and-drop.
     }
-
-    const legacyPath = (file as File & { path?: string }).path;
-
-    return typeof legacyPath === "string" && legacyPath ? legacyPath : null;
   }
 
   function prepareDropInsertionPoint(event: ReactDragEvent<HTMLElement>) {
@@ -5918,9 +4004,12 @@ export function App() {
       return;
     }
 
-    const mediaFiles = getDroppedMediaFiles(event.dataTransfer);
+    const mediaActions = getDroppedMediaImportActions(
+      event.dataTransfer,
+      window.desktop?.getPathForFile,
+    );
 
-    if (mediaFiles.length === 0) {
+    if (mediaActions.length === 0) {
       setIsEditorDraggingMedia(false);
       return;
     }
@@ -5930,208 +4019,26 @@ export function App() {
     setIsEditorDraggingMedia(false);
     prepareDropInsertionPoint(event);
 
-    for (const file of mediaFiles) {
-      if (isClipboardMediaFile(file, "video")) {
-        const filePath = getLocalPathForDroppedFile(file);
-
-        if (filePath) {
-          await handleVideoFilePath({
-            fileName: file.name || createTimestampedVideoName(file.type),
-            filePath,
-            mimeType: file.type || getClipboardMediaMimeType(file.name) || "video/mp4",
-          });
-        } else {
-          await handleVideoFile(file);
-        }
-        continue;
-      }
-
-      await handleImageFile(file);
+    for (const action of mediaActions) {
+      await handleMediaImportAction(action);
     }
-  }
-
-  function getClipboardMediaFileFromEvent({
-    createFallbackName,
-    event,
-    fallbackMimeType,
-    kind,
-  }: {
-    createFallbackName: (mimeType: string) => string;
-    event: ClipboardEvent<HTMLElement>;
-    fallbackMimeType: string;
-    kind: "image" | "video";
-  }) {
-    const clipboardFile = Array.from(event.clipboardData.files).find((file) =>
-      isClipboardMediaFile(file, kind),
-    );
-
-    if (clipboardFile) {
-      return clipboardFile;
-    }
-
-    const itemFile =
-      Array.from(event.clipboardData.items)
-        .filter((item) => item.kind === "file")
-        .map((item) => item.getAsFile())
-        .find((file) => file ? isClipboardMediaFile(file, kind) : false) ?? null;
-
-    if (!itemFile) {
-      return null;
-    }
-
-    const mimeType = itemFile.type || fallbackMimeType;
-
-    return new File([itemFile], itemFile.name || createFallbackName(mimeType), {
-      type: mimeType,
-    });
-  }
-
-  function getClipboardImageFile(event: ClipboardEvent<HTMLElement>) {
-    return getClipboardMediaFileFromEvent({
-      createFallbackName: createTimestampedImageName,
-      event,
-      fallbackMimeType: "image/png",
-      kind: "image",
-    });
-  }
-
-  function getClipboardVideoFile(event: ClipboardEvent<HTMLElement>) {
-    return getClipboardMediaFileFromEvent({
-      createFallbackName: createTimestampedVideoName,
-      event,
-      fallbackMimeType: "video/webm",
-      kind: "video",
-    });
-  }
-
-  function clipboardHtmlLooksLikeMedia(event: ClipboardEvent<HTMLElement>) {
-    const html = event.clipboardData.getData("text/html");
-
-    return /<(?:img|video)\b|data:(?:image|video)\/|file:\/\//i.test(html);
-  }
-
-  function clipboardPlainTextLooksLikeMediaPath(event: ClipboardEvent<HTMLElement>) {
-    const plainText = event.clipboardData.getData("text/plain").trim();
-    const normalizedText = plainText.replace(/^"|"$/g, "");
-
-    if (!normalizedText) {
-      return false;
-    }
-
-    if (/^file:\/\//i.test(normalizedText)) {
-      return Boolean(getClipboardMediaMimeType(normalizedText));
-    }
-
-    if (!/^(?:[a-zA-Z]:[\\/]|\/[a-zA-Z]:[\\/])/.test(normalizedText)) {
-      return false;
-    }
-
-    return Boolean(getClipboardMediaMimeType(normalizedText));
-  }
-
-  function shouldTryClipboardMediaFallback(event: ClipboardEvent<HTMLElement>) {
-    const plainText = event.clipboardData.getData("text/plain");
-
-    return (
-      plainText.trim().length === 0 ||
-      clipboardHtmlLooksLikeMedia(event) ||
-      clipboardPlainTextLooksLikeMediaPath(event) ||
-      Array.from(event.clipboardData.files).some(
-        (file) =>
-          isClipboardMediaFile(file, "image") ||
-          isClipboardMediaFile(file, "video") ||
-          Boolean(getClipboardMediaMimeType(file.name)),
-      )
-    );
-  }
-
-  async function readBrowserClipboardMedia(kind: "image" | "video") {
-    if (!navigator.clipboard?.read) {
-      return null;
-    }
-
-    try {
-      const items = await navigator.clipboard.read();
-
-      for (const item of items) {
-        const mediaType = item.types.find((type) => type.startsWith(`${kind}/`));
-
-        if (!mediaType) {
-          continue;
-        }
-
-        const blob = await item.getType(mediaType);
-
-        return new File(
-          [blob],
-          kind === "image"
-            ? createTimestampedImageName(blob.type || mediaType)
-            : createTimestampedVideoName(blob.type || mediaType),
-          { type: blob.type || mediaType },
-        );
-      }
-    } catch {
-      return null;
-    }
-
-    return null;
   }
 
   async function pasteClipboardMediaFallback() {
-    const nativeMediaFileRefs = await window.desktop?.listClipboardMediaFiles?.();
-    const nativeVideoFileRef = nativeMediaFileRefs?.find((file) =>
-      file.mimeType.startsWith("video/"),
-    );
+    const action = await readClipboardMediaFallbackAction({
+      listMediaFileRefs: window.desktop?.listClipboardMediaFiles,
+      onBeforeReadNativeMediaData: () =>
+        setBackupMessage("正在读取剪贴板媒体"),
+      readBrowserMedia: readBrowserClipboardMedia,
+      readImageData: window.desktop?.readClipboardImage,
+      readMediaData: window.desktop?.readClipboardMediaFiles,
+    });
 
-    if (nativeVideoFileRef) {
-      return handleVideoFilePath(nativeVideoFileRef);
-    }
-
-    const browserClipboardVideo = await readBrowserClipboardMedia("video");
-
-    if (browserClipboardVideo) {
-      await handleVideoFile(browserClipboardVideo);
-      return true;
-    }
-
-    const browserClipboardImage = await readBrowserClipboardMedia("image");
-
-    if (browserClipboardImage) {
-      await handleImageFile(browserClipboardImage);
-      return true;
-    }
-
-    setBackupMessage("正在读取剪贴板媒体");
-    const nativeMediaFiles = await window.desktop?.readClipboardMediaFiles?.();
-    const nativeVideo = nativeMediaFiles?.find((file) =>
-      file.mimeType.startsWith("video/"),
-    );
-
-    if (nativeVideo) {
-      const importTarget = await insertVideoImportPlaceholder(nativeVideo.fileName);
-      await handleVideoDataUrl(nativeVideo.fileName, nativeVideo.dataUrl, importTarget);
-      return true;
-    }
-
-    const nativeImageFile = nativeMediaFiles?.find((file) =>
-      file.mimeType.startsWith("image/"),
-    );
-
-    if (nativeImageFile) {
-      await handleImageDataUrl(nativeImageFile.fileName, nativeImageFile.dataUrl);
-      return true;
-    }
-
-    const nativeClipboardImage = await window.desktop?.readClipboardImage?.();
-
-    if (!nativeClipboardImage) {
+    if (!action) {
       return false;
     }
 
-    await handleImageDataUrl(
-      nativeClipboardImage.fileName,
-      nativeClipboardImage.dataUrl,
-    );
+    await handleMediaImportAction(action);
     return true;
   }
 
@@ -6182,22 +4089,15 @@ export function App() {
       return;
     }
 
-    const image = getClipboardImageFile(event);
-    const video = getClipboardVideoFile(event);
+    const directMediaAction = getClipboardDirectMediaAction(event.clipboardData);
 
-    if (image) {
+    if (directMediaAction) {
       event.preventDefault();
-      await handleImageFile(image);
+      await handleMediaImportAction(directMediaAction);
       return;
     }
 
-    if (video) {
-      event.preventDefault();
-      await handleVideoFile(video);
-      return;
-    }
-
-    if (!shouldTryClipboardMediaFallback(event)) {
+    if (!shouldTryClipboardMediaFallback(event.clipboardData)) {
       return;
     }
 
@@ -6228,28 +4128,18 @@ export function App() {
         }),
       );
 
-      if (
-        isWritableTextDocument(activeDocument) &&
-        activeDocument?.filePath &&
-        window.desktop?.writeMarkdownFile
-      ) {
-        const activeFileKey = normalizeFilePathKey(activeDocument.filePath);
-        const isExternallyDeleted =
-          externalConflictPathsRef.current.has(activeFileKey) &&
-          window.desktop?.pathExists &&
-          !(await window.desktop.pathExists(activeDocument.filePath));
+      const writeResult = await writeExistingDocumentIfNeeded({
+        acknowledgeSavedFileContent,
+        document: activeDocument,
+        externalConflictPaths: externalConflictPathsRef.current,
+        pathExists: window.desktop?.pathExists,
+        rememberInternalFileWrite,
+        writeMarkdownFile: window.desktop?.writeMarkdownFile,
+      });
 
-        if (isExternallyDeleted) {
-          await saveActiveDocumentAs();
-          return;
-        }
-
-        rememberInternalFileWrite(activeDocument.filePath, activeDocument.content);
-        await window.desktop.writeMarkdownFile({
-          content: activeDocument.content,
-          filePath: activeDocument.filePath,
-        });
-        acknowledgeSavedFileContent(activeDocument.filePath, activeDocument.content);
+      if (writeResult === "save-as") {
+        await saveActiveDocumentAs();
+        return;
       }
 
       setSaveState("saved");
@@ -6264,12 +4154,7 @@ export function App() {
     }
 
     if (!isMarkdownDocument(activeDocument)) {
-      void showAppAlert({
-        confirmLabel: "知道了",
-        description: "当前文件类型只支持预览，不能另存为 Markdown。",
-        title: "这是只读预览文件",
-        tone: "info",
-      });
+      void showAppAlert(getSaveAsReadonlyAlert());
       return;
     }
 
@@ -6284,106 +4169,48 @@ export function App() {
         return;
       }
 
-      const document = {
-        ...activeDocument,
-        content: savedFile.content,
-        documentType: savedFile.documentType,
-        fileExtension: savedFile.fileExtension,
-        filePath: savedFile.filePath,
-        title: savedFile.title,
-        updatedAt: savedFile.updatedAt,
-      };
+      const document = createDocumentFromSavedFile(activeDocument, savedFile);
 
       rememberInternalFileWrite(savedFile.filePath, savedFile.content);
       acknowledgeSavedFileContent(savedFile.filePath, savedFile.content);
       rememberRecentDirectory(getDirectoryPath(savedFile.filePath));
-      setWorkspace((current) => ({
-        ...updateDocument(current, document),
-        activeDocumentId: document.id,
-        workspacePath:
-          current.workspacePath ||
-          getDirectoryPath(savedFile.filePath) ||
-          current.workspacePath,
-      }));
+      setWorkspace((current) => applySavedDocumentToWorkspace(current, document));
       setSaveState("saved");
       await loadDirectoryTree(getDirectoryPath(savedFile.filePath));
     } catch {
       setSaveState("failed");
-      void showAppAlert({
-        confirmLabel: "知道了",
-        description: "请确认目标路径可写，或换一个保存位置。",
-        title: "另存为失败",
-        tone: "danger",
-      });
+      void showAppAlert(getSaveAsFailedAlert());
     }
   }
 
-  async function exportActiveDocument(format: "html" | "pdf") {
+  async function exportActiveDocument(format: ExportDocumentFormat) {
     if (!activeDocument) {
       return;
     }
 
     if (!isMarkdownDocument(activeDocument)) {
-      void showAppAlert({
-        confirmLabel: "知道了",
-        description: "当前文件类型只支持预览，不能从 Markdown 模式导出。",
-        title: "这是只读预览文件",
-        tone: "info",
-      });
+      void showAppAlert(getExportReadonlyAlert());
       return;
     }
 
     if (!window.desktop?.exportHtmlFile || !window.desktop.exportPdfFile) {
-      void showAppAlert({
-        confirmLabel: "知道了",
-        description: "当前运行环境没有暴露导出能力，请在 Electron 桌面端中使用。",
-        title: "当前环境不支持导出",
-        tone: "warning",
-      });
+      void showAppAlert(getExportUnsupportedAlert());
       return;
     }
 
     try {
-      const html = await createMarkdownExportHtml({
+      await exportMarkdownDocument({
+        createHtml: createMarkdownExportHtml,
         document: activeDocument,
+        exportHtmlFile: window.desktop.exportHtmlFile,
+        exportPdfFile: window.desktop.exportPdfFile,
+        format,
+        showInFolder: window.desktop.showInFolder,
         theme,
       });
-      const exportedFilePath =
-        format === "pdf"
-          ? await window.desktop.exportPdfFile({
-              filePath: activeDocument.filePath,
-              html,
-              title: activeDocument.title,
-            })
-          : await window.desktop.exportHtmlFile({
-              filePath: activeDocument.filePath,
-              html,
-              title: activeDocument.title,
-            });
-
-      if (exportedFilePath) {
-        await window.desktop.showInFolder?.(exportedFilePath);
-      }
     } catch {
-      void showAppAlert({
-        confirmLabel: "知道了",
-        description: "导出过程中发生错误，请稍后重试或检查文件路径权限。",
-        title: format === "pdf" ? "导出 PDF 失败" : "导出 HTML 失败",
-        tone: "danger",
-      });
+      void showAppAlert(getExportFailedAlert(format));
     }
-  }
-
-  function getSelectedTextareaLineRange(textarea: HTMLTextAreaElement) {
-    const content = textarea.value;
-    const selectionStart = textarea.selectionStart;
-    const selectionEnd = textarea.selectionEnd;
-    const lineStart = content.lastIndexOf("\n", Math.max(selectionStart - 1, 0)) + 1;
-    const rawLineEnd = content.indexOf("\n", selectionEnd);
-    const lineEnd =
-      rawLineEnd < 0 ? content.length : Math.min(rawLineEnd + 1, content.length);
-
-    return { content, lineEnd, lineStart, selectionEnd, selectionStart };
   }
 
   function setTextareaContent(
@@ -6397,82 +4224,6 @@ export function App() {
       textarea.focus();
       textarea.setSelectionRange(selectionStart, selectionEnd);
     });
-  }
-
-  function moveTextareaLines(direction: "down" | "up") {
-    const textarea = editorRef.current;
-
-    if (!textarea || !activeDocument) {
-      return;
-    }
-
-    const { content, lineEnd, lineStart } = getSelectedTextareaLineRange(textarea);
-    const selectedText = content.slice(lineStart, lineEnd);
-
-    if (direction === "up") {
-      if (lineStart === 0) {
-        return;
-      }
-
-      const previousLineStart = content.lastIndexOf("\n", lineStart - 2) + 1;
-      const previousText = content.slice(previousLineStart, lineStart);
-      const nextContent =
-        content.slice(0, previousLineStart) +
-        selectedText +
-        previousText +
-        content.slice(lineEnd);
-
-      setTextareaContent(
-        textarea,
-        nextContent,
-        previousLineStart,
-        previousLineStart + selectedText.length,
-      );
-      return;
-    }
-
-    if (lineEnd >= content.length) {
-      return;
-    }
-
-    const nextLineEndIndex = content.indexOf("\n", lineEnd);
-    const nextLineEnd =
-      nextLineEndIndex < 0 ? content.length : Math.min(nextLineEndIndex + 1, content.length);
-    const nextText = content.slice(lineEnd, nextLineEnd);
-    const nextContent =
-      content.slice(0, lineStart) +
-      nextText +
-      selectedText +
-      content.slice(nextLineEnd);
-
-    setTextareaContent(
-      textarea,
-      nextContent,
-      lineStart + nextText.length,
-      lineStart + nextText.length + selectedText.length,
-    );
-  }
-
-  function deleteTextareaSelectionOrLine() {
-    const textarea = editorRef.current;
-
-    if (!textarea || !activeDocument) {
-      return;
-    }
-
-    const content = textarea.value;
-
-    if (textarea.selectionStart !== textarea.selectionEnd) {
-      const nextContent =
-        content.slice(0, textarea.selectionStart) + content.slice(textarea.selectionEnd);
-      setTextareaContent(textarea, nextContent, textarea.selectionStart);
-      return;
-    }
-
-    const { lineEnd, lineStart } = getSelectedTextareaLineRange(textarea);
-    const nextContent = content.slice(0, lineStart) + content.slice(lineEnd);
-
-    setTextareaContent(textarea, nextContent, lineStart);
   }
 
   async function runEditCommand(command: TyporaEditCommand) {
@@ -6502,16 +4253,31 @@ export function App() {
 
     switch (command) {
       case "moveLineUp":
-        moveTextareaLines("up");
-        break;
       case "moveLineDown":
-        moveTextareaLines("down");
-        break;
       case "delete":
-        if (textarea) {
-          deleteTextareaSelectionOrLine();
-        } else {
-          document.execCommand("delete");
+        if (!textarea || !activeDocument) {
+          if (command === "delete") {
+            document.execCommand("delete");
+          }
+          break;
+        }
+
+        {
+          const edit = createSourceEditCommandEdit({
+            command,
+            content: activeDocument.content,
+            selectionEnd: textarea.selectionEnd,
+            selectionStart: textarea.selectionStart,
+          });
+
+          if (edit) {
+            setTextareaContent(
+              textarea,
+              edit.content,
+              edit.selectionStart,
+              edit.selectionEnd,
+            );
+          }
         }
         break;
       case "copy":
@@ -6533,39 +4299,23 @@ export function App() {
       return;
     }
 
-    if (command.type === "taskStatus") {
-      const textarea = editorRef.current;
-
-      if (!textarea) {
-        return;
-      }
-
-      const result = updateMarkdownTaskStatus(
-        textarea.value,
-        textarea.selectionStart,
-        textarea.selectionEnd,
-        command.status,
-      );
-
-      if (result) {
-        setTextareaContent(
-          textarea,
-          result.markdown,
-          result.selectionStart,
-          result.selectionEnd,
-        );
-      }
-
-      return;
-    }
-
-    const markdown = createParagraphCommandMarkdown(
+    const textarea = editorRef.current;
+    const action = createSourceParagraphCommandAction({
       command,
-      activeDocument?.content ?? "",
-    );
+      content: activeDocument.content,
+      selectionEnd: textarea?.selectionEnd,
+      selectionStart: textarea?.selectionStart,
+    });
 
-    if (markdown) {
-      insertMarkdown(markdown);
+    if (action.action === "edit" && textarea) {
+      setTextareaContent(
+        textarea,
+        action.edit.content,
+        action.edit.selectionStart,
+        action.edit.selectionEnd,
+      );
+    } else if (action.action === "insert") {
+      insertMarkdown(action.markdown);
     }
   }
 
@@ -6959,615 +4709,30 @@ export function App() {
 
     return (
       <div className="current-document-panel">
-        <section className="knowledge-section">
-          <div className="knowledge-section-header">
-            <ListTree size={15} />
-            <span>大纲</span>
-          </div>
-          {renderActiveDocumentOutline()}
-        </section>
+        {renderActiveDocumentOutline()}
       </div>
     );
   }
 
   function renderKnowledgeRelationsPanel() {
-    const filters: Array<{
-      count: number;
-      label: string;
-      value: RelationPanelFilter;
-    }> = [
-      { count: workspaceRelationStats.totalCount, label: "全部", value: "all" },
-      {
-        count: workspaceRelationStats.documentCount,
-        label: "相关文档",
-        value: "document",
-      },
-      {
-        count: workspaceRelationStats.contentCount,
-        label: "正文引用",
-        value: "content",
-      },
-      {
-        count: workspaceRelationStats.missingCount,
-        label: "失效",
-        value: "missing",
-      },
-    ];
-
     return (
-      <div className="knowledge-relations-panel">
-        <header className="knowledge-relations-header">
-          <div>
-            <strong>链接总览</strong>
-            <span>
-              {workspaceRelationStats.sourceCount
-                ? `${workspaceRelationStats.sourceCount} 个文件中有关系`
-                : "当前工作区还没有关系"}
-            </span>
-          </div>
-          <button
-            type="button"
-            title="刷新"
-            aria-label="刷新链接总览"
-            onClick={() => void refreshWorkspaceSearchDocuments()}
-          >
-            <RefreshCw size={15} />
-          </button>
-        </header>
-
-        <div className="knowledge-relations-search">
-          <Search size={16} />
-          <input
-            value={relationPanelQuery}
-            onChange={(event) => setRelationPanelQuery(event.target.value)}
-            placeholder="搜索文件、路径或引用"
-          />
-          {relationPanelQuery ? (
-            <button
-              type="button"
-              aria-label="清空搜索"
-              onClick={() => setRelationPanelQuery("")}
-            >
-              <X size={14} />
-            </button>
-          ) : null}
-        </div>
-
-        <div className="knowledge-relations-filters" role="tablist">
-          {filters.map((filter) => (
-            <button
-              className={
-                relationPanelFilter === filter.value
-                  ? "knowledge-relations-filter-active"
-                  : undefined
-              }
-              key={filter.value}
-              type="button"
-              role="tab"
-              aria-selected={relationPanelFilter === filter.value}
-              onClick={() => setRelationPanelFilter(filter.value)}
-            >
-              <span>{filter.label}</span>
-              <strong>{filter.count}</strong>
-            </button>
-          ))}
-        </div>
-
-        <div className="knowledge-relations-list">
-          {!workspaceRelationItems.length ? (
-            <div className="knowledge-relations-empty">
-              <Link2 size={24} />
-              <strong>还没有关系</strong>
-              <span>可以在文档元信息里添加相关文档，或在正文中使用 [[文件名]]。</span>
-            </div>
-          ) : !filteredWorkspaceRelationItems.length ? (
-            <div className="knowledge-relations-empty">
-              <Search size={24} />
-              <strong>没有匹配的关系</strong>
-              <span>换个关键词或切换筛选条件试试。</span>
-            </div>
-          ) : (
-            filteredWorkspaceRelationItems.map((item) => {
-              const sourceTitle = getDocumentDisplayName(item.sourceDocument);
-              const targetLabel = item.title || item.targetPath || "未命名";
-              const isMissing = item.status === "missing";
-              const relationLabel =
-                item.kind === "document" ? "相关文档" : "正文引用";
-
-              return (
-                <article
-                  className={[
-                    "knowledge-relation-card",
-                    isMissing ? "knowledge-relation-card-missing" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  key={item.id}
-                >
-                  <div className="knowledge-relation-main">
-                    <button
-                      className="knowledge-relation-source"
-                      type="button"
-                      title={item.sourceDocument.filePath}
-                      onClick={() => openRelationDocument(item.sourceDocument)}
-                    >
-                      <FileText size={14} />
-                      <span>{sourceTitle}</span>
-                    </button>
-                    <span className="knowledge-relation-arrow">→</span>
-                    <button
-                      className="knowledge-relation-target"
-                      type="button"
-                      title={item.targetPath}
-                      onClick={() => {
-                        if (item.targetDocument) {
-                          openRelationDocument(item.targetDocument);
-                          return;
-                        }
-
-                        if (item.reference?.filePath) {
-                          void openFileFromTree(item.reference.filePath);
-                        }
-                      }}
-                    >
-                      <BookOpenText size={14} />
-                      <span>{targetLabel}</span>
-                    </button>
-                  </div>
-                  <div className="knowledge-relation-meta">
-                    <span>{relationLabel}</span>
-                    {item.targetPath ? <small>{item.targetPath}</small> : null}
-                  </div>
-                  <div className="knowledge-relation-actions">
-                    {isMissing ? (
-                      <span className="knowledge-relation-status">失效</span>
-                    ) : (
-                      <span className="knowledge-relation-status knowledge-relation-status-ok">
-                        有效
-                      </span>
-                    )}
-                    {item.kind === "content" && isMissing && item.link ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void createDocumentFromMissingWikiLink(
-                            item.link!.target,
-                            item.sourceDocument,
-                          ).then(() => setSidebarTab("relations"));
-                        }}
-                      >
-                        创建
-                      </button>
-                    ) : null}
-                    {item.kind === "document" && item.reference ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          removeDocumentLinkFromDocument(
-                            item.sourceDocument.id,
-                            item.reference!.filePath,
-                          )
-                        }
-                      >
-                        移除
-                      </button>
-                    ) : null}
-                  </div>
-                </article>
-              );
-            })
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  function getMetadataSuggestionMatches(items: string[], query: string) {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-
-    return items
-      .filter((item) =>
-        normalizedQuery
-          ? item.toLocaleLowerCase().includes(normalizedQuery)
-          : true,
-      )
-      .slice(0, 8);
-  }
-
-  function renderMetadataSuggestionMenu(
-    field: "tag" | "propertyKey" | "propertyValue",
-    items: string[],
-    onSelect: (value: string) => void,
-  ) {
-    if (activeMetadataSuggestion !== field || !items.length) {
-      return null;
-    }
-
-    return (
-      <div className="document-meta-suggestion-menu" role="listbox">
-        {items.map((item) => (
-          <button
-            key={item}
-            type="button"
-            role="option"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              onSelect(item);
-              setActiveMetadataSuggestion(null);
-            }}
-          >
-            {field === "tag" ? <Hash size={12} /> : <FileText size={12} />}
-            <span>{field === "tag" ? `#${item}` : item}</span>
-          </button>
-        ))}
-      </div>
-    );
-  }
-
-  function renderDocumentKnowledgeBar() {
-    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
-      return null;
-    }
-
-    const metadataTagKeys = new Set(
-      activeDocumentKnowledge?.metadataTags.map((tag) =>
-        tag.toLocaleLowerCase(),
-      ) ?? [],
-    );
-    const metadataPropertyKeys = new Set(
-      activeDocumentKnowledge?.metadataProperties.map((property) =>
-        property.key.toLocaleLowerCase(),
-      ) ?? [],
-    );
-    const tags = activeDocumentKnowledge?.tags ?? [];
-    const properties = activeDocumentKnowledge?.properties ?? [];
-    const hasDoubleLinkKnowledge =
-      activeRelatedDocuments.length > 0 ||
-      activeOutgoingLinks.length > 0 ||
-      activeBacklinks.length > 0 ||
-      activeMissingLinks.length > 0;
-
-    const renderRelatedDocumentChip = (
-      item: { document?: MarkdownDocument; link: DocumentLinkReference },
-      options: { editable?: boolean } = {},
-    ) => {
-      const isMissing = !item.document;
-      const title = item.document
-        ? getDocumentDisplayName(item.document)
-        : item.link.title || getPathLabel(item.link.filePath);
-      const documentType = item.document
-        ? getDocumentType(item.document)
-        : item.link.documentType ?? getDocumentTypeFromPath(item.link.filePath);
-
-      return (
-        <button
-          className={[
-            "document-meta-chip",
-            "document-meta-document-link-chip",
-            isMissing ? "document-meta-link-missing" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          key={normalizeFilePathKey(item.link.filePath)}
-          type="button"
-          title={item.link.filePath}
-          onClick={() => void openRelatedDocument(item.link)}
-        >
-          <BookOpenText size={13} />
-          <span className="document-meta-chip-main">{title}</span>
-          <span className="document-meta-type-badge">
-            {isMissing ? "失效" : getDocumentTypeName(documentType)}
-          </span>
-          {options.editable ? (
-              <span
-                className="document-meta-chip-remove"
-                role="button"
-                tabIndex={0}
-              aria-label={`移除相关文档 ${title}`}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                removeActiveDocumentLink(item.link.filePath);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  removeActiveDocumentLink(item.link.filePath);
-                }
-              }}
-            >
-              <X size={12} />
-            </span>
-          ) : null}
-        </button>
-      );
-    };
-
-    if (!isKnowledgeEditorOpen) {
-      return (
-        <section
-          className="document-knowledge-bar document-knowledge-bar-compact"
-          aria-label="文档元信息"
-        >
-          <div className="document-knowledge-summary">
-            <span className="document-knowledge-summary-title">
-              <Link2 size={14} />
-              链接
-            </span>
-            {hasDoubleLinkKnowledge ? (
-              <>
-                {activeOutgoingLinks.length ? (
-                  <span className="document-meta-chip document-meta-link-chip">
-                    <Link2 size={13} />
-                    笔记链接 {activeOutgoingLinks.length}
-                  </span>
-                ) : null}
-                {activeBacklinks.length ? (
-                  <span className="document-meta-chip document-meta-backlink-chip">
-                    <BookOpenText size={13} />
-                    反链 {activeBacklinks.length}
-                  </span>
-                ) : null}
-                {activeRelatedDocuments.length ? (
-                  <span className="document-meta-chip document-meta-document-link-chip">
-                    <BookOpenText size={13} />
-                    相关文档 {activeRelatedDocuments.length}
-                  </span>
-                ) : null}
-                {activeMissingLinks.length ? (
-                  <span className="document-meta-chip document-meta-missing-chip">
-                    缺失 {activeMissingLinks.length}
-                  </span>
-                ) : null}
-              </>
-            ) : (
-              <span className="document-knowledge-placeholder">
-                可添加笔记链接和相关文档
-              </span>
-            )}
-            <button
-              className="document-knowledge-edit-button"
-              type="button"
-              onClick={() => setIsKnowledgeEditorOpen(true)}
-            >
-              编辑
-            </button>
-          </div>
-        </section>
-      );
-    }
-
-    return (
-      <section
-        className="document-knowledge-bar document-knowledge-bar-expanded"
-        aria-label="文档元信息"
-      >
-        <div className="document-knowledge-editor-header">
-          <div>
-            <strong>文档信息</strong>
-            <span>标签、属性和相关文档保存在元信息中，笔记链接会插入正文。</span>
-          </div>
-          <button
-            type="button"
-            aria-label="收起文档信息"
-            onClick={() => setIsKnowledgeEditorOpen(false)}
-          >
-            <X size={15} />
-          </button>
-        </div>
-        <div className="document-knowledge-row document-knowledge-row-suggest">
-          <span className="document-knowledge-label">
-            <Hash size={15} />
-            标签
-          </span>
-          {tags.map((tag) => {
-            const canRemove = metadataTagKeys.has(tag.toLocaleLowerCase());
-
-            return (
-              <span className="document-meta-chip document-meta-chip-tag" key={tag}>
-                #{tag}
-                {canRemove ? (
-                  <button
-                    type="button"
-                    aria-label={`移除标签 ${tag}`}
-                    onClick={() => removeActiveDocumentTag(tag)}
-                  >
-                    <X size={12} />
-                  </button>
-                ) : null}
-              </span>
-            );
-          })}
-          <form
-            className="document-meta-chip-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              addActiveDocumentTag();
-            }}
-          >
-            <span className="document-meta-suggest-field">
-              <input
-                value={newTagName}
-                onChange={(event) => setNewTagName(event.target.value)}
-                onFocus={() => setActiveMetadataSuggestion("tag")}
-                onBlur={() =>
-                  window.setTimeout(() => setActiveMetadataSuggestion(null), 120)
-                }
-                placeholder="添加标签"
-                aria-label="添加标签"
-              />
-              {renderMetadataSuggestionMenu(
-                "tag",
-                getMetadataSuggestionMatches(tagSuggestions, newTagName),
-                setNewTagName,
-              )}
-            </span>
-            <button type="submit" aria-label="添加标签">
-              <Plus size={13} />
-            </button>
-          </form>
-        </div>
-
-        <div className="document-knowledge-row document-knowledge-row-suggest">
-          <span className="document-knowledge-label">
-            <FileText size={15} />
-            属性
-          </span>
-          {properties.map((property) => (
-            <span className="document-meta-chip document-meta-chip-property" key={property.key}>
-              <strong>{property.key}</strong>
-              <span>{property.value}</span>
-              {metadataPropertyKeys.has(property.key.toLocaleLowerCase()) ? (
-                <button
-                  type="button"
-                  aria-label={`移除属性 ${property.key}`}
-                  onClick={() => removeActiveDocumentProperty(property.key)}
-                >
-                  <X size={12} />
-                </button>
-              ) : null}
-            </span>
-          ))}
-          <form
-            className="document-meta-property-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              saveActiveDocumentProperty();
-            }}
-          >
-            <span className="document-meta-suggest-field">
-              <input
-                value={propertyKeyDraft}
-                onChange={(event) => setPropertyKeyDraft(event.target.value)}
-                onFocus={() => setActiveMetadataSuggestion("propertyKey")}
-                onBlur={() =>
-                  window.setTimeout(() => setActiveMetadataSuggestion(null), 120)
-                }
-                placeholder="属性名"
-                aria-label="属性名"
-              />
-              {renderMetadataSuggestionMenu(
-                "propertyKey",
-                getMetadataSuggestionMatches(
-                  propertyKeySuggestions,
-                  propertyKeyDraft,
-                ),
-                setPropertyKeyDraft,
-              )}
-            </span>
-            <span className="document-meta-suggest-field document-meta-suggest-field-wide">
-              <input
-                value={propertyValueDraft}
-                onChange={(event) => setPropertyValueDraft(event.target.value)}
-                onFocus={() => setActiveMetadataSuggestion("propertyValue")}
-                onBlur={() =>
-                  window.setTimeout(() => setActiveMetadataSuggestion(null), 120)
-                }
-                placeholder="属性值"
-                aria-label="属性值"
-              />
-              {renderMetadataSuggestionMenu(
-                "propertyValue",
-                getMetadataSuggestionMatches(
-                  propertyValueSuggestions,
-                  propertyValueDraft,
-                ),
-                setPropertyValueDraft,
-              )}
-            </span>
-            <button type="submit" aria-label="保存属性">
-              <Check size={13} />
-            </button>
-          </form>
-        </div>
-
-        <div className="document-knowledge-row document-knowledge-relations-row">
-          <span className="document-knowledge-label">
-            <BookOpenText size={15} />
-            相关文档
-          </span>
-          {activeRelatedDocuments.map((item) =>
-            renderRelatedDocumentChip(item, { editable: true }),
-          )}
-          <button
-            className="document-meta-chip document-meta-add-link"
-            type="button"
-            onClick={() => openDocumentLinkPicker()}
-          >
-            <Plus size={13} />
-            添加相关文档
-          </button>
-        </div>
-
-        <div className="document-knowledge-row document-knowledge-row-links">
-          <span className="document-knowledge-label">
-            <Link2 size={15} />
-            笔记链接
-          </span>
-          {activeOutgoingLinks.map((link) =>
-            link.targetDocument ? (
-              <button
-                className="document-meta-chip document-meta-link-chip"
-                key={`${link.raw}-${link.index}`}
-                type="button"
-                title={getDocumentDisplayName(link.targetDocument)}
-                onClick={() => openKnowledgeDocument(link.targetDocument!)}
-              >
-                [[{link.display}]]
-              </button>
-            ) : (
-              <button
-                className="document-meta-chip document-meta-link-chip document-meta-link-missing"
-                key={`${link.raw}-${link.index}`}
-                type="button"
-                title="创建目标文件"
-                onClick={() => void createDocumentFromMissingWikiLink(link.target)}
-              >
-                [[{link.display}]]
-              </button>
-            ),
-          )}
-          {activeBacklinks.length ? (
-            <span className="document-meta-chip document-meta-backlink-chip">
-              <BookOpenText size={13} />
-              反链 {activeBacklinks.length}
-            </span>
-          ) : null}
-          {activeMissingLinks.length ? (
-            <span className="document-meta-chip document-meta-missing-chip">
-              缺失 {activeMissingLinks.length}
-            </span>
-          ) : null}
-          <button
-            className="document-meta-chip document-meta-add-link"
-            type="button"
-            onClick={openWikiLinkInsertForm}
-          >
-            <Plus size={13} />
-            插入笔记链接
-          </button>
-          <form
-            className="document-meta-link-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              insertWikiLinkFromDraft();
-            }}
-          >
-            <input
-              ref={wikiLinkInputRef}
-              value={wikiLinkTargetDraft}
-              onChange={(event) => setWikiLinkTargetDraft(event.target.value)}
-              placeholder="输入目标笔记"
-              aria-label="笔记链接目标"
-            />
-            <button type="submit">
-              <Check size={13} />
-              插入
-            </button>
-          </form>
-        </div>
-      </section>
+      <KnowledgeRelationsPanel
+        filteredItems={filteredWorkspaceRelationItems}
+        filter={relationPanelFilter}
+        items={visibleWorkspaceRelationItems}
+        query={relationPanelQuery}
+        stats={workspaceRelationStats}
+        onFilterChange={setRelationPanelFilter}
+        onOpenDocument={openRelationDocument}
+        onOpenFile={(filePath) => {
+          void openFileFromTree(filePath);
+        }}
+        onQueryChange={setRelationPanelQuery}
+        onRefresh={() => {
+          void refreshWorkspaceSearchDocuments();
+        }}
+        onRemoveDocumentLink={removeDocumentLinkFromDocument}
+      />
     );
   }
 
@@ -7575,35 +4740,78 @@ export function App() {
     editorContentDensityOptions.find(
       (option) => option.value === settings.editorContentDensity,
     ) ?? editorContentDensityOptions[1];
-  const autoSaveStatus = {
-    failed: {
-      icon: <AlertTriangle size={14} />,
-      label: "自动保存失败",
-      title: "自动保存失败，请检查文件权限或磁盘状态",
-    },
-    idle: {
-      icon: <Check size={14} />,
-      label: "自动保存待命",
-      title: "自动保存已启用",
-    },
-    saved: {
-      icon: <Check size={14} />,
-      label: "已自动保存",
-      title: "最近的修改已保存到本地文件",
-    },
-    saving: {
-      icon: <RefreshCw size={14} />,
-      label: "自动保存中",
-      title: "正在保存当前修改",
-    },
-  } satisfies Record<SaveState, { icon: ReactNode; label: string; title: string }>;
   const fontSizeAdjustmentLabel = formatEditorFontSizeAdjustment(
     settings.editorFontSizeAdjustment,
   );
   const windowZoomPercent = Math.round(windowZoomFactor * 100);
   const isDefaultWindowZoom =
     Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
-  const documentKnowledgeBar = renderDocumentKnowledgeBar();
+  function renderDocumentKnowledgeBar({
+    isEditorCloseVisible = true,
+    isEditorOpen,
+    onSetEditorOpen,
+    showMissingRelations = true,
+  }: {
+    isEditorCloseVisible?: boolean;
+    isEditorOpen: boolean;
+    onSetEditorOpen: (isOpen: boolean) => void;
+    showMissingRelations?: boolean;
+  }) {
+    return (
+      <DocumentKnowledgeBar
+        activeDocument={activeDocument}
+        activeSuggestion={activeMetadataSuggestion}
+        backlinks={activeBacklinks}
+        isEditorCloseVisible={isEditorCloseVisible}
+        isEditorOpen={isEditorOpen}
+        knowledge={activeDocumentKnowledge}
+        missingLinks={activeMissingLinks}
+        newTagName={newTagName}
+        outgoingLinks={activeOutgoingLinks}
+        propertyKeyDraft={propertyKeyDraft}
+        propertyKeySuggestions={propertyKeySuggestions}
+        propertyValueDraft={propertyValueDraft}
+        propertyValueSuggestions={propertyValueSuggestions}
+        relatedDocuments={activeRelatedDocuments}
+        showMissingRelations={showMissingRelations}
+        tagSuggestions={tagSuggestions}
+        wikiLinkInputRef={wikiLinkInputRef}
+        wikiLinkTargetDraft={wikiLinkTargetDraft}
+        onAddTag={addActiveDocumentTag}
+        onCreateMissingWikiLink={(target) => {
+          void createDocumentFromMissingWikiLink(target);
+        }}
+        onInsertWikiLink={insertWikiLinkFromDraft}
+        onOpenDocument={openKnowledgeDocument}
+        onOpenDocumentLinkPicker={() => openDocumentLinkPicker()}
+        onOpenRelatedDocument={(reference) => {
+          void openRelatedDocument(reference);
+        }}
+        onOpenWikiLinkInsertForm={openWikiLinkInsertForm}
+        onRemoveDocumentLink={removeActiveDocumentLink}
+        onRemoveProperty={removeActiveDocumentProperty}
+        onRemoveTag={removeActiveDocumentTag}
+        onSaveProperty={saveActiveDocumentProperty}
+        onSetActiveSuggestion={setActiveMetadataSuggestion}
+        onSetEditorOpen={onSetEditorOpen}
+        onSetNewTagName={setNewTagName}
+        onSetPropertyKeyDraft={setPropertyKeyDraft}
+        onSetPropertyValueDraft={setPropertyValueDraft}
+        onSetWikiLinkTargetDraft={setWikiLinkTargetDraft}
+      />
+    );
+  }
+  const documentKnowledgeBar = renderDocumentKnowledgeBar({
+    isEditorOpen: isKnowledgeEditorOpen,
+    onSetEditorOpen: setIsKnowledgeEditorOpen,
+  });
+  const relationsDialogKnowledgePanel = renderDocumentKnowledgeBar({
+    isEditorCloseVisible: false,
+    isEditorOpen: true,
+    onSetEditorOpen: () => {},
+    showMissingRelations: false,
+  });
+  const canShowRelationsDialogKnowledge = activeDocument !== null;
 
   return (
     <>
@@ -7759,19 +4967,6 @@ export function App() {
             >
               {isWorkspaceSearchTabVisible ? "查找" : "当前文件"}
             </button>
-            <button
-              className={
-                sidebarTab === "relations"
-                  ? "explorer-tab explorer-tab-active"
-                  : "explorer-tab"
-              }
-              type="button"
-              role="tab"
-              aria-selected={sidebarTab === "relations"}
-              onClick={openKnowledgeRelationsPanel}
-            >
-              关系
-            </button>
           </div>
 
           <div
@@ -7781,8 +4976,6 @@ export function App() {
                 ? "文件目录"
                 : sidebarTab === "search"
                   ? "查找"
-                  : sidebarTab === "relations"
-                    ? "链接总览"
                   : "当前文件"
             }
           >
@@ -7855,8 +5048,6 @@ export function App() {
                 }}
                 onQueryChange={setWorkspaceSearchQuery}
               />
-            ) : sidebarTab === "relations" ? (
-              renderKnowledgeRelationsPanel()
             ) : (
               renderCurrentDocumentPanel()
             )}
@@ -8259,49 +5450,16 @@ export function App() {
               />
             </div>
           ) : null}
-          <footer className="workspace-statusbar">
-            <button
-              className="workspace-status-button"
-              type="button"
-              aria-label={isSidebarHidden ? "展开左侧栏" : "折叠左侧栏"}
-              onClick={toggleSidebarVisibility}
-            >
-              {isSidebarHidden ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
-            </button>
-            <span className="workspace-status-spacer" />
-            {missingAssetReferences.length > 0 && (
-              <span
-                className="workspace-asset-warning"
-                title={missingAssetReferences.join("\n")}
-              >
-                <AlertTriangle size={14} />
-                {missingAssetReferences.length} 个附件失效
-              </span>
-            )}
-            <span
-              className={`workspace-autosave-status workspace-autosave-status-${saveState}`}
-              title={autoSaveStatus[saveState].title}
-              aria-live="polite"
-            >
-              {autoSaveStatus[saveState].icon}
-              {autoSaveStatus[saveState].label}
-            </span>
-            <span className="workspace-word-count">
-              {isHtmlDocument(activeDocument)
-                ? "HTML preview"
-                : isPdfDocument(activeDocument)
-                  ? "PDF preview"
-                  : isWordDocument(activeDocument)
-                    ? "Word preview"
-                    : isExcelDocument(activeDocument)
-                      ? "Excel preview"
-                      : isSheetDocument(activeDocument)
-                        ? "Sheet"
-                        : isDrawingDocument(activeDocument)
-                          ? "Excalidraw"
-                          : `${activeDocument ? activeDocumentWordCount : 0} 词`}
-            </span>
-          </footer>
+          <WorkspaceStatusBar
+            activeDocument={activeDocument}
+            isSidebarHidden={isSidebarHidden}
+            missingAssetReferences={missingAssetReferences}
+            relationCount={workspaceRelationStats.totalCount}
+            saveState={saveState}
+            wordCount={activeDocumentWordCount}
+            onOpenRelations={openKnowledgeRelationsPanel}
+            onToggleSidebar={toggleSidebarVisibility}
+          />
         </section>
 
         <input
@@ -8706,7 +5864,7 @@ export function App() {
                       相关文档
                     </Dialog.Title>
                     <Dialog.Description>
-                      从当前工作区选择文件，添加到正在编辑的 Markdown 文档元信息中。
+                      从当前工作区选择文件，添加到正在编辑的文档元信息中。
                     </Dialog.Description>
                     {documentLinkPickerSourceDocument ? (
                       <p className="document-link-picker-source">
@@ -8928,72 +6086,54 @@ export function App() {
         </Dialog.Root>
 
         <Dialog.Root
-          open={Boolean(appDialog)}
-          onOpenChange={(open) => {
-            if (!open) {
-              closeAppDialog(false);
-            }
-          }}
+          open={isRelationsDialogOpen}
+          onOpenChange={setIsRelationsDialogOpen}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay app-dialog-overlay" />
-            <Dialog.Content
-              className={`app-dialog app-dialog-${appDialog?.tone ?? "info"}`}
-            >
-              {appDialog ? (
-                <>
-                  <div className="app-dialog-header">
-                    <span className="app-dialog-icon" aria-hidden="true">
-                      <AlertTriangle size={18} />
-                    </span>
-                    <div>
-                      <Dialog.Title className="app-dialog-title">
-                        {appDialog.title}
-                      </Dialog.Title>
-                      <Dialog.Description className="app-dialog-description">
-                        {appDialog.description}
-                      </Dialog.Description>
-                    </div>
-                    <button
-                      className="icon-button app-dialog-close"
-                      type="button"
-                      aria-label="关闭"
-                      onClick={() => closeAppDialog(false)}
-                    >
-                      <X size={16} />
-                    </button>
+            <Dialog.Overlay className="dialog-overlay relation-dialog-overlay" />
+            <Dialog.Content className="relations-dialog">
+              <div className="relations-dialog-header">
+                <div>
+                  <Dialog.Title className="relations-dialog-title">
+                    关系
+                  </Dialog.Title>
+                  <Dialog.Description className="relations-dialog-description">
+                    {activeDocument
+                      ? `${getDocumentDisplayName(activeDocument)} 的标签、属性和关系`
+                      : "当前没有打开的文档"}
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button className="icon-button" type="button" aria-label="关闭关系">
+                    <X size={16} />
+                  </button>
+                </Dialog.Close>
+              </div>
+              <div className="relations-dialog-body">
+                {canShowRelationsDialogKnowledge ? (
+                  <div className="relations-dialog-knowledge">
+                    {relationsDialogKnowledgePanel}
                   </div>
-                  {appDialog.detail ? (
-                    <div className="app-dialog-detail" title={appDialog.detail}>
-                      {appDialog.detail}
-                    </div>
-                  ) : null}
-                  <div className="dialog-actions app-dialog-actions">
-                    {appDialog.type === "confirm" ? (
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => closeAppDialog(false)}
-                      >
-                        {appDialog.cancelLabel ?? "取消"}
-                      </button>
-                    ) : null}
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => closeAppDialog(true)}
-                    >
-                      <Check size={16} />
-                      {appDialog.confirmLabel}
-                    </button>
+                ) : (
+                  <div className="relations-dialog-empty">
+                    当前没有打开的文档。
                   </div>
-                </>
-              ) : null}
+                )}
+                <div className="relations-dialog-links">
+                  {renderKnowledgeRelationsPanel()}
+                </div>
+              </div>
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
 
-        <AboutDialog open={isAboutOpen} onOpenChange={setIsAboutOpen} />
+        <AppConfirmationDialog dialog={appDialog} onClose={closeAppDialog} />
+
+        <AboutDialog
+          logoUrl={appLogoUrl}
+          open={isAboutOpen}
+          onOpenChange={setIsAboutOpen}
+        />
 
         <Dialog.Root open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
           <Dialog.Portal>

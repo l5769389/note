@@ -85,6 +85,39 @@ describe("noteKnowledge", () => {
     ).toEqual(["project"]);
   });
 
+  it("indexes metadata and backlinks for non-markdown documents", () => {
+    const project = documentFixture("project", "Project", "See [[Spec]].");
+    const spec: MarkdownDocument = {
+      ...documentFixture("spec", "Spec", "", "D:\\notes\\Spec.pdf"),
+      documentType: "pdf",
+      fileExtension: ".pdf",
+      metadata: {
+        documentLinks: [],
+        properties: [{ key: "status", value: "reference" }],
+        tags: ["asset"],
+      },
+    };
+
+    const knowledge = createWorkspaceKnowledge([project, spec]);
+
+    expect(knowledge.metadataByDocumentId.get(spec.id)?.tags).toEqual([
+      "asset",
+    ]);
+    expect(knowledge.metadataByDocumentId.get(spec.id)?.properties).toEqual([
+      { key: "status", value: "reference" },
+    ]);
+    expect(
+      knowledge.outgoingLinksByDocumentId
+        .get(project.id)
+        ?.map((link) => link.targetDocument?.id ?? null),
+    ).toEqual(["spec"]);
+    expect(
+      knowledge.backlinksByDocumentId
+        .get(spec.id)
+        ?.map((backlink) => backlink.sourceDocument.id),
+    ).toEqual(["project"]);
+  });
+
   it("updates tags and simple properties in frontmatter", () => {
     const content = [
       "---",

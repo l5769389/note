@@ -4,6 +4,11 @@ import { createTableOfContentsMarkdown } from "./markdownStructure";
 
 const taskListLinePattern = /^([ \t]*(?:[-+*]|\d+[.)])[ \t]+\[)([ xX])(\][ \t]*)/gm;
 
+export type TableSize = {
+  columns: number;
+  rows: number;
+};
+
 function getTaskStatusMarker(currentMarker: string, status: TaskStatusCommand) {
   switch (status) {
     case "completed":
@@ -53,6 +58,24 @@ export function updateMarkdownTaskStatus(
     selectionEnd: normalizedStart + (normalizedEnd - normalizedStart),
     selectionStart: normalizedStart,
   };
+}
+
+export function createMarkdownTable({ columns, rows }: TableSize) {
+  const safeColumns = Math.max(1, columns);
+  const safeRows = Math.max(1, rows);
+  const emptyRow = Array.from({ length: safeColumns }, () => " ");
+  const separatorRow = Array.from({ length: safeColumns }, () => "---");
+  const bodyRows = Array.from({ length: Math.max(safeRows - 1, 0) }, () =>
+    `| ${emptyRow.join(" | ")} |`,
+  );
+
+  return [
+    "",
+    `| ${emptyRow.join(" | ")} |`,
+    `| ${separatorRow.join(" | ")} |`,
+    ...bodyRows,
+    "",
+  ].join("\n");
 }
 
 export function createParagraphCommandMarkdown(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createMarkdownTable,
   createParagraphCommandMarkdown,
   updateMarkdownTaskStatus,
 } from "../markdownCommands";
@@ -74,5 +75,16 @@ describe("updateMarkdownTaskStatus", () => {
 
   it("leaves non-task lines unchanged", () => {
     expect(updateMarkdownTaskStatus("- A\nplain", 0, 0, "completed")).toBeNull();
+  });
+});
+
+describe("createMarkdownTable", () => {
+  it("creates markdown tables with clamped dimensions", () => {
+    expect(createMarkdownTable({ columns: 2, rows: 3 })).toBe(
+      "\n|   |   |\n| --- | --- |\n|   |   |\n|   |   |\n",
+    );
+    expect(createMarkdownTable({ columns: 0, rows: 0 })).toBe(
+      "\n|   |\n| --- |\n",
+    );
   });
 });

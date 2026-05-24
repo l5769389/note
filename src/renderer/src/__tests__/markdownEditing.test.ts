@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   createClearInlineStyleEdit,
+  createDeleteSelectionOrLineEdit,
   createMarkdownImageEdit,
+  createMoveSelectedLinesEdit,
   createRemoveMarkdownLinkEdit,
   createWrappedSelectionEdit,
   findMarkdownLinkInRange,
+  getLineColumnAtOffset,
+  getSelectedLineRange,
   type SelectedTextRange,
 } from "../markdownEditing";
 
@@ -27,6 +31,20 @@ function selectedLineRange(
 }
 
 describe("markdown editing helpers", () => {
+  it("gets line/column positions and selected line ranges", () => {
+    expect(getLineColumnAtOffset("a\nbc", 3)).toEqual({
+      column: 1,
+      lineIndex: 1,
+    });
+    expect(getSelectedLineRange("a\nbc\nd", 2, 3)).toEqual({
+      content: "a\nbc\nd",
+      lineEnd: 5,
+      lineStart: 2,
+      selectionEnd: 3,
+      selectionStart: 2,
+    });
+  });
+
   it("wraps selected text for format commands", () => {
     expect(createWrappedSelectionEdit("hello", 0, 5, "**", "**", "加粗文本")).toEqual({
       content: "**hello**",
@@ -77,6 +95,41 @@ describe("markdown editing helpers", () => {
       content: '![logo](logo.png "align=center")',
       selectionEnd: 32,
       selectionStart: 32,
+    });
+  });
+
+  it("moves selected lines up and down", () => {
+    expect(
+      createMoveSelectedLinesEdit(getSelectedLineRange("a\nb\nc", 2, 2), "up"),
+    ).toEqual({
+      content: "b\na\nc",
+      selectionEnd: 2,
+      selectionStart: 0,
+    });
+    expect(
+      createMoveSelectedLinesEdit(getSelectedLineRange("a\nb\nc", 0, 0), "down"),
+    ).toEqual({
+      content: "b\na\nc",
+      selectionEnd: 4,
+      selectionStart: 2,
+    });
+    expect(
+      createMoveSelectedLinesEdit(getSelectedLineRange("a\nb\nc", 0, 0), "up"),
+    ).toBeNull();
+  });
+
+  it("deletes selected text or the current line", () => {
+    expect(createDeleteSelectionOrLineEdit(getSelectedLineRange("abc", 1, 2))).toEqual({
+      content: "ac",
+      selectionEnd: 1,
+      selectionStart: 1,
+    });
+    expect(
+      createDeleteSelectionOrLineEdit(getSelectedLineRange("a\nb\nc", 2, 2)),
+    ).toEqual({
+      content: "a\nc",
+      selectionEnd: 2,
+      selectionStart: 2,
     });
   });
 });

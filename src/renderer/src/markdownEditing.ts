@@ -22,6 +22,8 @@ export type MarkdownLinkRange = {
   to: number;
 };
 
+export type LineMoveDirection = "down" | "up";
+
 function selectionTouchesRange(
   selectionStart: number,
   selectionEnd: number,
@@ -31,6 +33,30 @@ function selectionTouchesRange(
   return selectionStart === selectionEnd
     ? selectionStart >= from && selectionStart <= to
     : selectionStart < to && selectionEnd > from;
+}
+
+export function getLineColumnAtOffset(content: string, offset: number) {
+  const safeOffset = Math.max(0, Math.min(offset, content.length));
+  const before = content.slice(0, safeOffset);
+  const lines = before.split("\n");
+
+  return {
+    column: lines.at(-1)?.length ?? 0,
+    lineIndex: lines.length - 1,
+  };
+}
+
+export function getSelectedLineRange(
+  content: string,
+  selectionStart: number,
+  selectionEnd: number,
+): SelectedTextRange {
+  const lineStart = content.lastIndexOf("\n", Math.max(selectionStart - 1, 0)) + 1;
+  const rawLineEnd = content.indexOf("\n", selectionEnd);
+  const lineEnd =
+    rawLineEnd < 0 ? content.length : Math.min(rawLineEnd + 1, content.length);
+
+  return { content, lineEnd, lineStart, selectionEnd, selectionStart };
 }
 
 export function createWrappedSelectionEdit(
@@ -50,6 +76,75 @@ export function createWrappedSelectionEdit(
     content: `${content.slice(0, selectionStart)}${insertion}${content.slice(selectionEnd)}`,
     selectionEnd: nextSelectionStart + body.length,
     selectionStart: nextSelectionStart,
+  };
+}
+
+export function createMoveSelectedLinesEdit(
+  range: SelectedTextRange,
+  direction: LineMoveDirection,
+): TextEditResult | null {
+  const selectedText = range.content.slice(range.lineStart, range.lineEnd);
+
+  if (direction === "up") {
+    if (range.lineStart === 0) {
+      return null;
+    }
+
+    const previousLineStart = range.content.lastIndexOf("\n", range.lineStart - 2) + 1;
+    const previousText = range.content.slice(previousLineStart, range.lineStart);
+
+    return {
+      content:
+        range.content.slice(0, previousLineStart) +
+        selectedText +
+        previousText +
+        range.content.slice(range.lineEnd),
+      selectionEnd: previousLineStart + selectedText.length,
+      selectionStart: previousLineStart,
+    };
+  }
+
+  if (range.lineEnd >= range.content.length) {
+    return null;
+  }
+
+  const nextLineEndIndex = range.content.indexOf("\n", range.lineEnd);
+  const nextLineEnd =
+    nextLineEndIndex < 0
+      ? range.content.length
+      : Math.min(nextLineEndIndex + 1, range.content.length);
+  const nextText = range.content.slice(range.lineEnd, nextLineEnd);
+
+  return {
+    content:
+      range.content.slice(0, range.lineStart) +
+      nextText +
+      selectedText +
+      range.content.slice(nextLineEnd),
+    selectionEnd: range.lineStart + nextText.length + selectedText.length,
+    selectionStart: range.lineStart + nextText.length,
+  };
+}
+
+export function createDeleteSelectionOrLineEdit(
+  range: SelectedTextRange,
+): TextEditResult {
+  if (range.selectionStart !== range.selectionEnd) {
+    return {
+      content:
+        range.content.slice(0, range.selectionStart) +
+        range.content.slice(range.selectionEnd),
+      selectionEnd: range.selectionStart,
+      selectionStart: range.selectionStart,
+    };
+  }
+
+  return {
+    content:
+      range.content.slice(0, range.lineStart) +
+      range.content.slice(range.lineEnd),
+    selectionEnd: range.lineStart,
+    selectionStart: range.lineStart,
   };
 }
 
