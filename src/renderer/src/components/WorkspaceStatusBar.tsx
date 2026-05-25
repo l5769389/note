@@ -3,7 +3,8 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Link2,
+  PanelRightClose,
+  PanelRightOpen,
   RefreshCw,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -42,12 +43,12 @@ const autoSaveStatus = {
 
 type WorkspaceStatusBarProps = {
   activeDocument: MarkdownDocument | null;
+  isInspectorOpen?: boolean;
   isSidebarHidden: boolean;
   missingAssetReferences: string[];
-  relationCount?: number;
   saveState: SaveState;
   wordCount: number;
-  onOpenRelations?: () => void;
+  onToggleInspector?: () => void;
   onToggleSidebar: () => void;
 };
 
@@ -81,16 +82,16 @@ function getDocumentStatusLabel(document: MarkdownDocument | null, wordCount: nu
 
 export function WorkspaceStatusBar({
   activeDocument,
+  isInspectorOpen = false,
   isSidebarHidden,
   missingAssetReferences,
-  relationCount = 0,
   saveState,
   wordCount,
-  onOpenRelations,
+  onToggleInspector,
   onToggleSidebar,
 }: WorkspaceStatusBarProps) {
   const status = autoSaveStatus[saveState];
-  const relationLabel = `关系 ${relationCount}`;
+  const inspectorTitle = isInspectorOpen ? "隐藏右侧栏" : "显示右侧栏";
 
   return (
     <footer className="workspace-statusbar">
@@ -103,16 +104,25 @@ export function WorkspaceStatusBar({
         {isSidebarHidden ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
       </button>
       <span className="workspace-status-spacer" />
-      {onOpenRelations ? (
+      {onToggleInspector ? (
         <button
-          className="workspace-relations-button"
+          className={[
+            "workspace-inspector-button",
+            isInspectorOpen ? "workspace-inspector-button-active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           type="button"
-          title={relationLabel}
-          aria-label="查看关系"
-          onClick={onOpenRelations}
+          title={inspectorTitle}
+          aria-label={inspectorTitle}
+          aria-pressed={isInspectorOpen}
+          onClick={onToggleInspector}
         >
-          <Link2 size={14} />
-          <span>{relationLabel}</span>
+          {isInspectorOpen ? (
+            <PanelRightClose size={15} />
+          ) : (
+            <PanelRightOpen size={15} />
+          )}
         </button>
       ) : null}
       {missingAssetReferences.length > 0 && (

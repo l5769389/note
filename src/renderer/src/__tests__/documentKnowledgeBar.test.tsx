@@ -177,4 +177,15 @@ describe("DocumentKnowledgeBar", () => {
     expect(html).not.toContain("缺失");
     expect(html).not.toContain("[[Missing]]");
   });
+
+  it("can hide the expanded editor heading for inspector layouts", () => {
+    const html = renderKnowledgeBar({
+      isEditorHeaderVisible: false,
+      isEditorOpen: true,
+    });
+
+    expect(html).not.toContain("文档信息");
+    expect(html).toContain("标签");
+    expect(html).toContain("属性");
+  });
 });

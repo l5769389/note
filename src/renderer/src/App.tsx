@@ -84,6 +84,7 @@ import {
   DocumentKnowledgeBar,
   type DocumentMetadataSuggestionField,
 } from "./components/DocumentKnowledgeBar";
+import { DocumentInspectorSidebar } from "./components/DocumentInspectorSidebar";
 import { UniverSheetPreview } from "./components/UniverSheetPreview";
 import { WelcomeIllustration } from "./components/WelcomeIllustration";
 import { WorkspaceSearchPanel } from "./components/WorkspaceSearchPanel";
@@ -531,7 +532,7 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
-  const [isRelationsDialogOpen, setIsRelationsDialogOpen] = useState(false);
+  const [isDocumentInspectorOpen, setIsDocumentInspectorOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<AppContextMenuState | null>(null);
   const [findPanelMode, setFindPanelMode] = useState<FindPanelMode>("find");
   const [findQuery, setFindQuery] = useState("");
@@ -547,7 +548,6 @@ export function App() {
   const [activeMetadataSuggestion, setActiveMetadataSuggestion] =
     useState<DocumentMetadataSuggestionField | null>(null);
   const [wikiLinkTargetDraft, setWikiLinkTargetDraft] = useState("");
-  const [isKnowledgeEditorOpen, setIsKnowledgeEditorOpen] = useState(false);
   const [isDocumentLinkPickerOpen, setIsDocumentLinkPickerOpen] = useState(false);
   const [documentLinkQuery, setDocumentLinkQuery] = useState("");
   const [documentLinkSourceDocumentId, setDocumentLinkSourceDocumentId] =
@@ -1327,7 +1327,6 @@ export function App() {
   useActiveDocumentUiReset({
     activeDocumentId: activeDocument?.id,
     resetActiveEditorLine: () => setActiveEditorLineIndex(0),
-    resetKnowledgeEditor: () => setIsKnowledgeEditorOpen(false),
     resetWikiLinkDraft: () => setWikiLinkTargetDraft(""),
   });
 
@@ -1876,7 +1875,6 @@ export function App() {
     setActiveDocument(document.id);
     setIsHomeOpen(false);
     setSidebarTab("current");
-    setIsRelationsDialogOpen(false);
   }
 
   function openKnowledgeDocument(document: MarkdownDocument) {
@@ -1950,7 +1948,7 @@ export function App() {
 
     const selectedText = getSelectedEditorText().trim();
     setWikiLinkTargetDraft(selectedText);
-    setIsKnowledgeEditorOpen(true);
+    setIsDocumentInspectorOpen(true);
     window.requestAnimationFrame(() => wikiLinkInputRef.current?.focus());
   }
 
@@ -1967,7 +1965,6 @@ export function App() {
 
     insertMarkdown(`[[${target}]]`);
     setWikiLinkTargetDraft("");
-    setIsKnowledgeEditorOpen(false);
   }
 
   function getDocumentByFilePath(filePath?: string) {
@@ -2126,7 +2123,7 @@ export function App() {
     setDocumentLinkSourceDocumentId(pickerSource.id);
     setDocumentLinkQuery("");
     if (pickerSource.id === activeDocument?.id) {
-      setIsKnowledgeEditorOpen(true);
+      setIsDocumentInspectorOpen(true);
     }
     setIsDocumentLinkPickerOpen(true);
   }
@@ -3244,7 +3241,13 @@ export function App() {
   }
 
   function openKnowledgeRelationsPanel() {
-    setIsRelationsDialogOpen(true);
+    setIsDocumentInspectorOpen(true);
+    setIsActionsOpen(false);
+    setTopMenu(null);
+  }
+
+  function toggleDocumentInspector() {
+    setIsDocumentInspectorOpen((current) => !current);
     setIsActionsOpen(false);
     setTopMenu(null);
   }
@@ -4748,11 +4751,13 @@ export function App() {
     Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
   function renderDocumentKnowledgeBar({
     isEditorCloseVisible = true,
+    isEditorHeaderVisible = true,
     isEditorOpen,
     onSetEditorOpen,
     showMissingRelations = true,
   }: {
     isEditorCloseVisible?: boolean;
+    isEditorHeaderVisible?: boolean;
     isEditorOpen: boolean;
     onSetEditorOpen: (isOpen: boolean) => void;
     showMissingRelations?: boolean;
@@ -4763,6 +4768,7 @@ export function App() {
         activeSuggestion={activeMetadataSuggestion}
         backlinks={activeBacklinks}
         isEditorCloseVisible={isEditorCloseVisible}
+        isEditorHeaderVisible={isEditorHeaderVisible}
         isEditorOpen={isEditorOpen}
         knowledge={activeDocumentKnowledge}
         missingLinks={activeMissingLinks}
@@ -4801,17 +4807,13 @@ export function App() {
       />
     );
   }
-  const documentKnowledgeBar = renderDocumentKnowledgeBar({
-    isEditorOpen: isKnowledgeEditorOpen,
-    onSetEditorOpen: setIsKnowledgeEditorOpen,
-  });
-  const relationsDialogKnowledgePanel = renderDocumentKnowledgeBar({
+  const inspectorKnowledgePanel = renderDocumentKnowledgeBar({
     isEditorCloseVisible: false,
+    isEditorHeaderVisible: false,
     isEditorOpen: true,
     onSetEditorOpen: () => {},
     showMissingRelations: false,
   });
-  const canShowRelationsDialogKnowledge = activeDocument !== null;
 
   return (
     <>
@@ -4819,6 +4821,7 @@ export function App() {
         className={[
           "app-shell",
           isSidebarHidden ? "app-shell-sidebar-collapsed" : "",
+          isDocumentInspectorOpen ? "app-shell-inspector-open" : "",
           isImmersiveMode ? "app-shell-immersive" : "",
           isImmersiveTopRevealed ? "app-shell-immersive-reveal-top" : "",
         ]
@@ -4828,6 +4831,7 @@ export function App() {
           {
             "--sidebar-width": `${isSidebarHidden ? 0 : sidebarWidth}px`,
             "--sidebar-panel-width": `${sidebarWidth}px`,
+            "--inspector-width": isDocumentInspectorOpen ? "360px" : "0px",
           } as CSSProperties
         }
         onPointerMove={handleImmersivePointerMove}
@@ -5363,7 +5367,6 @@ export function App() {
                   className={[
                     "editor-layout",
                     `editor-layout-${mode}`,
-                    documentKnowledgeBar ? "editor-layout-with-knowledge" : "",
                     isEditorDraggingMedia ? "editor-layout-drop-active" : "",
                   ]
                     .filter(Boolean)
@@ -5372,7 +5375,6 @@ export function App() {
                   onDragOver={handleEditorDragOver}
                   onDrop={handleEditorDrop}
                 >
-                  {documentKnowledgeBar}
                   {isEditorDraggingMedia && (
                     <div className="editor-drop-overlay" aria-hidden="true">
                       <div>
@@ -5452,15 +5454,22 @@ export function App() {
           ) : null}
           <WorkspaceStatusBar
             activeDocument={activeDocument}
+            isInspectorOpen={isDocumentInspectorOpen}
             isSidebarHidden={isSidebarHidden}
             missingAssetReferences={missingAssetReferences}
-            relationCount={workspaceRelationStats.totalCount}
             saveState={saveState}
             wordCount={activeDocumentWordCount}
-            onOpenRelations={openKnowledgeRelationsPanel}
+            onToggleInspector={toggleDocumentInspector}
             onToggleSidebar={toggleSidebarVisibility}
           />
         </section>
+
+        <DocumentInspectorSidebar
+          activeDocument={activeDocument}
+          isOpen={isDocumentInspectorOpen}
+          knowledgePanel={inspectorKnowledgePanel}
+          relationsPanel={renderKnowledgeRelationsPanel()}
+        />
 
         <input
           ref={imageInputRef}
@@ -6081,48 +6090,6 @@ export function App() {
                   />
                 </Suspense>
               )}
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-
-        <Dialog.Root
-          open={isRelationsDialogOpen}
-          onOpenChange={setIsRelationsDialogOpen}
-        >
-          <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay relation-dialog-overlay" />
-            <Dialog.Content className="relations-dialog">
-              <div className="relations-dialog-header">
-                <div>
-                  <Dialog.Title className="relations-dialog-title">
-                    关系
-                  </Dialog.Title>
-                  <Dialog.Description className="relations-dialog-description">
-                    {activeDocument
-                      ? `${getDocumentDisplayName(activeDocument)} 的标签、属性和关系`
-                      : "当前没有打开的文档"}
-                  </Dialog.Description>
-                </div>
-                <Dialog.Close asChild>
-                  <button className="icon-button" type="button" aria-label="关闭关系">
-                    <X size={16} />
-                  </button>
-                </Dialog.Close>
-              </div>
-              <div className="relations-dialog-body">
-                {canShowRelationsDialogKnowledge ? (
-                  <div className="relations-dialog-knowledge">
-                    {relationsDialogKnowledgePanel}
-                  </div>
-                ) : (
-                  <div className="relations-dialog-empty">
-                    当前没有打开的文档。
-                  </div>
-                )}
-                <div className="relations-dialog-links">
-                  {renderKnowledgeRelationsPanel()}
-                </div>
-              </div>
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>

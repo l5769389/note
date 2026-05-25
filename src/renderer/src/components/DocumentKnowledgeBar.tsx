@@ -42,6 +42,7 @@ type DocumentKnowledgeBarProps = {
   backlinks: NoteBacklink[];
   isEditorOpen: boolean;
   isEditorCloseVisible?: boolean;
+  isEditorHeaderVisible?: boolean;
   knowledge?: DocumentKnowledge | null;
   missingLinks: NoteWikiLink[];
   newTagName: string;
@@ -198,6 +199,7 @@ export function DocumentKnowledgeBar({
   backlinks,
   isEditorOpen,
   isEditorCloseVisible = true,
+  isEditorHeaderVisible = true,
   knowledge,
   missingLinks,
   newTagName,
@@ -321,21 +323,23 @@ export function DocumentKnowledgeBar({
       className="document-knowledge-bar document-knowledge-bar-expanded"
       aria-label="文档元信息"
     >
-      <div className="document-knowledge-editor-header">
-        <div>
-          <strong>文档信息</strong>
-          <span>标签、属性和相关文档保存在元信息中，笔记链接会插入正文。</span>
+      {isEditorHeaderVisible ? (
+        <div className="document-knowledge-editor-header">
+          <div>
+            <strong>文档信息</strong>
+            <span>标签、属性和相关文档保存在元信息中，笔记链接会插入正文。</span>
+          </div>
+          {isEditorCloseVisible ? (
+            <button
+              type="button"
+              aria-label="收起文档信息"
+              onClick={() => onSetEditorOpen(false)}
+            >
+              <X size={15} />
+            </button>
+          ) : null}
         </div>
-        {isEditorCloseVisible ? (
-          <button
-            type="button"
-            aria-label="收起文档信息"
-            onClick={() => onSetEditorOpen(false)}
-          >
-            <X size={15} />
-          </button>
-        ) : null}
-      </div>
+      ) : null}
       <div className="document-knowledge-row document-knowledge-row-suggest">
         <span className="document-knowledge-label">
           <Hash size={15} />

@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   color: #18202f;
   background: #f6f7f9;
   --theme-editor-code-font-family:
@@ -286,7 +286,7 @@ button {
 .app-shell {
   position: relative;
   display: grid;
-  grid-template-columns: 286px minmax(0, 1fr);
+  grid-template-columns: 286px minmax(0, 1fr) var(--inspector-width, 0px);
   grid-template-rows: 40px minmax(0, 1fr);
   width: 100%;
   height: 100vh;
@@ -1423,29 +1423,6 @@ button {
 
 .editor-layout-split {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.editor-layout-with-knowledge {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.editor-layout-with-knowledge > .document-knowledge-bar {
-  grid-column: 1 / -1;
-  grid-row: 1;
-}
-
-.editor-layout-with-knowledge > .markdown-input,
-.editor-layout-with-knowledge > .markdown-preview,
-.editor-layout-with-knowledge > .typora-editor {
-  grid-row: 2;
-}
-
-.editor-layout-with-knowledge.editor-layout-split > .markdown-input {
-  grid-column: 1;
-}
-
-.editor-layout-with-knowledge.editor-layout-split > .markdown-preview {
-  grid-column: 2;
 }
 
 .markdown-input,
@@ -5092,7 +5069,7 @@ button {
 
 .app-shell {
   --bottom-statusbar-height: 32px;
-  grid-template-columns: var(--sidebar-width, 334px) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 334px) minmax(0, 1fr) var(--inspector-width, 0px);
   grid-template-rows: 30px minmax(0, 1fr);
   background:
     radial-gradient(circle at 68% 30%, rgba(99, 102, 241, 0.08), transparent 30%),
@@ -5105,7 +5082,7 @@ button {
 
 .app-shell-immersive {
   --immersive-menubar-height: 30px;
-  grid-template-columns: var(--sidebar-width, 0px) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 0px) minmax(0, 1fr) var(--inspector-width, 0px);
   grid-template-rows: minmax(0, 1fr);
 }
 
@@ -6245,118 +6222,103 @@ button {
   text-align: center;
 }
 
-.relations-dialog {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  z-index: 90;
+.document-inspector-sidebar {
+  position: relative;
+  z-index: 3;
   display: grid;
-  width: min(920px, calc(100vw - 48px));
-  height: min(780px, calc(100dvh - 56px));
-  grid-template-rows: auto minmax(0, 1fr);
-  transform: translate(-50%, -50%);
+  width: var(--inspector-width, 0px);
+  min-width: 0;
+  height: 100%;
+  grid-column: 3;
+  grid-row: 2;
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid rgba(203, 213, 225, 0.92);
-  border-radius: 14px;
+  border-left: 1px solid transparent;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98)),
     #ffffff;
-  box-shadow:
-    0 30px 80px rgba(15, 23, 42, 0.24),
-    0 2px 10px rgba(15, 23, 42, 0.08);
+  box-shadow: -18px 0 40px rgba(15, 23, 42, 0);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    opacity 120ms ease;
 }
 
-.relation-dialog-overlay {
-  background: rgba(15, 23, 42, 0.62);
-  backdrop-filter: blur(2px);
+.document-inspector-sidebar-open {
+  border-left-color: rgba(203, 213, 225, 0.9);
+  box-shadow: -18px 0 40px rgba(15, 23, 42, 0.08);
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.relations-dialog-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  border-bottom: 1px solid #e6ebf2;
-  padding: 16px 18px;
-}
-
-.relations-dialog-header > div {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.relations-dialog-title {
-  margin: 0;
-  color: #111827;
-  font-size: 18px;
-  font-weight: 900;
-  letter-spacing: 0;
-}
-
-.relations-dialog-description {
-  overflow: hidden;
-  margin: 0;
-  color: #667085;
-  font-size: 13px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.relations-dialog-body {
+.document-inspector-body {
   display: grid;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 14px;
+  grid-template-rows: auto minmax(260px, 1fr);
+  gap: 12px;
   overflow: hidden;
-  padding: 16px 18px 18px;
+  padding: 12px;
 }
 
-.relations-dialog-knowledge,
-.relations-dialog-links,
-.relations-dialog-empty {
+.document-inspector-card {
   min-width: 0;
   border: 1px solid #e1e8f2;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.76);
+  background: rgba(255, 255, 255, 0.78);
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
 }
 
-.relations-dialog-empty {
-  display: grid;
-  min-height: 108px;
-  place-items: center;
-  color: #7a8495;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.relations-dialog-knowledge {
+.document-inspector-card-metadata {
   overflow: visible;
 }
 
-.relations-dialog .document-knowledge-bar {
+.document-inspector-card-relations {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.document-inspector-empty {
+  display: grid;
+  min-height: 116px;
+  place-items: center;
+  color: #7a8495;
+  padding: 18px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.document-inspector-sidebar .document-knowledge-bar {
   border: 0;
   border-radius: 12px;
   background: transparent;
 }
 
-.relations-dialog .document-knowledge-bar-expanded {
-  padding: 14px;
+.document-inspector-sidebar .document-knowledge-bar-expanded {
+  padding: 12px;
 }
 
-.relations-dialog .document-knowledge-editor-header {
+.document-inspector-sidebar .document-knowledge-editor-header {
   align-items: start;
 }
 
-.relations-dialog-links {
-  min-height: 0;
-  overflow: hidden;
+.document-inspector-sidebar .document-knowledge-row {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  overflow: visible;
 }
 
-.relations-dialog-links .knowledge-relations-panel {
+.document-inspector-sidebar .document-meta-property-form,
+.document-inspector-sidebar .document-meta-link-form {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 30px;
+}
+
+.document-inspector-card-relations .knowledge-relations-panel {
   height: 100%;
   padding: 14px;
 }
@@ -6461,7 +6423,7 @@ button {
 
 .knowledge-relations-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -7649,6 +7611,10 @@ button {
   grid-template-rows: minmax(0, 1fr) var(--bottom-statusbar-height);
 }
 
+.app-shell-immersive .document-inspector-sidebar {
+  grid-row: 1;
+}
+
 .workspace-statusbar {
   display: flex;
   min-width: 0;
@@ -7685,44 +7651,35 @@ button {
   min-width: 0;
 }
 
-.workspace-relations-button {
-  display: inline-flex;
-  max-width: min(240px, 34vw);
-  min-height: 24px;
+.workspace-inspector-button {
+  display: grid;
+  width: 30px;
+  height: var(--bottom-statusbar-height);
+  flex: 0 0 auto;
+  place-items: center;
   align-items: center;
-  gap: 6px;
-  overflow: hidden;
   border: 1px solid #dfe5ff;
-  border-radius: 999px;
+  border-radius: 8px;
   margin-right: 10px;
   background: #f4f2ff;
-  padding: 0 10px;
+  padding: 0;
   color: #5144cc;
-  font-size: 12px;
-  font-weight: 800;
-  white-space: nowrap;
 }
 
-.workspace-relations-button svg {
+.workspace-inspector-button svg {
   flex: 0 0 auto;
 }
 
-.workspace-relations-button span {
-  overflow: hidden;
-  min-width: 0;
-  text-overflow: ellipsis;
-}
-
-.workspace-relations-button:hover {
+.workspace-inspector-button:hover {
   border-color: #c7d2fe;
   background: #eef2ff;
   color: #4f46e5;
 }
 
-.workspace-relations-button-warning {
-  border-color: rgba(245, 158, 11, 0.36);
-  background: #fffbeb;
-  color: #b45309;
+.workspace-inspector-button-active {
+  border-color: #a5b4fc;
+  background: #eef2ff;
+  color: #4f46e5;
 }
 
 .workspace-asset-warning {
@@ -10253,61 +10210,43 @@ button {
   background: rgba(129, 140, 248, 0.12);
 }
 
-:root[data-theme="night"] .relations-dialog,
-:root[data-theme="dark"] .relations-dialog {
-  border-color: rgba(148, 163, 184, 0.28);
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(17, 24, 39, 0.98)),
-    #111827;
-  color: #e5e7eb;
-  box-shadow:
-    0 30px 80px rgba(0, 0, 0, 0.42),
-    0 2px 10px rgba(0, 0, 0, 0.24);
-}
-
-:root[data-theme="night"] .relations-dialog-header,
-:root[data-theme="dark"] .relations-dialog-header {
-  border-bottom-color: rgba(148, 163, 184, 0.18);
-}
-
-:root[data-theme="night"] .relations-dialog-title,
 :root[data-theme="night"] .knowledge-relations-header strong,
 :root[data-theme="night"] .knowledge-relations-empty strong,
-:root[data-theme="dark"] .relations-dialog-title,
 :root[data-theme="dark"] .knowledge-relations-header strong,
 :root[data-theme="dark"] .knowledge-relations-empty strong {
   color: #f8fafc;
 }
 
-:root[data-theme="night"] .relations-dialog-description,
 :root[data-theme="night"] .knowledge-relations-header span,
 :root[data-theme="night"] .knowledge-relations-empty,
 :root[data-theme="night"] .knowledge-relations-empty svg,
 :root[data-theme="night"] .knowledge-relation-meta small,
-:root[data-theme="night"] .relations-dialog-empty,
-:root[data-theme="dark"] .relations-dialog-description,
 :root[data-theme="dark"] .knowledge-relations-header span,
 :root[data-theme="dark"] .knowledge-relations-empty,
 :root[data-theme="dark"] .knowledge-relations-empty svg,
-:root[data-theme="dark"] .knowledge-relation-meta small,
-:root[data-theme="dark"] .relations-dialog-empty {
+:root[data-theme="dark"] .knowledge-relation-meta small {
   color: #94a3b8;
 }
 
-:root[data-theme="night"] .relations-dialog-knowledge,
-:root[data-theme="night"] .relations-dialog-links,
-:root[data-theme="night"] .relations-dialog-empty,
-:root[data-theme="dark"] .relations-dialog-knowledge,
-:root[data-theme="dark"] .relations-dialog-links,
-:root[data-theme="dark"] .relations-dialog-empty {
-  border-color: rgba(148, 163, 184, 0.24);
-  background: rgba(15, 23, 42, 0.62);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+:root[data-theme="night"] .document-inspector-sidebar,
+:root[data-theme="dark"] .document-inspector-sidebar {
+  border-left-color: rgba(148, 163, 184, 0.22);
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(17, 24, 39, 0.98)),
+    #111827;
+  color: #e5e7eb;
 }
 
-:root[data-theme="night"] .relations-dialog .document-knowledge-bar,
-:root[data-theme="dark"] .relations-dialog .document-knowledge-bar {
-  background: transparent;
+:root[data-theme="night"] .document-inspector-empty,
+:root[data-theme="dark"] .document-inspector-empty {
+  color: #94a3b8;
+}
+
+:root[data-theme="night"] .document-inspector-card,
+:root[data-theme="dark"] .document-inspector-card {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.62);
+  color: #dbe3ef;
 }
 
 :root[data-theme="night"] .knowledge-relations-header button,
@@ -10387,18 +10326,11 @@ button {
   color: #cbd5e1;
 }
 
-:root[data-theme="night"] .workspace-relations-button,
-:root[data-theme="dark"] .workspace-relations-button {
+:root[data-theme="night"] .workspace-inspector-button,
+:root[data-theme="dark"] .workspace-inspector-button {
   border-color: rgba(129, 140, 248, 0.28);
   background: rgba(129, 140, 248, 0.14);
   color: #c4d7ff;
-}
-
-:root[data-theme="night"] .workspace-relations-button-warning,
-:root[data-theme="dark"] .workspace-relations-button-warning {
-  border-color: rgba(245, 158, 11, 0.34);
-  background: rgba(245, 158, 11, 0.14);
-  color: #fbbf24;
 }
 
 :root[data-theme="dark"] .markdown-preview code,
@@ -10762,19 +10694,29 @@ button {
     grid-row: 2;
   }
 
-  .relations-dialog {
-    width: calc(100vw - 20px);
-    height: calc(100dvh - 20px);
-    border-radius: 12px;
+  .document-inspector-sidebar {
+    position: fixed;
+    top: 46px;
+    right: 0;
+    bottom: 0;
+    z-index: 90;
+    width: min(380px, calc(100vw - 18px));
+    height: auto;
+    grid-column: auto;
+    grid-row: auto;
+    transform: translateX(100%);
+    opacity: 1;
+    transition:
+      transform 180ms ease,
+      box-shadow 180ms ease;
   }
 
-  .relations-dialog-body {
-    gap: 10px;
-    padding: 12px;
+  .document-inspector-sidebar-open {
+    transform: translateX(0);
   }
 
-  .relations-dialog .document-knowledge-bar-expanded {
-    padding: 12px;
+  .document-inspector-body {
+    grid-template-rows: auto minmax(220px, 1fr);
   }
 
   .knowledge-relations-filters {
@@ -10797,10 +10739,6 @@ button {
     grid-column: auto;
     grid-row: auto;
     justify-content: flex-start;
-  }
-
-  .workspace-relations-button {
-    max-width: 34vw;
   }
 
   .toolbar {

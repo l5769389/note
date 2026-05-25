@@ -15,17 +15,14 @@ export function focusAndSelectInput(input: HTMLInputElement | null) {
 export function useActiveDocumentUiReset({
   activeDocumentId,
   resetActiveEditorLine,
-  resetKnowledgeEditor,
   resetWikiLinkDraft,
 }: {
   activeDocumentId?: string;
   resetActiveEditorLine: () => void;
-  resetKnowledgeEditor: () => void;
   resetWikiLinkDraft: () => void;
 }) {
   useEffect(() => {
     resetActiveEditorLine();
-    resetKnowledgeEditor();
     resetWikiLinkDraft();
   }, [activeDocumentId]);
 }

@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+﻿import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { WorkspaceStatusBar } from "../components/WorkspaceStatusBar";
 import type { MarkdownDocument } from "../types";
@@ -50,21 +50,24 @@ describe("WorkspaceStatusBar", () => {
     expect(html).toContain("workspace-autosave-status-failed");
   });
 
-  it("renders relation action when relation data is available", () => {
+  it("renders an icon-only inspector toggle", () => {
     const html = renderToStaticMarkup(
       <WorkspaceStatusBar
         activeDocument={document()}
+        isInspectorOpen
         isSidebarHidden={false}
         missingAssetReferences={[]}
-        relationCount={3}
         saveState="saved"
         wordCount={12}
-        onOpenRelations={() => {}}
+        onToggleInspector={() => {}}
         onToggleSidebar={() => {}}
       />,
     );
 
-    expect(html).toContain("关系 3");
+    expect(html).toContain("隐藏右侧栏");
+    expect(html).not.toContain("关系 3");
+    expect(html).toContain("workspace-inspector-button-active");
+    expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("workspace-autosave-status-saved");
   });
 });
