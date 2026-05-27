@@ -814,7 +814,7 @@ function showMainWindow() {
   const window = mainWindow ?? createMainWindow();
 
   if (window.isDestroyed()) {
-    return;
+    return null;
   }
 
   if (window.isMinimized()) {
@@ -823,11 +823,29 @@ function showMainWindow() {
 
   window.show();
   window.focus();
+
+  return window;
 }
 
 function requestQuickCapture() {
-  showMainWindow();
-  mainWindow?.webContents.send("quick-capture:open");
+  const window = showMainWindow();
+
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+
+  const sendQuickCapture = () => {
+    if (!window.isDestroyed()) {
+      window.webContents.send("quick-capture:open");
+    }
+  };
+
+  if (window.webContents.isLoading()) {
+    window.webContents.once("did-finish-load", sendQuickCapture);
+    return;
+  }
+
+  sendQuickCapture();
 }
 
 function hideWindowToTray(window: BrowserWindow) {
@@ -1680,25 +1698,33 @@ function registerWindowIpc() {
   });
 }
 
-app.whenReady().then(() => {
-  Menu.setApplicationMenu(null);
-  registerLocalPreviewProtocol();
-  registerAppStateIpc();
-  registerFileIpc();
-  registerWindowIpc();
-  createTray();
-  createMainWindow();
-  globalShortcut.register("CommandOrControl+Alt+N", requestQuickCapture);
+const singleInstanceLock = app.requestSingleInstanceLock();
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
-      return;
-    }
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", requestQuickCapture);
 
-    showMainWindow();
+  app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
+    registerLocalPreviewProtocol();
+    registerAppStateIpc();
+    registerFileIpc();
+    registerWindowIpc();
+    createTray();
+    createMainWindow();
+    globalShortcut.register("CommandOrControl+Alt+N", requestQuickCapture);
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createMainWindow();
+        return;
+      }
+
+      showMainWindow();
+    });
   });
-});
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

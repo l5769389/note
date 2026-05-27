@@ -18,13 +18,12 @@ function document(overrides: Partial<MarkdownDocument> = {}): MarkdownDocument {
 }
 
 describe("DocumentInspectorSidebar", () => {
-  it("renders expanded metadata and relation content in the right sidebar", () => {
+  it("renders expanded metadata content in the right sidebar", () => {
     const html = renderToStaticMarkup(
       <DocumentInspectorSidebar
         activeDocument={document()}
         isOpen
         knowledgePanel={<div>metadata panel</div>}
-        relationsPanel={<div>relations panel</div>}
       />,
     );
 
@@ -32,7 +31,6 @@ describe("DocumentInspectorSidebar", () => {
     expect(html).not.toContain("属性与关系");
     expect(html).not.toContain("Current");
     expect(html).toContain("metadata panel");
-    expect(html).toContain("relations panel");
   });
 
   it("keeps collapsed state accessible without rendering document metadata", () => {
@@ -41,13 +39,11 @@ describe("DocumentInspectorSidebar", () => {
         activeDocument={null}
         isOpen={false}
         knowledgePanel={<div>metadata panel</div>}
-        relationsPanel={<div>relations panel</div>}
       />,
     );
 
     expect(html).toContain('aria-hidden="true"');
     expect(html).not.toContain("document-inspector-sidebar-open");
     expect(html).not.toContain("metadata panel");
-    expect(html).toContain("relations panel");
   });
 });

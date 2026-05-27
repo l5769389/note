@@ -6256,27 +6256,59 @@ button {
 .document-inspector-body {
   display: grid;
   min-height: 0;
-  grid-template-rows: auto minmax(260px, 1fr);
+  align-content: start;
   gap: 12px;
-  overflow: hidden;
-  padding: 12px;
+  overflow: auto;
+  padding: 14px;
 }
 
 .document-inspector-card {
   min-width: 0;
-  border: 1px solid #e1e8f2;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+  border: 1px solid #e4e9f2;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.06);
 }
 
 .document-inspector-card-metadata {
+  align-self: start;
   overflow: visible;
 }
 
 .document-inspector-card-relations {
   min-height: 0;
   overflow: hidden;
+}
+
+.document-inspector-card-relations > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  list-style: none;
+  padding: 12px 14px;
+  color: #475467;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.document-inspector-card-relations > summary::-webkit-details-marker {
+  display: none;
+}
+
+.document-inspector-card-relations > summary::after {
+  color: #98a2b3;
+  content: "展开";
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.document-inspector-card-relations[open] > summary {
+  border-bottom: 1px solid #e5eaf2;
+}
+
+.document-inspector-card-relations[open] > summary::after {
+  content: "收起";
 }
 
 .document-inspector-empty {
@@ -6298,7 +6330,7 @@ button {
 }
 
 .document-inspector-sidebar .document-knowledge-bar-expanded {
-  padding: 12px;
+  padding: 14px;
 }
 
 .document-inspector-sidebar .document-knowledge-editor-header {
@@ -6309,6 +6341,7 @@ button {
   flex-wrap: wrap;
   align-items: flex-start;
   overflow: visible;
+  gap: 8px;
 }
 
 .document-inspector-sidebar .document-meta-property-form,
@@ -6321,6 +6354,50 @@ button {
 .document-inspector-card-relations .knowledge-relations-panel {
   height: 100%;
   padding: 14px;
+}
+
+.inspector-resizer {
+  position: absolute;
+  z-index: 16;
+  top: 30px;
+  right: calc(var(--inspector-width, 0px) - 4px);
+  bottom: var(--bottom-statusbar-height, 32px);
+  width: 8px;
+  cursor: col-resize;
+}
+
+.inspector-resizer::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: #d8dee8;
+  content: "";
+}
+
+.inspector-resizer:hover::before,
+.inspector-resizer-active::before {
+  background: #94a3b8;
+}
+
+.inspector-resize-preview {
+  position: absolute;
+  z-index: 28;
+  top: 30px;
+  bottom: var(--bottom-statusbar-height, 32px);
+  left: var(--inspector-resize-preview-x, 0px);
+  width: 0;
+  pointer-events: none;
+}
+
+.inspector-resize-preview::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  border-left: 2px dashed rgba(99, 102, 241, 0.54);
+  content: "";
 }
 
 .knowledge-relations-panel {
@@ -7545,7 +7622,7 @@ button {
   position: fixed;
   top: 50%;
   left: 50%;
-  z-index: 60;
+  z-index: 90;
   display: grid;
   width: min(520px, calc(100vw - 40px));
   max-height: calc(100vh - 48px);

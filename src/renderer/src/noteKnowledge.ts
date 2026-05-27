@@ -180,6 +180,23 @@ function parseFrontmatter(content: string): ParsedFrontmatter {
   };
 }
 
+export function getMarkdownBodyWithoutFrontmatter(content: string) {
+  return parseFrontmatter(content).body;
+}
+
+export function replaceMarkdownBodyPreservingFrontmatter(
+  content: string,
+  body: string,
+) {
+  const parsed = parseFrontmatter(content);
+
+  if (!parsed.hasFrontmatter) {
+    return body;
+  }
+
+  return `${serializeFrontmatter(parsed.properties)}${body.replace(/^\s+/, "")}`;
+}
+
 function getFrontmatterTags(properties: Map<string, string | string[]>) {
   const value = properties.get("tags") ?? properties.get("tag");
 

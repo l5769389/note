@@ -5,7 +5,7 @@ type DocumentInspectorSidebarProps = {
   activeDocument: MarkdownDocument | null;
   isOpen: boolean;
   knowledgePanel: ReactNode;
-  relationsPanel: ReactNode;
+  relationsPanel?: ReactNode;
 };
 
 export function DocumentInspectorSidebar({
@@ -35,9 +35,12 @@ export function DocumentInspectorSidebar({
             </div>
           )}
         </section>
-        <section className="document-inspector-card document-inspector-card-relations">
-          {relationsPanel}
-        </section>
+        {activeDocument && relationsPanel ? (
+          <details className="document-inspector-card document-inspector-card-relations">
+            <summary>关系总览</summary>
+            {relationsPanel}
+          </details>
+        ) : null}
       </div>
     </aside>
   );

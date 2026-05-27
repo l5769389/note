@@ -207,10 +207,12 @@ import {
 import {
   createMarkdownNoteContent,
   createWorkspaceKnowledge,
+  getMarkdownBodyWithoutFrontmatter,
   getWikiLinkTitle,
   normalizePropertyKey,
   normalizeTagName,
   normalizeWikiLinkTarget,
+  replaceMarkdownBodyPreservingFrontmatter,
 } from "./noteKnowledge";
 import {
   getTagInputValues,
@@ -416,6 +418,9 @@ const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
 ];
 
 const now = () => new Date().toISOString();
+const defaultInspectorWidth = 360;
+const minInspectorWidth = 300;
+const maxInspectorWidth = 620;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -437,6 +442,10 @@ function getSidebarResizeTarget(pointerX: number) {
     previewX: nextWidth,
     width: nextWidth,
   };
+}
+
+function getInspectorResizeTarget(pointerX: number) {
+  return clamp(window.innerWidth - pointerX, minInspectorWidth, maxInspectorWidth);
 }
 
 function getFileNameFromPath(filePath: string) {
@@ -566,9 +575,14 @@ export function App() {
   const { clearDocumentLoading, documentLoadingState, showDocumentLoading } =
     useDocumentLoading();
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
+  const [inspectorWidth, setInspectorWidth] = useState(defaultInspectorWidth);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   const [sidebarResizePreviewX, setSidebarResizePreviewX] = useState<
+    number | null
+  >(null);
+  const [isInspectorResizing, setIsInspectorResizing] = useState(false);
+  const [inspectorResizePreviewX, setInspectorResizePreviewX] = useState<
     number | null
   >(null);
   const [isEditorDraggingMedia, setIsEditorDraggingMedia] = useState(false);
@@ -692,6 +706,10 @@ export function App() {
   const activeDocumentKnowledge = activeDocument
     ? workspaceKnowledge.metadataByDocumentId.get(activeDocument.id) ?? null
     : null;
+  const activeMarkdownBody =
+    activeDocument && isMarkdownDocument(activeDocument)
+      ? getMarkdownBodyWithoutFrontmatter(activeDocument.content)
+      : "";
   const activeOutgoingLinks = activeDocument
     ? workspaceKnowledge.outgoingLinksByDocumentId.get(activeDocument.id) ?? []
     : [];
@@ -1260,6 +1278,36 @@ export function App() {
     window.addEventListener("pointercancel", stopSidebarResize);
   }
 
+  function startInspectorResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsInspectorResizing(true);
+    setInspectorResizePreviewX(event.clientX);
+
+    function previewInspectorResize(pointerEvent: PointerEvent) {
+      setInspectorResizePreviewX(
+        window.innerWidth - getInspectorResizeTarget(pointerEvent.clientX),
+      );
+    }
+
+    function commitInspectorResize(pointerX: number) {
+      setInspectorWidth(getInspectorResizeTarget(pointerX));
+    }
+
+    function stopInspectorResize(pointerEvent: PointerEvent) {
+      commitInspectorResize(pointerEvent.clientX);
+      setIsInspectorResizing(false);
+      setInspectorResizePreviewX(null);
+      window.removeEventListener("pointermove", previewInspectorResize);
+      window.removeEventListener("pointerup", stopInspectorResize);
+      window.removeEventListener("pointercancel", stopInspectorResize);
+    }
+
+    window.addEventListener("pointermove", previewInspectorResize);
+    window.addEventListener("pointerup", stopInspectorResize);
+    window.addEventListener("pointercancel", stopInspectorResize);
+  }
+
   function rememberRecentDirectory(path?: string) {
     setRecentDirectoryPaths((current) =>
       rememberRecentDirectoryPath(current, path),
@@ -1601,6 +1649,7 @@ export function App() {
     const existingDocument = workspace.documents.find(
       (document) => document.filePath === filePath,
     );
+    const shouldShowLoading = getDocumentTypeFromPath(filePath) !== "markdown";
 
     if (existingDocument) {
       setActiveDocument(existingDocument.id);
@@ -1608,7 +1657,9 @@ export function App() {
       return;
     }
 
-    showDocumentLoading("正在打开文档", getFileNameFromPath(filePath));
+    if (shouldShowLoading) {
+      showDocumentLoading("正在打开文档", getFileNameFromPath(filePath));
+    }
 
     try {
       const localFile = await window.desktop?.readMarkdownFile?.(filePath);
@@ -1629,7 +1680,9 @@ export function App() {
     } catch {
       setSaveState("failed");
     } finally {
-      clearDocumentLoading();
+      if (shouldShowLoading) {
+        clearDocumentLoading();
+      }
     }
   }
 
@@ -1753,9 +1806,14 @@ export function App() {
       return;
     }
 
+    const nextContent =
+      mode === "typora"
+        ? replaceMarkdownBodyPreservingFrontmatter(activeDocument.content, content)
+        : content;
+
     patchActiveDocument({
-      content,
-      title: renameFromMarkdown(content, activeDocument.title),
+      content: nextContent,
+      title: renameFromMarkdown(nextContent, activeDocument.title),
     });
   }
 
@@ -4754,12 +4812,14 @@ export function App() {
     isEditorHeaderVisible = true,
     isEditorOpen,
     onSetEditorOpen,
+    showContentLinks = true,
     showMissingRelations = true,
   }: {
     isEditorCloseVisible?: boolean;
     isEditorHeaderVisible?: boolean;
     isEditorOpen: boolean;
     onSetEditorOpen: (isOpen: boolean) => void;
+    showContentLinks?: boolean;
     showMissingRelations?: boolean;
   }) {
     return (
@@ -4779,6 +4839,7 @@ export function App() {
         propertyValueDraft={propertyValueDraft}
         propertyValueSuggestions={propertyValueSuggestions}
         relatedDocuments={activeRelatedDocuments}
+        showContentLinks={showContentLinks}
         showMissingRelations={showMissingRelations}
         tagSuggestions={tagSuggestions}
         wikiLinkInputRef={wikiLinkInputRef}
@@ -4812,6 +4873,7 @@ export function App() {
     isEditorHeaderVisible: false,
     isEditorOpen: true,
     onSetEditorOpen: () => {},
+    showContentLinks: false,
     showMissingRelations: false,
   });
 
@@ -4831,7 +4893,9 @@ export function App() {
           {
             "--sidebar-width": `${isSidebarHidden ? 0 : sidebarWidth}px`,
             "--sidebar-panel-width": `${sidebarWidth}px`,
-            "--inspector-width": isDocumentInspectorOpen ? "360px" : "0px",
+            "--inspector-width": isDocumentInspectorOpen
+              ? `${inspectorWidth}px`
+              : "0px",
           } as CSSProperties
         }
         onPointerMove={handleImmersivePointerMove}
@@ -4940,6 +5004,17 @@ export function App() {
             style={
               {
                 "--sidebar-resize-preview-x": `${sidebarResizePreviewX}px`,
+              } as CSSProperties
+            }
+          />
+        ) : null}
+        {inspectorResizePreviewX !== null ? (
+          <div
+            className="inspector-resize-preview"
+            aria-hidden="true"
+            style={
+              {
+                "--inspector-resize-preview-x": `${inspectorResizePreviewX}px`,
               } as CSSProperties
             }
           />
@@ -5278,6 +5353,7 @@ export function App() {
             >
               <Suspense
                 fallback={
+                  isMarkdownDocument(activeDocument) ? null : (
                   <section
                     className="standalone-document-viewer"
                     data-select-all-scope="content"
@@ -5294,6 +5370,7 @@ export function App() {
                       />
                     </div>
                   </section>
+                  )
                 }
               >
               {isHtmlDocument(activeDocument) ? (
@@ -5389,7 +5466,7 @@ export function App() {
                       ref={typoraEditorRef}
                       documentId={activeDocument.id}
                       filePath={activeDocument.filePath}
-                      value={activeDocument.content}
+                      value={activeMarkdownBody}
                       onChange={updateMarkdown}
                       onActiveLineChange={setActiveEditorLineIndex}
                       onEditDrawing={(drawingId) => void openDrawingEditor(drawingId)}
@@ -5435,7 +5512,7 @@ export function App() {
                           void openWikiLinkTarget(target);
                         }}
                       >
-                        {activeDocument.content}
+                        {activeMarkdownBody}
                       </MarkdownRenderer>
                     </article>
                   )}
@@ -5463,6 +5540,21 @@ export function App() {
             onToggleSidebar={toggleSidebarVisibility}
           />
         </section>
+
+        {isDocumentInspectorOpen ? (
+          <div
+            className={[
+              "inspector-resizer",
+              isInspectorResizing ? "inspector-resizer-active" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            role="separator"
+            aria-label="Resize inspector"
+            aria-orientation="vertical"
+            onPointerDown={startInspectorResize}
+          />
+        ) : null}
 
         <DocumentInspectorSidebar
           activeDocument={activeDocument}

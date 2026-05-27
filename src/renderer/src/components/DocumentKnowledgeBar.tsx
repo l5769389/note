@@ -52,6 +52,7 @@ type DocumentKnowledgeBarProps = {
   propertyValueDraft: string;
   propertyValueSuggestions: string[];
   relatedDocuments: RelatedDocumentItem[];
+  showContentLinks?: boolean;
   showMissingRelations?: boolean;
   tagSuggestions: string[];
   wikiLinkInputRef: Ref<HTMLInputElement>;
@@ -209,6 +210,7 @@ export function DocumentKnowledgeBar({
   propertyValueDraft,
   propertyValueSuggestions,
   relatedDocuments,
+  showContentLinks = true,
   showMissingRelations = true,
   tagSuggestions,
   wikiLinkInputRef,
@@ -254,10 +256,11 @@ export function DocumentKnowledgeBar({
     : outgoingLinks.filter((link) => link.targetDocument);
   const visibleMissingLinks = showMissingRelations ? missingLinks : [];
   const shouldShowContentLinks =
-    canEditContentLinks ||
-    visibleOutgoingLinks.length > 0 ||
-    backlinks.length > 0 ||
-    visibleMissingLinks.length > 0;
+    showContentLinks &&
+    (canEditContentLinks ||
+      visibleOutgoingLinks.length > 0 ||
+      backlinks.length > 0 ||
+      visibleMissingLinks.length > 0);
   const hasDoubleLinkKnowledge =
     visibleRelatedDocuments.length > 0 ||
     visibleOutgoingLinks.length > 0 ||
