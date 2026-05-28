@@ -797,6 +797,21 @@ function createHtmlAnnotationRuntime() {
 function createHtmlAnchorRuntime() {
   return `<script data-notedock-html-anchor-runtime>
 (() => {
+  function getOutlineAnchorOffset() {
+    return Math.min(140, Math.max(72, window.innerHeight * 0.18));
+  }
+
+  function scrollElementToOutlineAnchor(element) {
+    const scrollingElement = document.scrollingElement || document.documentElement;
+    const maxScrollTop = Math.max(0, scrollingElement.scrollHeight - window.innerHeight);
+    const nextTop = window.scrollY + element.getBoundingClientRect().top - getOutlineAnchorOffset();
+
+    window.scrollTo({
+      top: Math.min(maxScrollTop, Math.max(0, nextTop)),
+      behavior: "smooth",
+    });
+  }
+
   function getHashTarget(hash) {
     if (!hash || hash === "#") return document.scrollingElement || document.documentElement;
     let id = hash.slice(1);
@@ -839,7 +854,7 @@ function createHtmlAnchorRuntime() {
       return;
     }
 
-    hashTarget.scrollIntoView({ block: "start", behavior: "smooth" });
+    scrollElementToOutlineAnchor(hashTarget);
   }, true);
 })();
 </script>`;
@@ -855,6 +870,21 @@ function createHtmlOutlineRuntime() {
   let outlineEntries = [];
   let activeOutlineId = null;
   let pendingFrame = 0;
+
+  function getOutlineAnchorOffset() {
+    return Math.min(140, Math.max(72, window.innerHeight * 0.18));
+  }
+
+  function scrollElementToOutlineAnchor(element) {
+    const scrollingElement = document.scrollingElement || document.documentElement;
+    const maxScrollTop = Math.max(0, scrollingElement.scrollHeight - window.innerHeight);
+    const nextTop = window.scrollY + element.getBoundingClientRect().top - getOutlineAnchorOffset();
+
+    window.scrollTo({
+      top: Math.min(maxScrollTop, Math.max(0, nextTop)),
+      behavior: "smooth",
+    });
+  }
 
   function post(type, payload) {
     window.parent.postMessage(Object.assign({ source, type }, payload || {}), "*");
@@ -894,7 +924,7 @@ function createHtmlOutlineRuntime() {
       return;
     }
 
-    const activationY = Math.min(140, Math.max(72, window.innerHeight * 0.18));
+    const activationY = getOutlineAnchorOffset();
     let activeEntry = outlineEntries[0];
 
     for (const entry of outlineEntries) {
@@ -932,8 +962,8 @@ function createHtmlOutlineRuntime() {
       || document.querySelector("[" + outlineAttribute + "=\\"" + CSS.escape(outlineId) + "\\"]");
     const element = target && target.element ? target.element : target;
 
-    if (element && element.scrollIntoView) {
-      element.scrollIntoView({ block: "start", behavior: "smooth" });
+    if (element) {
+      scrollElementToOutlineAnchor(element);
       emitActiveOutline(outlineId);
     }
   }

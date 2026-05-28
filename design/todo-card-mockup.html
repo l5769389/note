@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Todo Card Mockup</title>
+    <style>
+      :root {
+        color: #18202f;
+        background: #edf1f5;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", "Microsoft YaHei", sans-serif;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(237, 241, 245, 0.96)),
+          #edf1f5;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      .stage {
+        width: min(1360px, calc(100vw - 48px));
+        height: min(820px, calc(100vh - 48px));
+        min-height: 720px;
+        display: grid;
+        grid-template-rows: 48px 1fr;
+        overflow: hidden;
+        border: 1px solid rgba(116, 128, 148, 0.22);
+        border-radius: 14px;
+        background: #f8fafc;
+        box-shadow:
+          0 26px 60px rgba(15, 23, 42, 0.16),
+          0 1px 0 rgba(255, 255, 255, 0.9) inset;
+      }
+
+      .chrome {
+        display: grid;
+        grid-template-columns: 260px 1fr 300px;
+        align-items: center;
+        gap: 18px;
+        padding: 0 18px;
+        border-bottom: 1px solid rgba(116, 128, 148, 0.16);
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .logo {
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        display: grid;
+        place-items: center;
+        color: #ffffff;
+        background: linear-gradient(135deg, #3157c9, #1f8a70);
+        box-shadow: 0 8px 18px rgba(49, 87, 201, 0.22);
+      }
+
+      .brand strong {
+        font-size: 13px;
+        letter-spacing: 0;
+      }
+
+      .toolbar {
+        display: flex;
+        justify-content: center;
+        gap: 6px;
+      }
+
+      .tool-button {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        color: #4b5565;
+        background: transparent;
+      }
+
+      .tool-button.active {
+        color: #1f3f9f;
+        border-color: rgba(49, 87, 201, 0.18);
+        background: rgba(49, 87, 201, 0.08);
+      }
+
+      .search {
+        justify-self: end;
+        width: 260px;
+        height: 31px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        border: 1px solid rgba(116, 128, 148, 0.2);
+        border-radius: 8px;
+        color: #667085;
+        background: rgba(255, 255, 255, 0.74);
+        font-size: 12px;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: 248px minmax(480px, 1fr) 360px;
+        min-height: 0;
+      }
+
+      .sidebar {
+        padding: 18px 12px;
+        border-right: 1px solid rgba(116, 128, 148, 0.14);
+        background: #f3f6fa;
+      }
+
+      .sidebar-title {
+        margin: 0 8px 12px;
+        color: #667085;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .tree-item {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 0 10px;
+        border-radius: 7px;
+        color: #384252;
+        font-size: 13px;
+      }
+
+      .tree-item.active {
+        color: #18202f;
+        background: #ffffff;
+        box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+      }
+
+      .tree-item.muted {
+        color: #7a8596;
+      }
+
+      .editor {
+        min-width: 0;
+        padding: 44px min(6vw, 72px);
+        overflow: hidden;
+        background: #ffffff;
+      }
+
+      .document {
+        max-width: 760px;
+        margin: 0 auto;
+      }
+
+      .document h1 {
+        margin: 0 0 18px;
+        color: #172033;
+        font-size: 34px;
+        line-height: 1.18;
+        letter-spacing: 0;
+      }
+
+      .document p {
+        margin: 0 0 18px;
+        color: #465366;
+        font-size: 15px;
+        line-height: 1.82;
+      }
+
+      .inline-todo {
+        margin: 28px 0;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        border-radius: 8px;
+        background: #fbfcfe;
+        overflow: hidden;
+      }
+
+      .inline-todo-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      }
+
+      .inline-todo-title {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+        font-size: 14px;
+        font-weight: 760;
+      }
+
+      .inline-todo-title span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .count-pill {
+        flex: none;
+        padding: 3px 8px;
+        border-radius: 999px;
+        color: #215545;
+        background: rgba(31, 138, 112, 0.12);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .todo-row {
+        display: grid;
+        grid-template-columns: 18px 1fr auto;
+        align-items: center;
+        gap: 10px;
+        min-height: 40px;
+        padding: 0 16px;
+        color: #263244;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+        font-size: 13px;
+      }
+
+      .todo-row.done {
+        color: #8a94a6;
+      }
+
+      .check {
+        width: 16px;
+        height: 16px;
+        display: grid;
+        place-items: center;
+        border: 1.5px solid #a5b1c3;
+        border-radius: 5px;
+        color: #ffffff;
+        background: #ffffff;
+      }
+
+      .done .check {
+        border-color: #1f8a70;
+        background: #1f8a70;
+      }
+
+      .row-meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .chip {
+        padding: 3px 7px;
+        border-radius: 999px;
+        color: #4b5565;
+        background: #f0f3f7;
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .chip.hot {
+        color: #9a3412;
+        background: rgba(249, 115, 22, 0.13);
+      }
+
+      .inline-todo-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 12px 16px;
+      }
+
+      .add-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 180px;
+        color: #667085;
+        font-size: 13px;
+      }
+
+      .progress {
+        width: 160px;
+        height: 6px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e8edf3;
+      }
+
+      .progress span {
+        display: block;
+        width: 43%;
+        height: 100%;
+        background: linear-gradient(90deg, #3157c9, #1f8a70);
+      }
+
+      .inspector {
+        min-width: 0;
+        padding: 18px;
+        border-left: 1px solid rgba(116, 128, 148, 0.14);
+        background: #f7f9fc;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+
+      .panel-title {
+        color: #384252;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .icon-button {
+        width: 30px;
+        height: 30px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(116, 128, 148, 0.18);
+        border-radius: 7px;
+        color: #445064;
+        background: #ffffff;
+      }
+
+      .todo-card {
+        border: 1px solid rgba(116, 128, 148, 0.22);
+        border-radius: 8px;
+        overflow: hidden;
+        background: #ffffff;
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+      }
+
+      .todo-card-banner {
+        height: 5px;
+        background: linear-gradient(90deg, #3157c9, #1f8a70, #d97706);
+      }
+
+      .todo-card-main {
+        padding: 16px;
+      }
+
+      .todo-card-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .todo-card-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .todo-icon {
+        width: 34px;
+        height: 34px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        color: #ffffff;
+        background: #1f8a70;
+      }
+
+      .todo-card-title h2 {
+        margin: 0;
+        color: #18202f;
+        font-size: 16px;
+        line-height: 1.22;
+        letter-spacing: 0;
+      }
+
+      .todo-card-title p {
+        margin: 3px 0 0;
+        color: #667085;
+        font-size: 12px;
+      }
+
+      .mini-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .stat {
+        min-width: 0;
+        padding: 9px 8px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 8px;
+        background: #fbfcfe;
+      }
+
+      .stat strong {
+        display: block;
+        color: #18202f;
+        font-size: 15px;
+      }
+
+      .stat span {
+        display: block;
+        margin-top: 2px;
+        color: #7a8596;
+        font-size: 11px;
+      }
+
+      .quick-create {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 40px;
+        margin-top: 12px;
+        padding: 0 10px;
+        border: 1px solid rgba(49, 87, 201, 0.18);
+        border-radius: 8px;
+        color: #3157c9;
+        background: rgba(49, 87, 201, 0.06);
+        font-size: 13px;
+        font-weight: 720;
+      }
+
+      .create-card {
+        margin-top: 14px;
+        padding: 14px;
+        border: 1px solid rgba(116, 128, 148, 0.22);
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      .create-card h3 {
+        margin: 0 0 12px;
+        color: #263244;
+        font-size: 13px;
+        letter-spacing: 0;
+      }
+
+      .field {
+        height: 36px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        padding: 0 10px;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        border-radius: 8px;
+        color: #18202f;
+        background: #fbfcfe;
+        font-size: 12px;
+      }
+
+      .field.placeholder {
+        color: #8a94a6;
+      }
+
+      .create-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .secondary,
+      .primary {
+        height: 34px;
+        border-radius: 8px;
+        border: 1px solid rgba(116, 128, 148, 0.22);
+        font-size: 12px;
+        font-weight: 760;
+      }
+
+      .secondary {
+        color: #445064;
+        background: #ffffff;
+      }
+
+      .primary {
+        color: #ffffff;
+        border-color: #3157c9;
+        background: #3157c9;
+      }
+
+      .svg-icon {
+        width: 16px;
+        height: 16px;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+      }
+
+      .svg-icon.small {
+        width: 14px;
+        height: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="stage" aria-label="Todo card design mockup">
+      <header class="chrome">
+        <div class="brand">
+          <div class="logo">
+            <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 19.5V5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5" />
+              <path d="M8 7h7" />
+              <path d="M8 11h8" />
+            </svg>
+          </div>
+          <strong>noteDock</strong>
+        </div>
+        <nav class="toolbar" aria-label="editor toolbar">
+          <button class="tool-button active" aria-label="bold">
+            <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 4h8a4 4 0 0 1 0 8H6z" />
+              <path d="M6 12h9a4 4 0 0 1 0 8H6z" />
+            </svg>
+          </button>
+          <button class="tool-button" aria-label="list">
+            <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 6h13" />
+              <path d="M8 12h13" />
+              <path d="M8 18h13" />
+              <path d="M3 6h.01" />
+              <path d="M3 12h.01" />
+              <path d="M3 18h.01" />
+            </svg>
+          </button>
+          <button class="tool-button" aria-label="todo">
+            <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+          </button>
+          <button class="tool-button" aria-label="table">
+            <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 5h18v14H3z" />
+              <path d="M3 10h18" />
+              <path d="M9 5v14" />
+              <path d="M15 5v14" />
+            </svg>
+          </button>
+        </nav>
+        <div class="search">
+          <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          搜索笔记、任务、标签
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="sidebar" aria-label="workspace navigation">
+          <p class="sidebar-title">工作区</p>
+          <div class="tree-item active">
+            <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 20h16" />
+              <path d="M4 4h16v16H4z" />
+              <path d="M8 8h8" />
+              <path d="M8 12h8" />
+            </svg>
+            项目笔记
+          </div>
+          <div class="tree-item">
+            <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 7h5l2 3h11v9H3z" />
+            </svg>
+            设计资料
+          </div>
+          <div class="tree-item">
+            <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            待办清单
+          </div>
+          <div class="tree-item muted">归档</div>
+        </aside>
+
+        <article class="editor">
+          <div class="document">
+            <h1>产品迭代记录</h1>
+            <p>
+              本周目标是把笔记里的结构化内容变得更轻：任务、表格、流程图都可以作为正文里的独立块存在，
+              但交互上仍然保持阅读和编辑的流畅感。
+            </p>
+            <p>
+              Todo 清单适合做成可折叠卡片。正文里显示关键任务和进度，完整编辑放在侧栏或弹窗里。
+            </p>
+
+            <section class="inline-todo" aria-label="embedded todo list">
+              <div class="inline-todo-head">
+                <div class="inline-todo-title">
+                  <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M9 11l3 3L22 4" />
+                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                  </svg>
+                  <span>今日待办</span>
+                </div>
+                <span class="count-pill">3 / 7</span>
+              </div>
+              <div class="todo-row">
+                <span class="check"></span>
+                <span>复查笔记搜索交互</span>
+                <span class="row-meta">
+                  <span class="chip hot">高</span>
+                  <span class="chip">今天</span>
+                </span>
+              </div>
+              <div class="todo-row done">
+                <span class="check">
+                  <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                </span>
+                <span>整理截图素材</span>
+                <span class="row-meta"><span class="chip">完成</span></span>
+              </div>
+              <div class="todo-row">
+                <span class="check"></span>
+                <span>补一段项目说明</span>
+                <span class="row-meta"><span class="chip">周五</span></span>
+              </div>
+              <div class="inline-todo-foot">
+                <div class="add-line">
+                  <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12h14" />
+                    <path d="M12 5v14" />
+                  </svg>
+                  添加任务
+                </div>
+                <div class="progress" aria-label="progress"><span></span></div>
+              </div>
+            </section>
+
+            <p>
+              卡片默认只占一个自然段落的高度，不会打断正文。用户需要处理更多任务时，可以从侧栏打开完整视图。
+            </p>
+          </div>
+        </article>
+
+        <aside class="inspector" aria-label="todo inspector">
+          <div class="panel-header">
+            <span class="panel-title">任务面板</span>
+            <button class="icon-button" aria-label="new todo">
+              <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12h14" />
+                <path d="M12 5v14" />
+              </svg>
+            </button>
+          </div>
+
+          <section class="todo-card" aria-label="todo card">
+            <div class="todo-card-banner"></div>
+            <div class="todo-card-main">
+              <div class="todo-card-top">
+                <div class="todo-card-title">
+                  <div class="todo-icon">
+                    <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M9 11l3 3L22 4" />
+                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2>今日待办</h2>
+                    <p>项目笔记 / 产品迭代记录</p>
+                  </div>
+                </div>
+                <button class="icon-button" aria-label="more">
+                  <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 12h.01" />
+                    <path d="M19 12h.01" />
+                    <path d="M5 12h.01" />
+                  </svg>
+                </button>
+              </div>
+
+              <div class="mini-stats">
+                <div class="stat">
+                  <strong>7</strong>
+                  <span>任务</span>
+                </div>
+                <div class="stat">
+                  <strong>3</strong>
+                  <span>完成</span>
+                </div>
+                <div class="stat">
+                  <strong>43%</strong>
+                  <span>进度</span>
+                </div>
+              </div>
+
+              <div class="todo-row">
+                <span class="check"></span>
+                <span>复查笔记搜索交互</span>
+                <span class="row-meta"><span class="chip hot">高</span></span>
+              </div>
+              <div class="todo-row done">
+                <span class="check">
+                  <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                </span>
+                <span>整理截图素材</span>
+                <span class="row-meta"><span class="chip">完成</span></span>
+              </div>
+              <div class="todo-row">
+                <span class="check"></span>
+                <span>补一段项目说明</span>
+                <span class="row-meta"><span class="chip">周五</span></span>
+              </div>
+
+              <div class="quick-create">
+                <svg class="svg-icon small" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 12h14" />
+                  <path d="M12 5v14" />
+                </svg>
+                新建任务
+              </div>
+            </div>
+          </section>
+
+          <section class="create-card" aria-label="create todo">
+            <h3>新建 Todo List</h3>
+            <div class="field">清单名：发布前检查</div>
+            <div class="field placeholder">添加第一个任务...</div>
+            <div class="field placeholder">选择颜色 / 图标 / 截止日期</div>
+            <div class="create-actions">
+              <button class="secondary">取消</button>
+              <button class="primary">创建</button>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

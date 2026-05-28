@@ -14,6 +14,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  GripVertical,
   Inbox,
   Italic,
   Link2,
@@ -32,6 +33,7 @@ import {
 import {
   lazy,
   Suspense,
+  Fragment,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -86,7 +88,6 @@ import {
 } from "./components/DocumentKnowledgeBar";
 import { DocumentInspectorSidebar } from "./components/DocumentInspectorSidebar";
 import { UniverSheetPreview } from "./components/UniverSheetPreview";
-import { WelcomeIllustration } from "./components/WelcomeIllustration";
 import { WorkspaceSearchPanel } from "./components/WorkspaceSearchPanel";
 import { WorkspaceStatusBar } from "./components/WorkspaceStatusBar";
 import type { HtmlDocumentViewerHandle } from "./components/HtmlDocumentViewer";
@@ -331,6 +332,12 @@ const MindMapModal = lazy(() =>
   })),
 );
 
+const KnowledgeGraphModal = lazy(() =>
+  import("./components/KnowledgeGraphModal").then((module) => ({
+    default: module.KnowledgeGraphModal,
+  })),
+);
+
 const PdfDocumentViewer = lazy(() =>
   import("./components/PdfDocumentViewer").then((module) => ({
     default: module.PdfDocumentViewer,
@@ -362,12 +369,197 @@ type SidebarTab = "files" | "current" | "search";
 type FileExplorerView = "tree" | "list";
 
 const homeRecentDocumentLimit = 3;
+const homeTodoStorageKey = "notedock:home-todos";
+const homeQuickNoteStorageKey = "notedock:home-quick-note";
 const sidebarRecentDirectoryLimit = 5;
 const immersiveRevealHitSlop = 44;
 const defaultWindowZoomFactor = 1;
 const zoomIndicatorVisibleMs = 1500;
 
 type FindPanelMode = "find" | "replace";
+
+type HomeTodoItem = {
+  createdAt: string;
+  done: boolean;
+  id: string;
+  text: string;
+};
+
+type HomeTodoDragState = {
+  height: number;
+  id: string;
+  insertIndex: number;
+  left: number;
+  offsetY: number;
+  pointerId: number;
+  pointerY: number;
+  width: number;
+};
+
+function createHomeTodoId() {
+  return `todo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function loadHomeQuickNote() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  try {
+    return window.localStorage.getItem(homeQuickNoteStorageKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function loadHomeTodoItems(): HomeTodoItem[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const rawItems = window.localStorage.getItem(homeTodoStorageKey);
+
+    if (!rawItems) {
+      return [];
+    }
+
+    const parsedItems = JSON.parse(rawItems);
+
+    if (!Array.isArray(parsedItems)) {
+      return [];
+    }
+
+    return parsedItems
+      .filter((item): item is HomeTodoItem =>
+        Boolean(
+          item &&
+            typeof item.id === "string" &&
+            typeof item.text === "string" &&
+            typeof item.done === "boolean" &&
+            typeof item.createdAt === "string",
+        ),
+      )
+      .slice(0, 80);
+  } catch {
+    return [];
+  }
+}
+
+function reorderHomeTodoItems(
+  items: HomeTodoItem[],
+  activeTodoId: string,
+  insertIndex: number,
+) {
+  const activeIndex = items.findIndex((item) => item.id === activeTodoId);
+
+  if (activeIndex < 0) {
+    return items;
+  }
+
+  const activeItem = items[activeIndex];
+  const nextItems = items.filter((item) => item.id !== activeTodoId);
+  const targetIndex = clamp(insertIndex, 0, nextItems.length);
+
+  nextItems.splice(targetIndex, 0, activeItem);
+
+  const didOrderChange = nextItems.some((item, index) => item.id !== items[index]?.id);
+
+  return didOrderChange ? nextItems : items;
+}
+
+type HomeTodoRowProps = {
+  item: HomeTodoItem;
+  onDelete: (todoId: string) => void;
+  onDragStart: (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    todoId: string,
+  ) => void;
+  onToggle: (todoId: string) => void;
+  rowRef: (todoId: string, node: HTMLDivElement | null) => void;
+};
+
+function HomeTodoRow({
+  item,
+  onDelete,
+  onDragStart,
+  onToggle,
+  rowRef,
+}: HomeTodoRowProps) {
+  return (
+    <div
+      className={
+        [
+          "home-todo-item",
+          item.done ? "home-todo-item-done" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+      }
+      ref={(node) => rowRef(item.id, node)}
+    >
+      <button
+        className="home-todo-check"
+        type="button"
+        aria-label={item.done ? "标记为未完成" : "标记为已完成"}
+        aria-pressed={item.done}
+        onClick={() => onToggle(item.id)}
+      >
+        {item.done ? <Check size={14} /> : null}
+      </button>
+      <span>{item.text}</span>
+      <button
+        className="home-todo-delete"
+        type="button"
+        aria-label="删除待办"
+        onClick={() => onDelete(item.id)}
+      >
+        <Trash2 size={14} />
+      </button>
+      <button
+        className="home-todo-drag-handle"
+        type="button"
+        aria-label="拖拽排序"
+        title="拖拽排序"
+        onPointerDown={(event) => onDragStart(event, item.id)}
+      >
+        <GripVertical size={15} />
+      </button>
+    </div>
+  );
+}
+
+function HomeTodoDropSlot() {
+  return (
+    <div className="home-todo-drop-slot-row" aria-hidden="true">
+      <span />
+      <span />
+    </div>
+  );
+}
+
+function HomeTodoDragPreview({ item }: { item: HomeTodoItem }) {
+  return (
+    <div
+      className={[
+        "home-todo-item",
+        "home-todo-item-preview",
+        item.done ? "home-todo-item-done" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <span className="home-todo-check" aria-hidden="true">
+        {item.done ? <Check size={14} /> : null}
+      </span>
+      <span>{item.text}</span>
+      <span className="home-todo-delete" aria-hidden="true" />
+      <span className="home-todo-drag-handle" aria-hidden="true">
+        <GripVertical size={15} />
+      </span>
+    </div>
+  );
+}
 
 type RevealDocumentRangeOptions = {
   content?: string;
@@ -515,6 +707,10 @@ export function App() {
   const [isZoomIndicatorVisible, setIsZoomIndicatorVisible] = useState(false);
   const [isHomeOpen, setIsHomeOpen] = useState(true);
   const [isRecentExpanded, setIsRecentExpanded] = useState(false);
+  const [homeQuickNote, setHomeQuickNote] = useState(loadHomeQuickNote);
+  const [homeTodoItems, setHomeTodoItems] = useState<HomeTodoItem[]>(loadHomeTodoItems);
+  const [homeTodoDraft, setHomeTodoDraft] = useState("");
+  const [homeTodoDrag, setHomeTodoDrag] = useState<HomeTodoDragState | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [, setBackupMessage] = useState("本地自动保存已启用");
   const [isDrawingOpen, setIsDrawingOpen] = useState(false);
@@ -542,6 +738,7 @@ export function App() {
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isDocumentInspectorOpen, setIsDocumentInspectorOpen] = useState(false);
+  const [isKnowledgeGraphOpen, setIsKnowledgeGraphOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<AppContextMenuState | null>(null);
   const [findPanelMode, setFindPanelMode] = useState<FindPanelMode>("find");
   const [findQuery, setFindQuery] = useState("");
@@ -587,6 +784,9 @@ export function App() {
   >(null);
   const [isEditorDraggingMedia, setIsEditorDraggingMedia] = useState(false);
   const [isImmersiveSidebarOpen, setIsImmersiveSidebarOpen] = useState(false);
+  const homeTodoDragRef = useRef<HomeTodoDragState | null>(null);
+  const homeTodoListRef = useRef<HTMLDivElement | null>(null);
+  const homeTodoRowRefs = useRef(new Map<string, HTMLDivElement>());
   const [newFileName, setNewFileName] = useState("Untitled");
   const {
     applyDirectoryTree,
@@ -663,6 +863,26 @@ export function App() {
       isStale = true;
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(homeTodoStorageKey, JSON.stringify(homeTodoItems));
+    } catch {
+      // Todo persistence should never block the editor shell.
+    }
+  }, [homeTodoItems]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(homeQuickNoteStorageKey, homeQuickNote);
+    } catch {
+      // The quick note is intentionally lightweight and should never block startup.
+    }
+  }, [homeQuickNote]);
+
+  useEffect(() => {
+    homeTodoDragRef.current = homeTodoDrag;
+  }, [homeTodoDrag]);
 
   useImmersiveModeState({
     immersiveRevealEdge,
@@ -1046,6 +1266,196 @@ export function App() {
         : recentDocuments.slice(0, homeRecentDocumentLimit),
     [isRecentExpanded, recentDocuments],
   );
+  const remainingHomeTodoCount = homeTodoItems.filter((item) => !item.done).length;
+  const completedHomeTodoCount = homeTodoItems.length - remainingHomeTodoCount;
+  const homeTodoProgress = homeTodoItems.length
+    ? Math.round((completedHomeTodoCount / homeTodoItems.length) * 100)
+    : 0;
+  const hasCompletedHomeTodos = homeTodoItems.some((item) => item.done);
+  const addHomeTodo = () => {
+    const text = homeTodoDraft.trim();
+
+    if (!text) {
+      return;
+    }
+
+    setHomeTodoItems((currentItems) => [
+      {
+        id: createHomeTodoId(),
+        text,
+        done: false,
+        createdAt: new Date().toISOString(),
+      },
+      ...currentItems,
+    ]);
+    setHomeTodoDraft("");
+  };
+  const toggleHomeTodo = (todoId: string) => {
+    setHomeTodoItems((currentItems) =>
+      currentItems.map((item) =>
+        item.id === todoId ? { ...item, done: !item.done } : item,
+      ),
+    );
+  };
+  const deleteHomeTodo = (todoId: string) => {
+    setHomeTodoItems((currentItems) =>
+      currentItems.filter((item) => item.id !== todoId),
+    );
+  };
+  const clearCompletedHomeTodos = () => {
+    setHomeTodoItems((currentItems) => currentItems.filter((item) => !item.done));
+  };
+  const activeHomeTodoItem = useMemo(
+    () =>
+      homeTodoDrag
+        ? homeTodoItems.find((item) => item.id === homeTodoDrag.id) ?? null
+        : null,
+    [homeTodoDrag, homeTodoItems],
+  );
+  const visibleHomeTodoItems = useMemo(
+    () =>
+      homeTodoDrag
+        ? homeTodoItems.filter((item) => item.id !== homeTodoDrag.id)
+        : homeTodoItems,
+    [homeTodoDrag, homeTodoItems],
+  );
+  const setHomeTodoRowRef = (todoId: string, node: HTMLDivElement | null) => {
+    if (node) {
+      homeTodoRowRefs.current.set(todoId, node);
+      return;
+    }
+
+    homeTodoRowRefs.current.delete(todoId);
+  };
+  const getHomeTodoInsertIndex = (clientY: number, activeTodoId: string) => {
+    const visibleItems = homeTodoItems.filter((item) => item.id !== activeTodoId);
+
+    for (let index = 0; index < visibleItems.length; index += 1) {
+      const row = homeTodoRowRefs.current.get(visibleItems[index].id);
+
+      if (!row) {
+        continue;
+      }
+
+      const rect = row.getBoundingClientRect();
+
+      if (clientY < rect.top + rect.height / 2) {
+        return index;
+      }
+    }
+
+    return visibleItems.length;
+  };
+  const handleHomeTodoDragStart = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    todoId: string,
+  ) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const row = homeTodoRowRefs.current.get(todoId);
+
+    if (!row) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const rowRect = row.getBoundingClientRect();
+
+    setHomeTodoDrag({
+      height: rowRect.height,
+      id: todoId,
+      insertIndex: getHomeTodoInsertIndex(event.clientY, todoId),
+      left: rowRect.left,
+      offsetY: event.clientY - rowRect.top,
+      pointerId: event.pointerId,
+      pointerY: event.clientY,
+      width: rowRect.width,
+    });
+  };
+  useEffect(() => {
+    if (!homeTodoDrag) {
+      return;
+    }
+
+    const scrollNearEdges = (clientY: number) => {
+      const list = homeTodoListRef.current;
+
+      if (!list) {
+        return;
+      }
+
+      const rect = list.getBoundingClientRect();
+      const edgeSize = 48;
+
+      if (clientY < rect.top + edgeSize) {
+        list.scrollTop -= 12;
+      } else if (clientY > rect.bottom - edgeSize) {
+        list.scrollTop += 12;
+      }
+    };
+    const handlePointerMove = (event: PointerEvent) => {
+      const currentDrag = homeTodoDragRef.current;
+
+      if (!currentDrag || event.pointerId !== currentDrag.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      scrollNearEdges(event.clientY);
+
+      setHomeTodoDrag((current) =>
+        current && event.pointerId === current.pointerId
+          ? {
+              ...current,
+              insertIndex: getHomeTodoInsertIndex(event.clientY, current.id),
+              pointerY: event.clientY,
+            }
+          : current,
+      );
+    };
+    const finishDrag = (event: PointerEvent) => {
+      const currentDrag = homeTodoDragRef.current;
+
+      if (!currentDrag || event.pointerId !== currentDrag.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      setHomeTodoDrag(null);
+      setHomeTodoItems((currentItems) =>
+        reorderHomeTodoItems(
+          currentItems,
+          currentDrag.id,
+          currentDrag.insertIndex,
+        ),
+      );
+    };
+    const cancelDrag = (event: PointerEvent) => {
+      const currentDrag = homeTodoDragRef.current;
+
+      if (!currentDrag || event.pointerId !== currentDrag.pointerId) {
+        return;
+      }
+
+      setHomeTodoDrag(null);
+    };
+
+    document.body.classList.add("home-todo-global-dragging");
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishDrag);
+    window.addEventListener("pointercancel", cancelDrag);
+
+    return () => {
+      document.body.classList.remove("home-todo-global-dragging");
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishDrag);
+      window.removeEventListener("pointercancel", cancelDrag);
+    };
+  }, [homeTodoDrag?.id, homeTodoItems]);
   const activeMarkdownOutline = useMemo(
     () =>
       isMarkdownDocument(activeDocument)
@@ -3299,7 +3709,7 @@ export function App() {
   }
 
   function openKnowledgeRelationsPanel() {
-    setIsDocumentInspectorOpen(true);
+    setIsKnowledgeGraphOpen(true);
     setIsActionsOpen(false);
     setTopMenu(null);
   }
@@ -5275,73 +5685,231 @@ export function App() {
         <section className="workspace">
           {isHomeOpen || !activeDocument ? (
             <section className="welcome-home">
-              <div className="welcome-hero">
-                <div className="welcome-logo">
-                  <img src={appLogoUrl} alt="" draggable={false} />
-                </div>
-                <h1>
-                  欢迎使用 <span>noteDock</span>
-                </h1>
-                <p>把 Markdown 写作、文档阅读和灵感整理收进同一个工作台。</p>
-                <WelcomeIllustration />
-              </div>
+              <section className="home-dashboard">
+                <section className="home-main-column">
+                  <section className="home-brand-panel" aria-label="工作台">
+                    <div className="home-brand-logo">
+                      <img src={appLogoUrl} alt="" draggable={false} />
+                    </div>
+                    <div className="home-brand-copy">
+                      <span>noteDock</span>
+                      <h1>工作台</h1>
+                      <p>开始今天的整理、阅读与写作。</p>
+                    </div>
+                    <div className="home-hero-visual" aria-hidden="true">
+                      <div className="home-hero-sheet">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                      <div className="home-hero-fold" />
+                      <div className="home-hero-pencil" />
+                    </div>
+                  </section>
 
-              <section
-                className={
-                  isRecentExpanded
-                    ? "recent-documents recent-documents-expanded"
-                    : "recent-documents"
-                }
-              >
-                <div className="recent-header">
-                  <h2>最近文档</h2>
-                  {hasMoreRecentDocuments && (
-                    <button
-                      type="button"
-                      aria-expanded={isRecentExpanded}
-                      onClick={() => setIsRecentExpanded((current) => !current)}
+                  <section className="home-shortcut-panel" aria-label="快捷操作">
+                    <header className="home-section-header">
+                      <h2>快捷操作</h2>
+                    </header>
+                    <div className="home-brand-actions">
+                      <button type="button" onClick={createNewDocument}>
+                        <FilePlus2 size={18} />
+                        <span>
+                          <strong>新建文档</strong>
+                          <em>创建一篇空白笔记</em>
+                        </span>
+                      </button>
+                      <button type="button" onClick={() => void openWorkspaceFolder()}>
+                        <FolderOpen size={18} />
+                        <span>
+                          <strong>打开文件夹</strong>
+                          <em>浏览本地知识库</em>
+                        </span>
+                      </button>
+                      <button type="button" onClick={openKnowledgeRelationsPanel}>
+                        <BookOpenText size={18} />
+                        <span>
+                          <strong>知识关系</strong>
+                          <em>查看笔记之间的连接</em>
+                        </span>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section className="home-note-panel" aria-label="灵感便签">
+                    <header className="home-section-header">
+                      <div>
+                        <h2>灵感便签</h2>
+                        <span>自动保存在本机</span>
+                      </div>
+                      <ClipboardPaste size={18} />
+                    </header>
+                    <textarea
+                      aria-label="灵感便签"
+                      placeholder="先记下一个想法、临时链接或待整理的片段。"
+                      value={homeQuickNote}
+                      onChange={(event) => setHomeQuickNote(event.target.value)}
+                    />
+                  </section>
+
+                  <section
+                    className={
+                      isRecentExpanded
+                        ? "recent-documents recent-documents-expanded"
+                        : "recent-documents"
+                    }
+                  >
+                    <div className="recent-header">
+                      <h2>最近文档</h2>
+                      {hasMoreRecentDocuments && (
+                        <button
+                          type="button"
+                          aria-expanded={isRecentExpanded}
+                          onClick={() => setIsRecentExpanded((current) => !current)}
+                        >
+                          {isRecentExpanded ? "收起" : "更多"}
+                          <ChevronRight
+                            className={isRecentExpanded ? "recent-more-icon-expanded" : undefined}
+                            size={16}
+                          />
+                        </button>
+                      )}
+                    </div>
+                    <div
+                      className={
+                        isRecentExpanded ? "recent-list recent-list-expanded" : "recent-list"
+                      }
                     >
-                      {isRecentExpanded ? "收起" : "更多"}
-                      <ChevronRight
-                        className={isRecentExpanded ? "recent-more-icon-expanded" : undefined}
-                        size={16}
-                      />
+                      {visibleRecentDocuments.length ? (
+                        visibleRecentDocuments.map((document) => (
+                          <button
+                            className="recent-row"
+                            key={document.id}
+                            title={`${getDocumentDisplayName(document)}\n${getDocumentPathPreview(
+                              document,
+                              workspace.workspacePath,
+                            )}`}
+                            type="button"
+                            onClick={() => void openRecentDocument(document)}
+                            onContextMenu={(event) => {
+                              if (document.filePath) {
+                                openFileContextMenu(event, document.filePath);
+                              }
+                            }}
+                          >
+                            <FileText size={16} />
+                            <strong>{getDocumentDisplayName(document)}</strong>
+                            <span>{getDocumentPathPreview(document, workspace.workspacePath)}</span>
+                            <time dateTime={document.updatedAt}>
+                              {formatRecentTimestamp(document.updatedAt)}
+                            </time>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="recent-empty">
+                          <strong>还没有最近文档</strong>
+                          <span>打开文件夹或新建文档后，这里会显示最近访问的笔记。</span>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                </section>
+
+                <section className="home-todo-panel" aria-label="今日待办">
+                  <div className="home-todo-header">
+                    <div className="home-todo-title">
+                      <span>工作台</span>
+                      <h1>今日待办</h1>
+                      <div
+                        className="home-todo-progress"
+                        aria-hidden="true"
+                        title={`${homeTodoProgress}%`}
+                      >
+                        <span style={{ width: `${homeTodoProgress}%` }} />
+                      </div>
+                    </div>
+                    <strong>{remainingHomeTodoCount} 项未完成</strong>
+                  </div>
+
+                  <form
+                    className="home-todo-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      addHomeTodo();
+                    }}
+                  >
+                    <input
+                      aria-label="添加待办"
+                      placeholder="添加一个待办，例如：整理会议笔记"
+                      value={homeTodoDraft}
+                      onChange={(event) => setHomeTodoDraft(event.target.value)}
+                    />
+                    <button type="submit" disabled={!homeTodoDraft.trim()}>
+                      <Plus size={15} />
+                      添加
                     </button>
-                  )}
-                </div>
-                <div
-                  className={
-                    isRecentExpanded ? "recent-list recent-list-expanded" : "recent-list"
-                  }
-                >
-                  {visibleRecentDocuments.map((document) => (
-                    <button
-                      className="recent-row"
-                      key={document.id}
-                      title={`${getDocumentDisplayName(document)}\n${getDocumentPathPreview(
-                        document,
-                        workspace.workspacePath,
-                      )}`}
-                      type="button"
-                      onClick={() => void openRecentDocument(document)}
-                      onContextMenu={(event) => {
-                        if (document.filePath) {
-                          openFileContextMenu(event, document.filePath);
-                        }
+                  </form>
+
+                  <div
+                    className={
+                      homeTodoDrag
+                        ? "home-todo-list home-todo-list-dragging"
+                        : "home-todo-list"
+                    }
+                    ref={homeTodoListRef}
+                  >
+                    {homeTodoItems.length > 0 ? (
+                      <>
+                        {visibleHomeTodoItems.map((item, index) => (
+                          <Fragment key={item.id}>
+                            {homeTodoDrag?.insertIndex === index ? (
+                              <HomeTodoDropSlot />
+                            ) : null}
+                            <HomeTodoRow
+                              item={item}
+                              onDelete={deleteHomeTodo}
+                              onDragStart={handleHomeTodoDragStart}
+                              onToggle={toggleHomeTodo}
+                              rowRef={setHomeTodoRowRef}
+                            />
+                          </Fragment>
+                        ))}
+                        {homeTodoDrag?.insertIndex === visibleHomeTodoItems.length ? (
+                          <HomeTodoDropSlot />
+                        ) : null}
+                      </>
+                    ) : (
+                      <div className="home-todo-empty">
+                        <strong>暂无待办</strong>
+                        <span>把今天要处理的笔记、阅读或整理任务放在这里。</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {homeTodoDrag && activeHomeTodoItem ? (
+                    <div
+                      className="home-todo-drag-layer"
+                      style={{
+                        height: homeTodoDrag.height,
+                        left: homeTodoDrag.left,
+                        top: homeTodoDrag.pointerY - homeTodoDrag.offsetY,
+                        width: homeTodoDrag.width,
                       }}
                     >
-                      <FileText size={16} />
-                      <strong>{getDocumentDisplayName(document)}</strong>
-                      <span>{getDocumentPathPreview(document, workspace.workspacePath)}</span>
-                      <time dateTime={document.updatedAt}>
-                        {formatRecentTimestamp(document.updatedAt)}
-                      </time>
+                      <HomeTodoDragPreview item={activeHomeTodoItem} />
+                    </div>
+                  ) : null}
+
+                  {hasCompletedHomeTodos ? (
+                    <button
+                      className="home-todo-clear"
+                      type="button"
+                      onClick={clearCompletedHomeTodos}
+                    >
+                      清除已完成
                     </button>
-                  ))}
-                </div>
-                <p className="welcome-tip">
-                  提示：您可以通过拖拽文件或文件夹到侧边栏来快速导入
-                </p>
+                  ) : null}
+                </section>
               </section>
             </section>
           ) : (
@@ -6187,6 +6755,18 @@ export function App() {
         </Dialog.Root>
 
         <AppConfirmationDialog dialog={appDialog} onClose={closeAppDialog} />
+
+        <Suspense fallback={null}>
+          <KnowledgeGraphModal
+            items={workspaceRelationItems}
+            open={isKnowledgeGraphOpen}
+            onOpenChange={setIsKnowledgeGraphOpen}
+            onOpenDocument={(document) => {
+              openRelationDocument(document);
+              setIsKnowledgeGraphOpen(false);
+            }}
+          />
+        </Suspense>
 
         <AboutDialog
           logoUrl={appLogoUrl}

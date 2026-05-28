@@ -168,6 +168,10 @@ type TyporaSearchRevealOptions = {
   query: string;
 };
 
+const outlineAnchorMinOffset = 72;
+const outlineAnchorMaxOffset = 140;
+const outlineAnchorViewportRatio = 0.18;
+
 type VideoToolbarState =
   | { visible: false }
   | {
@@ -1469,8 +1473,48 @@ const markdownAlertDecoration = $prose(
 );
 
 const markdownSyntaxDecoration = $prose(
-  () =>
-    new Plugin<MarkdownSyntaxPluginState>({
+  () => {
+    let isPointerFocusPending = false;
+
+    function setMarkdownSyntaxFocused(view: EditorView, isFocused: boolean) {
+      if (!view.dom.isConnected || (isFocused && !view.hasFocus())) {
+        return;
+      }
+
+      view.dispatch(
+        view.state.tr.setMeta(markdownSyntaxPluginKey, {
+          isFocused,
+          ...(isFocused ? {} : { suppressedInlineCodeAt: null }),
+        } satisfies Partial<MarkdownSyntaxPluginState>),
+      );
+    }
+
+    function scheduleMarkdownSyntaxFocus(view: EditorView, waitForPointerUp: boolean) {
+      const focusAfterSelectionSettles = () => {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            isPointerFocusPending = false;
+            setMarkdownSyntaxFocused(view, true);
+          });
+        });
+      };
+
+      if (!waitForPointerUp) {
+        focusAfterSelectionSettles();
+        return;
+      }
+
+      const finishPointerFocus = () => {
+        window.removeEventListener("mouseup", finishPointerFocus, true);
+        window.removeEventListener("dragend", finishPointerFocus, true);
+        focusAfterSelectionSettles();
+      };
+
+      window.addEventListener("mouseup", finishPointerFocus, true);
+      window.addEventListener("dragend", finishPointerFocus, true);
+    }
+
+    return new Plugin<MarkdownSyntaxPluginState>({
       key: markdownSyntaxPluginKey,
       state: {
         init: (): MarkdownSyntaxPluginState => ({
@@ -1569,6 +1613,17 @@ const markdownSyntaxDecoration = $prose(
       },
       props: {
         handleDOMEvents: {
+          mousedown(view, event) {
+            const mouseEvent = event as MouseEvent;
+
+            if (mouseEvent.button === 0 && !view.hasFocus()) {
+              isPointerFocusPending = true;
+              setMarkdownSyntaxFocused(view, false);
+              scheduleMarkdownSyntaxFocus(view, true);
+            }
+
+            return false;
+          },
           blur(view, event) {
             const nextActiveElement = (event as FocusEvent).relatedTarget;
 
@@ -1579,20 +1634,15 @@ const markdownSyntaxDecoration = $prose(
               return false;
             }
 
-            view.dispatch(
-              view.state.tr.setMeta(markdownSyntaxPluginKey, {
-                isFocused: false,
-                suppressedInlineCodeAt: null,
-              } satisfies Partial<MarkdownSyntaxPluginState>),
-            );
+            isPointerFocusPending = false;
+            setMarkdownSyntaxFocused(view, false);
             return false;
           },
           focus(view) {
-            view.dispatch(
-              view.state.tr.setMeta(markdownSyntaxPluginKey, {
-                isFocused: true,
-              } satisfies Partial<MarkdownSyntaxPluginState>),
-            );
+            if (!isPointerFocusPending) {
+              scheduleMarkdownSyntaxFocus(view, false);
+            }
+
             return false;
           },
         },
@@ -1708,7 +1758,8 @@ const markdownSyntaxDecoration = $prose(
           return DecorationSet.create(state.doc, decorations);
         },
       },
-    }),
+    });
+  },
 );
 
 const disableNativeWritingChecks = $prose(
@@ -1948,6 +1999,27 @@ function findRenderedHeadingLineIndex(
   }
 
   return findHeadingLineIndex(markdown, level, title, occurrence || 1);
+}
+
+function getOutlineAnchorOffset(viewportHeight: number) {
+  return Math.min(
+    outlineAnchorMaxOffset,
+    Math.max(outlineAnchorMinOffset, viewportHeight * outlineAnchorViewportRatio),
+  );
+}
+
+function getScrollTopForElementAtOutlineAnchor(
+  root: HTMLElement,
+  element: Element,
+) {
+  const rootRect = root.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const anchorOffset = getOutlineAnchorOffset(root.clientHeight);
+  const maxScrollTop = Math.max(0, root.scrollHeight - root.clientHeight);
+  const nextScrollTop =
+    root.scrollTop + elementRect.top - rootRect.top - anchorOffset;
+
+  return Math.min(maxScrollTop, Math.max(0, nextScrollTop));
 }
 
 function appendMarkdown(currentValue: string, markdown: string) {
@@ -3326,7 +3398,7 @@ function MilkdownRuntime({
     }
 
     const rootRect = root.getBoundingClientRect();
-    const activationY = rootRect.top + Math.min(140, root.clientHeight * 0.24);
+    const activationY = rootRect.top + getOutlineAnchorOffset(root.clientHeight);
     let activeHeading = headings[0];
 
     for (const heading of headings) {
@@ -3830,24 +3902,28 @@ function MilkdownRuntime({
           )
           .at(occurrence - 1);
 
-        clickedHeadingRef.current = {
-          lineIndex,
-          scrollTop: root.scrollTop,
-        };
-        clickedHeadingUserScrollRef.current = false;
-
         if (headingElement) {
-          const rootRect = root.getBoundingClientRect();
-          const headingRect = headingElement.getBoundingClientRect();
-          const isHeadingVisible =
-            headingRect.top >= rootRect.top && headingRect.bottom <= rootRect.bottom;
+          const nextScrollTop = getScrollTopForElementAtOutlineAnchor(
+            root,
+            headingElement,
+          );
 
-          if (!isHeadingVisible) {
-            headingElement.scrollIntoView({
-              behavior: "smooth",
-              block: "center",
-            });
-          }
+          clickedHeadingRef.current = {
+            lineIndex,
+            scrollTop: nextScrollTop,
+          };
+          clickedHeadingUserScrollRef.current = false;
+
+          root.scrollTo({
+            top: nextScrollTop,
+            behavior: "smooth",
+          });
+        } else {
+          clickedHeadingRef.current = {
+            lineIndex,
+            scrollTop: root.scrollTop,
+          };
+          clickedHeadingUserScrollRef.current = false;
         }
 
         if (activeHeadingTimerRef.current !== null) {
