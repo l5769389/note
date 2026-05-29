@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   CircleAlert,
+  FileText,
   Info,
   Lightbulb,
   OctagonAlert,
@@ -55,6 +56,8 @@ const languagePattern = /language-(\S+)/;
 const videoControlsSafeZone = 44;
 const wikiLinkHrefPrefix = "notedock-wikilink:";
 const wikiLinkPattern = /\[\[([^[\]\n]{1,180})\]\]/g;
+const wikiLinkDisplayExtensionPattern =
+  /\.(?:md|markdown|html?|pdf|docx?|xlsx?|univer|excalidraw(?:\.json)?)$/i;
 const markdownCodeRegionPattern = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g;
 
 const markdownAlertIcons: Record<TyporaAlertKind, LucideIcon> = {
@@ -142,7 +145,7 @@ function renderWikiLinksInText(markdown: string) {
         .split("/")
         .filter(Boolean)
         .at(-1)
-        ?.replace(/\.(?:md|markdown)$/i, "") ||
+        ?.replace(wikiLinkDisplayExtensionPattern, "") ||
       target;
 
     return `[${display}](${wikiLinkHrefPrefix}${encodeURIComponent(target)})`;
@@ -160,6 +163,48 @@ function handleWikiLinkClick(
 
   event.preventDefault();
   onOpenWikiLink?.(decodeURIComponent(href.slice(wikiLinkHrefPrefix.length)));
+}
+
+function MarkdownAnchorRenderer({
+  children,
+  className,
+  filePath,
+  href,
+  onOpenWikiLink,
+  ...props
+}: ComponentPropsWithoutRef<"a"> & Pick<MarkdownRendererProps, "filePath" | "onOpenWikiLink">) {
+  const isWikiLink = href?.startsWith(wikiLinkHrefPrefix) ?? false;
+  const renderedHref = getRenderedResourceUrl(href, filePath);
+  const wikiTarget = isWikiLink
+    ? decodeURIComponent(href?.slice(wikiLinkHrefPrefix.length) ?? "")
+    : "";
+  const normalizedClassName = [
+    className,
+    isWikiLink ? "markdown-wiki-link" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <a
+      {...props}
+      className={normalizedClassName || undefined}
+      data-wiki-target={isWikiLink ? wikiTarget : undefined}
+      href={renderedHref}
+      onClick={(event) => handleWikiLinkClick(event, href, onOpenWikiLink)}
+      title={isWikiLink ? `打开文档：${wikiTarget}` : props.title}
+    >
+      {isWikiLink ? (
+        <>
+          <FileText aria-hidden="true" size={14} strokeWidth={2.1} />
+          <span className="markdown-wiki-link-kind">文档</span>
+          <span className="markdown-wiki-link-title">{children}</span>
+        </>
+      ) : (
+        children
+      )}
+    </a>
+  );
 }
 
 function renderHighlightedNode(node: HighlightNode, key: string): ReactNode {
@@ -509,10 +554,11 @@ export function MarkdownRenderer({
     <ReactMarkdown
       components={{
         a: ({ href, ...props }: ComponentPropsWithoutRef<"a">) => (
-          <a
+          <MarkdownAnchorRenderer
             {...props}
-            href={getRenderedResourceUrl(href, filePath)}
-            onClick={(event) => handleWikiLinkClick(event, href, onOpenWikiLink)}
+            filePath={filePath}
+            href={href}
+            onOpenWikiLink={onOpenWikiLink}
           />
         ),
         blockquote: BlockquoteRenderer,
@@ -556,10 +602,11 @@ export function InlineMarkdownRenderer({
     <ReactMarkdown
       components={{
         a: ({ href, ...props }: ComponentPropsWithoutRef<"a">) => (
-          <a
+          <MarkdownAnchorRenderer
             {...props}
-            href={getRenderedResourceUrl(href, filePath)}
-            onClick={(event) => handleWikiLinkClick(event, href, onOpenWikiLink)}
+            filePath={filePath}
+            href={href}
+            onOpenWikiLink={onOpenWikiLink}
           />
         ),
         img: ({ src, ...props }: ComponentPropsWithoutRef<"img">) => (

@@ -28,9 +28,11 @@ import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
 import "katex/dist/katex.min.css";
 import {
   CircleAlert,
+  FileText,
   Info,
   Lightbulb,
   OctagonAlert,
+  Table2,
   TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
@@ -41,6 +43,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
@@ -159,6 +162,8 @@ type TyporaEditorProps = {
   onEditUniverSheet?: (code: string) => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
   onPaste: (event: ClipboardEvent<HTMLElement>) => void;
+  onRequestDocumentReference?: () => void;
+  onRequestTableInsert?: () => void;
   value: string;
 };
 
@@ -186,6 +191,14 @@ type VideoToolbarState =
       videoWidth: number;
       visible: true;
       width?: number;
+    };
+
+type SlashCommandMenuState =
+  | { visible: false }
+  | {
+      left: number;
+      top: number;
+      visible: true;
     };
 
 export type TyporaEditorHandle = {
@@ -770,6 +783,7 @@ const codeBlockLanguageDecoration = $prose(
 );
 
 type CodeBlockDomTarget = { node: ProseMirrorNode; pos: number };
+type TaskListDomTarget = { node: ProseMirrorNode; pos: number };
 
 function findCodeBlockAtDocumentPosition(
   view: EditorView,
@@ -847,6 +861,127 @@ function placeCursorInsideCodeBlock(view: EditorView, pos: number) {
       .scrollIntoView(),
   );
   view.focus();
+}
+
+function getPixelValue(value: string, fallback = 0) {
+  const parsed = Number.parseFloat(value);
+
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function isTaskListItemNode(node: ProseMirrorNode) {
+  return node.type.name === "list_item" && typeof node.attrs.checked === "boolean";
+}
+
+function getTaskListItemAtDomElement(
+  view: EditorView,
+  element: Element,
+): TaskListDomTarget | null {
+  let result: TaskListDomTarget | null = null;
+
+  view.state.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (result || !isTaskListItemNode(node)) {
+      return;
+    }
+
+    const nodeDOM = view.nodeDOM(pos);
+
+    if (
+      nodeDOM === element ||
+      (nodeDOM instanceof Element &&
+        (nodeDOM.contains(element) || element.contains(nodeDOM)))
+    ) {
+      result = { node, pos };
+    }
+  });
+
+  return result;
+}
+
+function getTaskListCheckboxTargetAtMouseEvent(
+  view: EditorView,
+  event: MouseEvent,
+): TaskListDomTarget | null {
+  if (!(event.target instanceof Element) || !view.dom.contains(event.target)) {
+    return null;
+  }
+
+  const directTaskElement = event.target.closest<HTMLElement>('li[data-item-type="task"]');
+  const taskElements = directTaskElement
+    ? [directTaskElement]
+    : Array.from(view.dom.querySelectorAll<HTMLElement>('li[data-item-type="task"]'));
+
+  for (const taskElement of taskElements) {
+    const pseudoStyle = window.getComputedStyle(taskElement, "::before");
+    const elementStyle = window.getComputedStyle(taskElement);
+    const fontSize = getPixelValue(elementStyle.fontSize, 16);
+    const rect = taskElement.getBoundingClientRect();
+    const checkboxLeft = rect.left + getPixelValue(pseudoStyle.left, -1.42 * fontSize);
+    const checkboxTop = rect.top + getPixelValue(pseudoStyle.top, 0.39 * fontSize);
+    const checkboxWidth = getPixelValue(pseudoStyle.width, 0.92 * fontSize);
+    const checkboxHeight = getPixelValue(pseudoStyle.height, 0.92 * fontSize);
+    const hitSlop = Math.max(5, fontSize * 0.22);
+    const withinCheckbox =
+      event.clientX >= checkboxLeft - hitSlop &&
+      event.clientX <= checkboxLeft + checkboxWidth + hitSlop &&
+      event.clientY >= checkboxTop - hitSlop &&
+      event.clientY <= checkboxTop + checkboxHeight + hitSlop;
+
+    if (!withinCheckbox) {
+      continue;
+    }
+
+    const taskItem = getTaskListItemAtDomElement(view, taskElement);
+
+    if (taskItem) {
+      return taskItem;
+    }
+  }
+
+  return null;
+}
+
+function setTaskListItemStatusAtPosition(
+  view: EditorView,
+  pos: number,
+  status: TaskStatusCommand,
+  scrollIntoView = false,
+) {
+  const node = view.state.doc.nodeAt(pos);
+
+  if (!node || !isTaskListItemNode(node)) {
+    return false;
+  }
+
+  const checked =
+    status === "toggle" ? node.attrs.checked !== true : status === "completed";
+  let transaction = view.state.tr.setNodeMarkup(pos, undefined, {
+    ...node.attrs,
+    checked,
+  });
+
+  if (scrollIntoView) {
+    transaction = transaction.scrollIntoView();
+  }
+
+  view.dispatch(transaction);
+  return true;
+}
+
+function toggleTaskListItemAtMouseEvent(view: EditorView, event: MouseEvent) {
+  const taskItem = getTaskListCheckboxTargetAtMouseEvent(view, event);
+
+  if (!taskItem) {
+    return false;
+  }
+
+  const toggled = setTaskListItemStatusAtPosition(view, taskItem.pos, "toggle");
+
+  if (toggled) {
+    view.focus();
+  }
+
+  return toggled;
 }
 
 function isBlankMarkdown(value: string) {
@@ -1467,6 +1602,177 @@ const markdownAlertDecoration = $prose(
           });
 
           return DecorationSet.create(state.doc, decorations);
+        },
+      },
+    }),
+);
+
+type WikiLinkTokenRange = {
+  display: string;
+  from: number;
+  raw: string;
+  target: string;
+  to: number;
+};
+
+const wikiLinkTokenPattern = /\[\[([^[\]\n]{1,180})\]\]/g;
+const wikiLinkTokenDisplayExtensionPattern =
+  /\.(?:md|markdown|html?|pdf|docx?|xlsx?|univer|excalidraw(?:\.json)?)$/i;
+
+function getWikiLinkTokenDisplay(raw: string) {
+  const [targetPart, displayPart] = raw.split("|");
+  const target = targetPart?.trim() ?? "";
+
+  return {
+    display:
+      displayPart?.trim() ||
+      target
+        .split("#")[0]
+        ?.replace(/\\/g, "/")
+        .split("/")
+        .filter(Boolean)
+        .at(-1)
+        ?.replace(wikiLinkTokenDisplayExtensionPattern, "") ||
+      target,
+    target,
+  };
+}
+
+function isPlainWikiLinkText(node: ProseMirrorNode, parent?: ProseMirrorNode | null) {
+  return (
+    node.isText &&
+    Boolean(node.text) &&
+    parent?.type.name !== "code_block" &&
+    !node.marks.some((mark) => /code/i.test(mark.type.name))
+  );
+}
+
+function collectWikiLinkTokenRanges(doc: ProseMirrorNode) {
+  const ranges: WikiLinkTokenRange[] = [];
+
+  doc.descendants((node: ProseMirrorNode, pos, parent) => {
+    if (!isPlainWikiLinkText(node, parent)) {
+      return;
+    }
+
+    const text = node.text ?? "";
+    wikiLinkTokenPattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = wikiLinkTokenPattern.exec(text))) {
+      const raw = match[0];
+      const { display, target } = getWikiLinkTokenDisplay(match[1] ?? "");
+
+      if (!target) {
+        continue;
+      }
+
+      ranges.push({
+        display,
+        from: pos + match.index,
+        raw,
+        target,
+        to: pos + match.index + raw.length,
+      });
+    }
+  });
+
+  return ranges;
+}
+
+function findWikiLinkTokenRangeAtPosition(
+  state: EditorState,
+  position: number,
+  direction: "inside" | "backward" | "forward" = "inside",
+) {
+  return collectWikiLinkTokenRanges(state.doc).find((range) => {
+    if (direction === "backward") {
+      return range.to === position || (range.from < position && position <= range.to);
+    }
+
+    if (direction === "forward") {
+      return range.from === position || (range.from <= position && position < range.to);
+    }
+
+    return range.from <= position && position <= range.to;
+  });
+}
+
+const wikiLinkTokenDecoration = $prose(
+  () =>
+    new Plugin({
+      props: {
+        decorations(state) {
+          const decorations = collectWikiLinkTokenRanges(state.doc).map((range) =>
+            Decoration.inline(range.from, range.to, {
+              class: "typora-wiki-link-token",
+              "data-wiki-display": range.display,
+              "data-wiki-target": range.target,
+            }),
+          );
+
+          return DecorationSet.create(state.doc, decorations);
+        },
+        handleDOMEvents: {
+          mousedown(view, event) {
+            const target =
+              event.target instanceof Element
+                ? event.target.closest<HTMLElement>(".typora-wiki-link-token")
+                : null;
+
+            if (!target || (event as MouseEvent).button !== 0) {
+              return false;
+            }
+
+            const position = view.posAtDOM(target, 0);
+            const range = findWikiLinkTokenRangeAtPosition(view.state, position, "inside");
+
+            if (!range) {
+              return false;
+            }
+
+            event.preventDefault();
+            view.dispatch(
+              view.state.tr
+                .setSelection(TextSelection.create(view.state.doc, range.from, range.to))
+                .scrollIntoView(),
+            );
+            view.focus();
+            return true;
+          },
+        },
+        handleKeyDown(view, event) {
+          const { from, to, empty } = view.state.selection;
+
+          if (event.key === "Backspace") {
+            const range = empty
+              ? findWikiLinkTokenRangeAtPosition(view.state, from, "backward")
+              : collectWikiLinkTokenRanges(view.state.doc).find(
+                  (item) => item.from <= from && item.to >= to,
+                );
+
+            if (range) {
+              event.preventDefault();
+              view.dispatch(view.state.tr.delete(range.from, range.to).scrollIntoView());
+              return true;
+            }
+          }
+
+          if (event.key === "Delete") {
+            const range = empty
+              ? findWikiLinkTokenRangeAtPosition(view.state, from, "forward")
+              : collectWikiLinkTokenRanges(view.state.doc).find(
+                  (item) => item.from <= from && item.to >= to,
+                );
+
+            if (range) {
+              event.preventDefault();
+              view.dispatch(view.state.tr.delete(range.from, range.to).scrollIntoView());
+              return true;
+            }
+          }
+
+          return false;
         },
       },
     }),
@@ -2369,18 +2675,7 @@ function setCurrentTaskListItemStatus(
     return false;
   }
 
-  const checked =
-    status === "toggle"
-      ? listItem.node.attrs.checked !== true
-      : status === "completed";
-
-  view.dispatch(
-    view.state.tr.setNodeMarkup(listItem.pos, undefined, {
-      ...listItem.node.attrs,
-      checked,
-    }).scrollIntoView(),
-  );
-  return true;
+  return setTaskListItemStatusAtPosition(view, listItem.pos, status, true);
 }
 
 function wrapCurrentSelectionInList(
@@ -2531,6 +2826,8 @@ function MilkdownRuntime({
   onChangeRef,
   onEditDrawing,
   onEditUniverSheet,
+  onRequestDocumentReference,
+  onRequestTableInsert,
   rootRef,
   value,
   valueRef,
@@ -2538,6 +2835,8 @@ function MilkdownRuntime({
   const applyingExternalValueRef = useRef(false);
   const filePathRef = useRef(filePath);
   const onEditUniverSheetRef = useRef(onEditUniverSheet);
+  const onRequestDocumentReferenceRef = useRef(onRequestDocumentReference);
+  const onRequestTableInsertRef = useRef(onRequestTableInsert);
   const [imageToolbar, setImageToolbar] = useState<ImageToolbarState>({
     visible: false,
   });
@@ -2545,6 +2844,9 @@ function MilkdownRuntime({
     visible: false,
   });
   const [videoToolbar, setVideoToolbar] = useState<VideoToolbarState>({
+    visible: false,
+  });
+  const [slashCommandMenu, setSlashCommandMenu] = useState<SlashCommandMenuState>({
     visible: false,
   });
   const activeHeadingTimerRef = useRef<number | null>(null);
@@ -2561,6 +2863,14 @@ function MilkdownRuntime({
   useEffect(() => {
     onEditUniverSheetRef.current = onEditUniverSheet;
   }, [onEditUniverSheet]);
+
+  useEffect(() => {
+    onRequestDocumentReferenceRef.current = onRequestDocumentReference;
+  }, [onRequestDocumentReference]);
+
+  useEffect(() => {
+    onRequestTableInsertRef.current = onRequestTableInsert;
+  }, [onRequestTableInsert]);
   const previousDocumentIdRef = useRef(documentId);
   const pendingActiveHeadingRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
@@ -2585,6 +2895,98 @@ function MilkdownRuntime({
     clickedHeadingRef.current = null;
     clickedHeadingUserScrollRef.current = false;
   }
+
+  function closeSlashCommandMenu() {
+    setSlashCommandMenu({ visible: false });
+  }
+
+  function openSlashCommandMenu(view: EditorView) {
+    const root = rootRef.current;
+
+    if (!root) {
+      return;
+    }
+
+    const cursorRect = view.coordsAtPos(view.state.selection.from);
+    const rootRect = root.getBoundingClientRect();
+
+    setSlashCommandMenu({
+      left: Math.max(16, cursorRect.left - rootRect.left),
+      top: Math.max(16, cursorRect.bottom - rootRect.top + 8),
+      visible: true,
+    });
+  }
+
+  function handleSlashCommandKeyDownCapture(
+    event: ReactKeyboardEvent<HTMLElement>,
+  ) {
+    if (event.key === "Escape" && slashCommandMenu.visible) {
+      event.preventDefault();
+      closeSlashCommandMenu();
+      return;
+    }
+
+    if (
+      event.key !== "/" ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      event.shiftKey ||
+      isNonEditorControl(event.target)
+    ) {
+      return;
+    }
+
+    const target =
+      event.target instanceof Element ? event.target.closest(".ProseMirror") : null;
+
+    if (!target) {
+      return;
+    }
+
+    const editor = get();
+
+    if (!editor) {
+      return;
+    }
+
+    event.preventDefault();
+    editor.action((ctx) => openSlashCommandMenu(ctx.get(editorViewCtx)));
+  }
+
+  function runSlashCommand(command: "document" | "table") {
+    closeSlashCommandMenu();
+
+    if (command === "document") {
+      onRequestDocumentReferenceRef.current?.();
+      return;
+    }
+
+    onRequestTableInsertRef.current?.();
+  }
+
+  useEffect(() => {
+    if (!slashCommandMenu.visible) {
+      return undefined;
+    }
+
+    const closeOnOutsidePointer = (event: MouseEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest(".typora-slash-menu")
+      ) {
+        return;
+      }
+
+      closeSlashCommandMenu();
+    };
+
+    window.addEventListener("mousedown", closeOnOutsidePointer, true);
+
+    return () => {
+      window.removeEventListener("mousedown", closeOnOutsidePointer, true);
+    };
+  }, [slashCommandMenu.visible]);
 
   function shouldReleaseClickedHeadingLock() {
     const clickedHeading = clickedHeadingRef.current;
@@ -3341,6 +3743,7 @@ function MilkdownRuntime({
       .use(createUniverSheetBlockDecoration(onEditUniverSheetRef, filePathRef))
       .use(createRawHtmlPreviewDecoration(filePathRef))
       .use(markdownAlertDecoration)
+      .use(wikiLinkTokenDecoration)
       .use(markdownSyntaxDecoration)
       .use(searchHighlightDecoration)
       .use(editableImageSelection)
@@ -3985,9 +4388,25 @@ function MilkdownRuntime({
         }
       }}
       onMouseDown={(event) => {
-        const root = rootRef.current;
-
         const editor = get();
+        let toggledTaskCheckbox = false;
+
+        if (editor) {
+          editor.action((ctx) => {
+            toggledTaskCheckbox = toggleTaskListItemAtMouseEvent(
+              ctx.get(editorViewCtx),
+              event.nativeEvent,
+            );
+          });
+        }
+
+        if (toggledTaskCheckbox) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+
+        const root = rootRef.current;
 
         if (
           !root ||
@@ -4010,6 +4429,7 @@ function MilkdownRuntime({
         requestAnimationFrame(refreshTableToolbar);
         requestAnimationFrame(refreshVideoToolbar);
       }}
+      onKeyDownCapture={handleSlashCommandKeyDownCapture}
     >
       <ImageToolbar
         state={imageToolbar}
@@ -4022,6 +4442,37 @@ function MilkdownRuntime({
       <ImageResizeHandle state={imageToolbar} onResizeStart={startImageResize} />
       <VideoResizeHandle state={videoToolbar} onResizeStart={startVideoResize} />
       <TableToolbar state={tableToolbar} onResize={resizeSelectedTable} onRun={runTableCommand} />
+      {slashCommandMenu.visible ? (
+        <div
+          className="typora-slash-menu"
+          style={{ left: slashCommandMenu.left, top: slashCommandMenu.top }}
+          onMouseDown={(event) => event.preventDefault()}
+          role="menu"
+        >
+          <button type="button" onClick={() => runSlashCommand("table")} role="menuitem">
+            <span className="typora-slash-menu-icon">
+              <Table2 size={16} />
+            </span>
+            <span>
+              <strong>表格</strong>
+              <small>插入一个 Markdown 表格</small>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => runSlashCommand("document")}
+            role="menuitem"
+          >
+            <span className="typora-slash-menu-icon">
+              <FileText size={16} />
+            </span>
+            <span>
+              <strong>引用文档</strong>
+              <small>选择文件并作为整体插入</small>
+            </span>
+          </button>
+        </div>
+      ) : null}
       <Milkdown />
     </div>
   );
@@ -4038,6 +4489,8 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
       onEditDrawing,
       onEditUniverSheet,
       onPaste,
+      onRequestDocumentReference,
+      onRequestTableInsert,
       value,
     },
     ref,
@@ -4150,6 +4603,8 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
             onEditDrawing={onEditDrawing}
             onEditUniverSheet={onEditUniverSheet}
             onPaste={onPaste}
+            onRequestDocumentReference={onRequestDocumentReference}
+            onRequestTableInsert={onRequestTableInsert}
             rootRef={rootRef}
             value={value}
             valueRef={valueRef}

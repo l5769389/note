@@ -22,7 +22,8 @@ describe("MarkdownRenderer", () => {
     );
 
     expect(html).toContain('href="notedock-wikilink:Daily%20Note"');
-    expect(html).toContain(">today</a>");
+    expect(html).toContain('markdown-wiki-link-kind">文档</span>');
+    expect(html).toContain('markdown-wiki-link-title">today</span>');
     expect(html).toContain("[[Code]]");
   });
 });

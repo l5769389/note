@@ -70,4 +70,24 @@ describe("WorkspaceStatusBar", () => {
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("workspace-autosave-status-saved");
   });
+
+  it("hides document status content when no document is open", () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceStatusBar
+        activeDocument={null}
+        isSidebarHidden={false}
+        missingAssetReferences={["missing.png"]}
+        saveState="saved"
+        wordCount={0}
+        onToggleInspector={() => {}}
+        onToggleSidebar={() => {}}
+      />,
+    );
+
+    expect(html).toContain("workspace-status-button");
+    expect(html).not.toContain("workspace-inspector-button");
+    expect(html).not.toContain("workspace-asset-warning");
+    expect(html).not.toContain("workspace-autosave-status");
+    expect(html).not.toContain("workspace-word-count");
+  });
 });

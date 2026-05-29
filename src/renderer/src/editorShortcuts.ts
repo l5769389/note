@@ -9,7 +9,8 @@ export type EditorShortcutAction =
   | { replace?: boolean; type: "find" }
   | { command: TyporaFormatCommand; type: "format" }
   | { command: TyporaParagraphCommand; type: "paragraph" }
-  | { type: "createLink" };
+  | { type: "createLink" }
+  | { type: "insertDocumentReference" };
 
 export type EditorShortcutEvent = Pick<
   KeyboardEvent,
@@ -259,6 +260,16 @@ export function getAppShortcutAction(
     key === "n"
   ) {
     return { command: "quickCapture", type: "file" };
+  }
+
+  if (
+    context.isEditorTarget &&
+    isAppShortcutModifier(event) &&
+    event.altKey &&
+    !event.shiftKey &&
+    key === "l"
+  ) {
+    return { action: { type: "insertDocumentReference" }, type: "editor" };
   }
 
   if (hasOnlyAppModifier(event, true)) {

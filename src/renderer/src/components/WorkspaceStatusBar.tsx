@@ -92,6 +92,7 @@ export function WorkspaceStatusBar({
 }: WorkspaceStatusBarProps) {
   const status = autoSaveStatus[saveState];
   const inspectorTitle = isInspectorOpen ? "隐藏右侧栏" : "显示右侧栏";
+  const shouldShowDocumentStatus = Boolean(activeDocument);
 
   return (
     <footer className="workspace-statusbar">
@@ -104,7 +105,7 @@ export function WorkspaceStatusBar({
         {isSidebarHidden ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
       </button>
       <span className="workspace-status-spacer" />
-      {onToggleInspector ? (
+      {shouldShowDocumentStatus && onToggleInspector ? (
         <button
           className={[
             "workspace-inspector-button",
@@ -125,23 +126,27 @@ export function WorkspaceStatusBar({
           )}
         </button>
       ) : null}
-      {missingAssetReferences.length > 0 && (
+      {shouldShowDocumentStatus && missingAssetReferences.length > 0 && (
         <span className="workspace-asset-warning" title={missingAssetReferences.join("\n")}>
           <AlertTriangle size={14} />
           {missingAssetReferences.length} 个附件失效
         </span>
       )}
-      <span
-        className={`workspace-autosave-status workspace-autosave-status-${saveState}`}
-        title={status.title}
-        aria-live="polite"
-      >
-        {status.icon}
-        {status.label}
-      </span>
-      <span className="workspace-word-count">
-        {getDocumentStatusLabel(activeDocument, wordCount)}
-      </span>
+      {shouldShowDocumentStatus ? (
+        <>
+          <span
+            className={`workspace-autosave-status workspace-autosave-status-${saveState}`}
+            title={status.title}
+            aria-live="polite"
+          >
+            {status.icon}
+            {status.label}
+          </span>
+          <span className="workspace-word-count">
+            {getDocumentStatusLabel(activeDocument, wordCount)}
+          </span>
+        </>
+      ) : null}
     </footer>
   );
 }
