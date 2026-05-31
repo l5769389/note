@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getImmersiveModeFromWindowFullScreen,
   shouldCloseImmersiveSidebar,
   shouldResetImmersiveReveal,
 } from "../immersiveModeState";
@@ -15,5 +16,10 @@ describe("immersive mode state helpers", () => {
     expect(shouldCloseImmersiveSidebar(false, true)).toBe(true);
     expect(shouldCloseImmersiveSidebar(true, true)).toBe(false);
     expect(shouldCloseImmersiveSidebar(false, false)).toBe(false);
+  });
+
+  it("leaves immersive mode when the window exits fullscreen", () => {
+    expect(getImmersiveModeFromWindowFullScreen(true)).toBe(true);
+    expect(getImmersiveModeFromWindowFullScreen(false)).toBe(false);
   });
 });

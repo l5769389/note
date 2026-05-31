@@ -82,6 +82,15 @@ describe("source editor command helpers", () => {
       });
 
     expect(imageEdit?.content).toBe('![logo](logo.png "align=right")');
+
+    expect(
+      createSourceFormatCommandEdit({
+        command: { type: "imageResetSize" },
+        content: '![logo](logo.png "Logo width=400 align=center")',
+        selectionEnd: 3,
+        selectionStart: 3,
+      })?.content,
+    ).toBe('![logo](logo.png "Logo align=center")');
   });
 
   it("creates text edits for source edit commands", () => {
@@ -137,6 +146,15 @@ describe("source editor command helpers", () => {
         selectionStart: undefined,
       }),
     ).toEqual({ action: "insert", markdown: "\n- A\n  - B\n" });
+
+    expect(
+      createSourceParagraphCommandAction({
+        command: { type: "horizontalRule" },
+        content: "",
+        selectionEnd: undefined,
+        selectionStart: undefined,
+      }),
+    ).toEqual({ action: "insert", markdown: "\n---\n" });
 
     expect(
       createSourceParagraphCommandAction({

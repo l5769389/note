@@ -20,7 +20,7 @@ export type EditorShortcutEvent = Pick<
 };
 
 export type AppShortcutAction =
-  | { command: "newMarkdownDocument" | "newWindow" | "openDocument" | "quickCapture" | "save" | "saveAs"; type: "file" }
+  | { command: "closeDocument" | "inspirationNote" | "newMarkdownDocument" | "newWindow" | "openDocument" | "save" | "saveAs"; type: "file" }
   | { command: "exitFullScreen" | "resetZoom" | "showDocuments" | "showFiles" | "showOutline" | "toggleFullScreen" | "toggleSidebar" | "workspaceSearch" | "zoomIn" | "zoomOut"; type: "view" }
   | { replace?: boolean; type: "find" }
   | { action: Exclude<EditorShortcutAction, { type: "find" }>; type: "editor" };
@@ -259,7 +259,7 @@ export function getAppShortcutAction(
     !event.shiftKey &&
     key === "n"
   ) {
-    return { command: "quickCapture", type: "file" };
+    return { command: "inspirationNote", type: "file" };
   }
 
   if (
@@ -315,6 +315,10 @@ export function getAppShortcutAction(
 
     if (key === "o") {
       return { command: "openDocument", type: "file" };
+    }
+
+    if (key === "w") {
+      return { command: "closeDocument", type: "file" };
     }
 
     if (key === "f") {

@@ -132,6 +132,18 @@ const exportStyles = `
     padding-left: 1.55em;
   }
 
+  .markdown-export-document ol {
+    list-style-type: decimal;
+  }
+
+  .markdown-export-document ol ol {
+    list-style-type: lower-alpha;
+  }
+
+  .markdown-export-document ol ol ol {
+    list-style-type: lower-roman;
+  }
+
   .markdown-export-document .contains-task-list {
     list-style: none;
   }

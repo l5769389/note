@@ -35,6 +35,14 @@ export function formatRecentTimestamp(value: string) {
   return recentDateFormatter.format(date);
 }
 
+export function getRecentDocumentTimestamp(document: MarkdownDocument) {
+  const lastOpenedAt = document.lastOpenedAt?.trim();
+
+  return lastOpenedAt && Number.isFinite(new Date(lastOpenedAt).getTime())
+    ? lastOpenedAt
+    : document.updatedAt;
+}
+
 export function normalizeFilePathKey(filePath?: string) {
   return filePath?.replace(/\\/g, "/").toLowerCase() ?? "";
 }

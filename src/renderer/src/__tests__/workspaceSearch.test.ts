@@ -3,6 +3,10 @@ import {
   findMarkdownSearchMatches,
   getWorkspaceSearchGroups,
 } from "../workspaceSearch";
+import {
+  createDefaultUniverSheetData,
+  serializeUniverSheetData,
+} from "../univerSheetDocument";
 import type { MarkdownDocument } from "../types";
 
 function document(overrides: Partial<MarkdownDocument>): MarkdownDocument {
@@ -85,6 +89,44 @@ describe("workspace search helpers", () => {
     );
 
     expect(groups).toEqual([]);
+  });
+
+  it("searches standalone Univer sheet title, sheet name, and cell text", () => {
+    const sheet = createDefaultUniverSheetData();
+    const sheetId = sheet.workbook.sheetOrder[0]!;
+    sheet.title = "Roadmap";
+    sheet.workbook.name = "Planning Workbook";
+    sheet.workbook.sheets[sheetId]!.name = "Sprint Sheet";
+    sheet.workbook.sheets[sheetId]!.cellData = {
+      0: {
+        0: { v: "Owner" },
+        1: { v: "Target cell" },
+      },
+    };
+    const content = serializeUniverSheetData(sheet);
+
+    expect(findMarkdownSearchMatches(content, "target", "sheet")).toEqual([
+      expect.objectContaining({
+        line: 4,
+        snippet: "Owner  Target cell",
+      }),
+    ]);
+
+    expect(
+      getWorkspaceSearchGroups(
+        [
+          document({
+            content,
+            documentType: "sheet",
+            fileExtension: ".univer",
+            filePath: "D:/notes/roadmap.univer",
+            id: "sheet",
+          }),
+        ],
+        "sprint",
+        "D:/notes",
+      ).map((group) => group.document.id),
+    ).toEqual(["sheet"]);
   });
 });
 

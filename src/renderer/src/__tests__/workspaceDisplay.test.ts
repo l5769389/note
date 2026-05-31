@@ -4,6 +4,7 @@ import {
   getDocumentTypeLabel,
   getDocumentTypeName,
   getPathLabel,
+  getRecentDocumentTimestamp,
   normalizeFilePathKey,
 } from "../workspaceDisplay";
 import type { MarkdownDocument } from "../types";
@@ -41,5 +42,25 @@ describe("workspace display helpers", () => {
     expect(getDocumentTypeLabel(document({ documentType: "sheet" }))).toBe(
       "在线表格",
     );
+  });
+
+  it("prefers the latest opened time for recent document ordering", () => {
+    expect(
+      getRecentDocumentTimestamp(
+        document({
+          lastOpenedAt: "2026-01-03T00:00:00.000Z",
+          updatedAt: "2026-01-02T00:00:00.000Z",
+        }),
+      ),
+    ).toBe("2026-01-03T00:00:00.000Z");
+
+    expect(
+      getRecentDocumentTimestamp(
+        document({
+          lastOpenedAt: "not-a-date",
+          updatedAt: "2026-01-02T00:00:00.000Z",
+        }),
+      ),
+    ).toBe("2026-01-02T00:00:00.000Z");
   });
 });

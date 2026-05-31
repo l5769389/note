@@ -7,3 +7,6 @@ release/
 .env.local
 npm-debug.log*
 *.tsbuildinfo
+coverage/
+playwright-report/
+test-results/

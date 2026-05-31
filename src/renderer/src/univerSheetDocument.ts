@@ -1,6 +1,5 @@
 import {
   BooleanNumber,
-  CellValueType,
   LocaleType,
   type ICellData,
   type IWorkbookData,
@@ -51,49 +50,11 @@ function createId(prefix: string) {
     .slice(2)}`;
 }
 
-function createStringCell(value: string): ICellData {
-  return {
-    t: CellValueType.STRING,
-    v: value,
-  };
-}
-
-function createNumberCell(value: number): ICellData {
-  return {
-    t: CellValueType.NUMBER,
-    v: value,
-  };
-}
-
 function createDefaultWorksheet(sheetId: string): IWorksheetData {
   return {
-    cellData: {
-      0: {
-        0: createStringCell("项目"),
-        1: createStringCell("负责人"),
-        2: createStringCell("状态"),
-        3: createStringCell("进度"),
-      },
-      1: {
-        0: createStringCell("Markdown 编辑器"),
-        1: createStringCell("Demo"),
-        2: createStringCell("进行中"),
-        3: createNumberCell(0.7),
-      },
-      2: {
-        0: createStringCell("在线表格"),
-        1: createStringCell("Univer"),
-        2: createStringCell("可编辑"),
-        3: createNumberCell(1),
-      },
-    },
+    cellData: {},
     columnCount: defaultColumnCount,
-    columnData: {
-      0: { w: 170 },
-      1: { w: 120 },
-      2: { w: 110 },
-      3: { w: 96 },
-    },
+    columnData: {},
     columnHeader: {
       height: 24,
     },
@@ -101,9 +62,9 @@ function createDefaultWorksheet(sheetId: string): IWorksheetData {
     defaultRowHeight: 28,
     freeze: {
       startColumn: 0,
-      startRow: 1,
+      startRow: 0,
       xSplit: 0,
-      ySplit: 1,
+      ySplit: 0,
     },
     hidden: BooleanNumber.FALSE,
     id: sheetId,
@@ -306,6 +267,67 @@ function getFirstWorksheet(workbook: IWorkbookData) {
   }
 
   return workbook.sheets[sheetId] ?? null;
+}
+
+function pushUniverSheetSearchText(lines: string[], value?: string | null) {
+  const text = value?.trim();
+
+  if (text) {
+    lines.push(text);
+  }
+}
+
+function getWorkbookSheetIds(workbook: IWorkbookData) {
+  const orderedIds = workbook.sheetOrder.filter((sheetId) => workbook.sheets[sheetId]);
+  const remainingIds = Object.keys(workbook.sheets).filter(
+    (sheetId) => !orderedIds.includes(sheetId),
+  );
+
+  return [...orderedIds, ...remainingIds];
+}
+
+export function createUniverSheetSearchRows(data: UniverSheetData) {
+  const lines: string[] = [];
+  pushUniverSheetSearchText(lines, data.title);
+  pushUniverSheetSearchText(lines, data.workbook.name);
+
+  getWorkbookSheetIds(data.workbook).forEach((sheetId) => {
+    const sheet = data.workbook.sheets[sheetId];
+
+    if (!sheet) {
+      return;
+    }
+
+    pushUniverSheetSearchText(lines, sheet.name);
+
+    const cellData = sheet.cellData ?? {};
+    Object.keys(cellData)
+      .map(Number)
+      .filter(Number.isFinite)
+      .sort((first, second) => first - second)
+      .forEach((rowIndex) => {
+        const row = cellData[rowIndex] ?? {};
+        const rowText = Object.keys(row)
+          .map(Number)
+          .filter(Number.isFinite)
+          .sort((first, second) => first - second)
+          .map((columnIndex) => getCellText(row[columnIndex]).trim())
+          .filter(Boolean)
+          .join("  ");
+
+        pushUniverSheetSearchText(lines, rowText);
+      });
+  });
+
+  return lines;
+}
+
+export function createUniverSheetSearchRowsFromSource(source: string) {
+  try {
+    return createUniverSheetSearchRows(parseUniverSheetData(source));
+  } catch {
+    return [];
+  }
 }
 
 export function createUniverSheetPreviewRows(

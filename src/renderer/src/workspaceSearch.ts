@@ -2,6 +2,7 @@ import {
   getDocumentDisplayName,
   getDocumentType,
 } from "./documentModel";
+import { createUniverSheetSearchRowsFromSource } from "./univerSheetDocument";
 import type { DocumentType, MarkdownDocument } from "./types";
 
 export type MarkdownSearchMatch = {
@@ -264,6 +265,37 @@ function createMarkdownSearchLines(content: string): SearchIndexLine[] {
   return searchLines;
 }
 
+function createSyntheticSearchLines(lines: string[]): SearchIndexLine[] {
+  let offset = 0;
+
+  return lines
+    .map((line, lineIndex) => {
+      const text = line.trim();
+      const sourceStart = offset;
+      offset += line.length + 1;
+
+      if (!text) {
+        return null;
+      }
+
+      const trimStart = line.indexOf(text);
+
+      return {
+        lineIndex,
+        positions: Array.from(
+          { length: text.length },
+          (_, index) => sourceStart + Math.max(0, trimStart) + index,
+        ),
+        text,
+      } satisfies SearchIndexLine;
+    })
+    .filter((line): line is SearchIndexLine => Boolean(line));
+}
+
+function createSheetSearchLines(content: string): SearchIndexLine[] {
+  return createSyntheticSearchLines(createUniverSheetSearchRowsFromSource(content));
+}
+
 function createDocumentSearchLines(
   content: string,
   documentType: DocumentType = "markdown",
@@ -272,10 +304,13 @@ function createDocumentSearchLines(
     documentType === "pdf" ||
     documentType === "word" ||
     documentType === "excel" ||
-    documentType === "sheet" ||
     documentType === "drawing"
   ) {
     return [];
+  }
+
+  if (documentType === "sheet") {
+    return createSheetSearchLines(content);
   }
 
   return documentType === "html"

@@ -143,11 +143,11 @@ describe("noteKnowledge", () => {
     );
   });
 
-  it("creates a note with title, tags, and capture metadata", () => {
+  it("creates a note with title, tags, and inspiration metadata", () => {
     expect(
       createMarkdownNoteContent({
         body: "Captured text",
-        properties: { source: "quick-capture" },
+        properties: { source: "inspiration-note" },
         tags: ["inbox"],
         title: "Idea",
       }),
@@ -155,7 +155,7 @@ describe("noteKnowledge", () => {
       [
         "---",
         "tags: [inbox]",
-        "source: quick-capture",
+        "source: inspiration-note",
         "---",
         "",
         "# Idea",

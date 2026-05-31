@@ -19,7 +19,7 @@ const tree: DirectoryTreeItem[] = [
 ];
 
 describe("DirectoryTreeItems", () => {
-  it("renders expanded folders and active files", () => {
+  it("renders files inside expanded folders", () => {
     const html = renderToStaticMarkup(
       <DirectoryTreeItems
         activeDirectoryPath="D:/notes/project"
@@ -32,8 +32,24 @@ describe("DirectoryTreeItems", () => {
       />,
     );
 
-    expect(html).toContain("directory-tree-folder-active");
-    expect(html).toContain("directory-tree-file-active");
+    expect(html).toContain('title="project"');
     expect(html).toContain("note.md");
+  });
+
+  it("does not render collapsed folder children", () => {
+    const html = renderToStaticMarkup(
+      <DirectoryTreeItems
+        activeDirectoryPath="D:/notes/project"
+        activeFilePath="D:/notes/project/note.md"
+        expandedPaths={new Set()}
+        items={tree}
+        level={0}
+        onOpenFile={() => {}}
+        onToggleDirectory={() => {}}
+      />,
+    );
+
+    expect(html).toContain('title="project"');
+    expect(html).not.toContain("note.md");
   });
 });

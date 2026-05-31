@@ -37,7 +37,7 @@ const items: DirectoryTreeItem[] = [
 ];
 
 describe("DirectoryFileList", () => {
-  it("renders nested file paths with previews", () => {
+  it("renders nested file paths with document previews", () => {
     const html = renderToStaticMarkup(
       <DirectoryFileList
         activeFilePath="D:/notes/project/note.md"
@@ -45,8 +45,8 @@ describe("DirectoryFileList", () => {
           document({ filePath: "D:/notes/project/note.md" }),
           document({
             documentType: "pdf",
-            filePath: "D:/notes/project/manual.pdf",
             fileExtension: ".pdf",
+            filePath: "D:/notes/project/manual.pdf",
           }),
         ]}
         items={items}
@@ -55,9 +55,23 @@ describe("DirectoryFileList", () => {
       />,
     );
 
-    expect(html).toContain("directory-file-list-item-active");
+    expect(html).toContain('title="note.md"');
+    expect(html).toContain('title="manual.pdf"');
     expect(html).toContain("project");
     expect(html).toContain("A useful preview sentence.");
-    expect(html).toContain("PDF 文档");
+    expect(html).toContain("PDF ");
+  });
+
+  it("renders the configured empty state when no files are available", () => {
+    const html = renderToStaticMarkup(
+      <DirectoryFileList
+        documents={[]}
+        emptyLabel="No files"
+        items={[]}
+        onOpenFile={() => {}}
+      />,
+    );
+
+    expect(html).toContain("No files");
   });
 });

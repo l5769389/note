@@ -43,6 +43,7 @@ export type MarkdownDocument = {
   drawings: Record<string, DrawingAsset>;
   fileExtension?: string;
   filePath?: string;
+  lastOpenedAt?: string;
   metadata?: DocumentMetadata;
   createdAt: string;
   updatedAt: string;

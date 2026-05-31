@@ -98,6 +98,23 @@ describe("markdown editing helpers", () => {
     });
   });
 
+  it("resets image width metadata while preserving title and alignment", () => {
+    const content = '![logo](logo.png "Logo width=320 align=right")';
+
+    expect(
+      createMarkdownImageEdit(selectedLineRange(content, 3), { resetWidth: true }),
+    ).toEqual({
+      content: '![logo](logo.png "Logo align=right")',
+      selectionEnd: 36,
+      selectionStart: 36,
+    });
+    expect(
+      createMarkdownImageEdit(selectedLineRange("plain text", 0), {
+        align: "center",
+      }),
+    ).toBeNull();
+  });
+
   it("moves selected lines up and down", () => {
     expect(
       createMoveSelectedLinesEdit(getSelectedLineRange("a\nb\nc", 2, 2), "up"),

@@ -1,6 +1,9 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   BookOpenText,
   Bold,
   CalendarDays,
@@ -16,7 +19,6 @@ import {
   Folder,
   FolderOpen,
   GripVertical,
-  Inbox,
   Italic,
   Link2,
   ListTree,
@@ -48,6 +50,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
   defaultAppSettings,
@@ -97,6 +100,7 @@ import type { HtmlDocumentViewerHandle } from "./components/HtmlDocumentViewer";
 import type { TyporaEditorHandle } from "./components/TyporaEditor";
 import appLogoUrl from "../../../resources/icon.png";
 import type {
+  ImageAlignment,
   TyporaEditCommand,
   TyporaFormatCommand,
   TyporaParagraphCommand,
@@ -104,7 +108,10 @@ import type {
 import { useFindMatchStateMaintenance } from "./findMatchState";
 import { useEditorCssVariables } from "./editorCssVariables";
 import { useGlobalAppShortcuts } from "./globalAppShortcuts";
-import { useImmersiveModeState } from "./immersiveModeState";
+import {
+  getImmersiveModeFromWindowFullScreen,
+  useImmersiveModeState,
+} from "./immersiveModeState";
 import {
   getSelectAllContentScope,
   getAppShortcutAction,
@@ -218,10 +225,7 @@ import {
   normalizeWikiLinkTarget,
   replaceMarkdownBodyPreservingFrontmatter,
 } from "./noteKnowledge";
-import {
-  getTagInputValues,
-  normalizeDocumentMetadata,
-} from "./documentMetadata";
+import { normalizeDocumentMetadata } from "./documentMetadata";
 import { getHtmlOutline } from "./htmlStructure";
 import {
   dataTransferHasFiles,
@@ -289,11 +293,12 @@ import { useWorkspaceDirectoryTree } from "./workspaceDirectoryTree";
 import { useWorkspaceAutosave } from "./workspaceAutosave";
 import {
   useActiveDocumentUiReset,
-  useQuickCaptureBridge,
+  useInspirationNoteBridge,
   useWorkspaceSearchAutoFocus,
 } from "./workspaceUiEffects";
 import {
   formatRecentTimestamp,
+  getRecentDocumentTimestamp,
   getDocumentTypeLabel,
   getDocumentTypeName,
   getPathLabel,
@@ -428,6 +433,7 @@ type HomeCalendarDay = {
 };
 
 const homeCalendarWeekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
+const homeCalendarRecentYearRadius = 1;
 
 function createHomeTodoId() {
   return `todo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -510,6 +516,40 @@ function shiftHomeTodoMonthKey(dateKey: string, offset: number) {
       Math.min(date.getDate(), targetMonthLastDay),
     ),
   );
+}
+
+function setHomeTodoYearKey(dateKey: string, year: number) {
+  const date = parseHomeTodoDateKey(dateKey) ?? new Date();
+  const normalizedYear = Number.isFinite(year) ? Math.trunc(year) : date.getFullYear();
+  const targetMonth = date.getMonth();
+  const targetMonthLastDay = new Date(normalizedYear, targetMonth + 1, 0).getDate();
+
+  return formatHomeTodoDateKey(
+    new Date(
+      normalizedYear,
+      targetMonth,
+      Math.min(date.getDate(), targetMonthLastDay),
+    ),
+  );
+}
+
+function getHomeTodoYearOptions(dateKey: string) {
+  const selectedDate = parseHomeTodoDateKey(dateKey) ?? new Date();
+  const currentYear = new Date().getFullYear();
+  const selectedYear = selectedDate.getFullYear();
+  const years = new Set<number>();
+
+  for (
+    let year = currentYear - homeCalendarRecentYearRadius;
+    year <= currentYear + homeCalendarRecentYearRadius;
+    year += 1
+  ) {
+    years.add(year);
+  }
+
+  years.add(selectedYear);
+
+  return [...years].sort((first, second) => first - second);
 }
 
 function getHomeTodoCalendarDays(dateKey: string): HomeCalendarDay[] {
@@ -893,6 +933,25 @@ function HomeTodoDragPreview({ item }: { item: HomeTodoItem }) {
   );
 }
 
+function HomeQuickAction({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" title={label} onClick={onClick}>
+      {icon}
+      <span>
+        <strong>{label}</strong>
+      </span>
+    </button>
+  );
+}
+
 type RevealDocumentRangeOptions = {
   content?: string;
   occurrenceIndex?: number;
@@ -903,6 +962,21 @@ type RevealDocumentRangeOptions = {
 type AppContextMenuItem =
   | {
       type: "separator";
+    }
+  | {
+      actions: Array<{
+        active?: boolean;
+        icon: ReactNode;
+        label: string;
+        onSelect: () => void | Promise<void>;
+      }>;
+      label: string;
+      type: "iconGroup";
+    }
+  | {
+      icon?: ReactNode;
+      label: string;
+      type: "label";
     }
   | {
       danger?: boolean;
@@ -924,6 +998,8 @@ type AppContextMenuState = {
 type EditorContextMenuInfo = {
   canPaste: boolean;
   hasSelection: boolean;
+  imageAlign?: ImageAlignment;
+  isImage: boolean;
   isEditable: boolean;
   isListItem: boolean;
   isTaskListItem: boolean;
@@ -945,6 +1021,140 @@ const now = () => new Date().toISOString();
 const defaultInspectorWidth = 360;
 const minInspectorWidth = 300;
 const maxInspectorWidth = 620;
+const contentSelectionAreaSelector = [
+  "input",
+  "textarea",
+  '[contenteditable="true"]',
+  ".markdown-input",
+  ".markdown-preview",
+  ".typora-editor",
+  ".typora-milkdown-content",
+  ".typora-mdx-content",
+  ".html-document-viewer-body",
+  ".word-document-body",
+  ".excel-table-scroll",
+].join(",");
+const uiSelectionScopeSelector = [
+  ".recent-row",
+  ".directory-file-list-item",
+  ".recent-file-menu-button",
+  ".directory-tree-folder",
+  ".directory-tree-file",
+  ".tree-file",
+  ".outline-item",
+  ".sidebar-recent-directories button",
+  ".home-stat-card",
+  ".home-section-header",
+  ".home-saved-note",
+  ".workspace-autosave-status",
+  ".workspace-asset-warning",
+  ".workspace-word-count",
+].join(",");
+
+function isSameWorkspaceDocument(
+  left?: MarkdownDocument | null,
+  right?: MarkdownDocument | null,
+) {
+  if (!left || !right) {
+    return false;
+  }
+
+  if (left.id === right.id) {
+    return true;
+  }
+
+  if (!left.filePath || !right.filePath) {
+    return false;
+  }
+
+  return normalizeFilePathKey(left.filePath) === normalizeFilePathKey(right.filePath);
+}
+
+function getSelectionElement(node: Node | null) {
+  if (node instanceof Element) {
+    return node;
+  }
+
+  return node?.parentElement ?? null;
+}
+
+function isContentSelectionArea(element: Element | null) {
+  return Boolean(element?.closest(contentSelectionAreaSelector));
+}
+
+function getUiSelectionScope(node: Node | null, root: HTMLElement) {
+  const element = getSelectionElement(node);
+
+  if (!element || !root.contains(element) || isContentSelectionArea(element)) {
+    return null;
+  }
+
+  return element.closest<HTMLElement>(uiSelectionScopeSelector);
+}
+
+function clearCrossScopeUiSelection(
+  root: HTMLElement,
+  activeScope: HTMLElement | null,
+) {
+  const selection = window.getSelection();
+
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return;
+  }
+
+  const anchorElement = getSelectionElement(selection.anchorNode);
+  const focusElement = getSelectionElement(selection.focusNode);
+
+  if (
+    isContentSelectionArea(anchorElement) ||
+    isContentSelectionArea(focusElement)
+  ) {
+    return;
+  }
+
+  const anchorScope = getUiSelectionScope(selection.anchorNode, root);
+  const focusScope = getUiSelectionScope(selection.focusNode, root);
+  const expectedScope = activeScope ?? anchorScope;
+
+  if (
+    expectedScope &&
+    (anchorScope !== expectedScope || focusScope !== expectedScope)
+  ) {
+    selection.removeAllRanges();
+  }
+}
+
+function getRecentDocumentTime(document: MarkdownDocument) {
+  const timestamp = new Date(getRecentDocumentTimestamp(document)).getTime();
+
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function markDocumentOpened(
+  document: MarkdownDocument,
+  openedAt = now(),
+): MarkdownDocument {
+  return {
+    ...document,
+    lastOpenedAt: openedAt,
+  };
+}
+
+function markWorkspaceDocumentOpened(
+  workspace: WorkspaceSnapshot,
+  documentId: string,
+  openedAt = now(),
+): WorkspaceSnapshot {
+  return {
+    ...workspace,
+    activeDocumentId: documentId,
+    documents: workspace.documents.map((document) =>
+      document.id === documentId
+        ? markDocumentOpened(document, openedAt)
+        : document,
+    ),
+  };
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -1044,9 +1254,11 @@ export function App() {
     loadHomeQuickNoteImages,
   );
   const [homeSavedNotes, setHomeSavedNotes] = useState<HomeSavedNote[]>(loadHomeSavedNotes);
+  const [activeHomeSavedNoteId, setActiveHomeSavedNoteId] = useState<string | null>(null);
   const [isHomeNoteDialogOpen, setIsHomeNoteDialogOpen] = useState(false);
   const [homeImagePreview, setHomeImagePreview] =
     useState<HomeImageAttachment | null>(null);
+  const [homeImagePreviewZoom, setHomeImagePreviewZoom] = useState(1);
   const [homeTodoItems, setHomeTodoItems] = useState<HomeTodoItem[]>(loadHomeTodoItems);
   const [homeTodoSelectedDate, setHomeTodoSelectedDate] = useState(formatHomeTodoDateKey);
   const [isHomeTodoCalendarOpen, setIsHomeTodoCalendarOpen] = useState(false);
@@ -1102,10 +1314,6 @@ export function App() {
   const [documentLinkQuery, setDocumentLinkQuery] = useState("");
   const [documentLinkSourceDocumentId, setDocumentLinkSourceDocumentId] =
     useState<string | null>(null);
-  const [isQuickCaptureOpen, setIsQuickCaptureOpen] = useState(false);
-  const [quickCaptureTitle, setQuickCaptureTitle] = useState("");
-  const [quickCaptureBody, setQuickCaptureBody] = useState("");
-  const [quickCaptureTags, setQuickCaptureTags] = useState("inbox");
   const [documentReloadTokens, setDocumentReloadTokens] = useState<
     Record<string, number>
   >({});
@@ -1128,6 +1336,9 @@ export function App() {
   >(null);
   const [isEditorDraggingMedia, setIsEditorDraggingMedia] = useState(false);
   const [isImmersiveSidebarOpen, setIsImmersiveSidebarOpen] = useState(false);
+  const appShellRef = useRef<HTMLElement | null>(null);
+  const uiSelectionScopeRef = useRef<HTMLElement | null>(null);
+  const homeTodoCalendarWheelAtRef = useRef(0);
   const homeTodoDragRef = useRef<HomeTodoDragState | null>(null);
   const homeTodoListRef = useRef<HTMLDivElement | null>(null);
   const homeTodoCalendarRef = useRef<HTMLDivElement | null>(null);
@@ -1144,7 +1355,7 @@ export function App() {
     readDirectoryTree: window.desktop?.readDirectoryTree,
     workspacePath: workspace.workspacePath,
   });
-  const isImmersiveMode = isFullScreen;
+  const isImmersiveMode = getImmersiveModeFromWindowFullScreen(isFullScreen);
   const [immersiveRevealEdge, setImmersiveRevealEdge] =
     useState<ImmersiveRevealEdge | null>(null);
   const isSidebarHidden = isImmersiveMode
@@ -1172,6 +1383,24 @@ export function App() {
   const internalFileWritesRef = useRef(
     new Map<string, InternalFileWriteSnapshot>(),
   );
+
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const root = appShellRef.current;
+
+      if (!root) {
+        return;
+      }
+
+      clearCrossScopeUiSelection(root, uiSelectionScopeRef.current);
+    };
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, []);
 
   useEffect(() => {
     let isStale = false;
@@ -1609,8 +1838,7 @@ export function App() {
       [...workspace.documents]
         .sort(
           (first, second) =>
-            new Date(second.updatedAt).getTime() -
-            new Date(first.updatedAt).getTime(),
+            getRecentDocumentTime(second) - getRecentDocumentTime(first),
         ),
     [workspace.documents],
   );
@@ -1666,6 +1894,14 @@ export function App() {
   const homeTodoDateTitle = getHomeTodoDateTitle(homeTodoSelectedDate);
   const homeTodoDateLabel = formatHomeTodoDateLabel(homeTodoSelectedDate);
   const homeTodoMonthLabel = formatHomeTodoMonthLabel(homeTodoSelectedDate);
+  const homeTodoCalendarDate =
+    parseHomeTodoDateKey(homeTodoSelectedDate) ?? new Date();
+  const homeTodoSelectedYear = homeTodoCalendarDate.getFullYear();
+  const homeTodoSelectedMonthLabel = `${homeTodoCalendarDate.getMonth() + 1}月`;
+  const homeTodoYearOptions = useMemo(
+    () => getHomeTodoYearOptions(homeTodoSelectedDate),
+    [homeTodoSelectedDate],
+  );
   const todayHomeTodoDate = formatHomeTodoDateKey();
   const homeTodoCalendarDays = useMemo(
     () => getHomeTodoCalendarDays(homeTodoSelectedDate),
@@ -1804,6 +2040,35 @@ export function App() {
     setHomeTodoDraft("");
     setHomeTodoDraftImages([]);
   };
+  const handleHomeTodoCalendarWheel = (
+    event: ReactWheelEvent<HTMLDivElement>,
+  ) => {
+    if ((event.target as HTMLElement | null)?.closest("select")) {
+      return;
+    }
+
+    const wheelDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+      ? event.deltaY
+      : event.deltaX;
+
+    if (Math.abs(wheelDelta) < 8) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const now = Date.now();
+
+    if (now - homeTodoCalendarWheelAtRef.current < 180) {
+      return;
+    }
+
+    homeTodoCalendarWheelAtRef.current = now;
+    setHomeTodoSelectedDate((currentDate) =>
+      shiftHomeTodoMonthKey(currentDate, wheelDelta > 0 ? 1 : -1),
+    );
+  };
   const toggleHomeTodo = (todoId: string) => {
     setHomeTodoItems((currentItems) =>
       currentItems.map((item) =>
@@ -1828,15 +2093,18 @@ export function App() {
       return;
     }
 
+    const noteId = createHomeSavedNoteId();
+
     setHomeSavedNotes((currentNotes) => [
       {
-        id: createHomeSavedNoteId(),
+        id: noteId,
         text: text || "图片便签",
         images: homeQuickNoteImages,
         createdAt: new Date().toISOString(),
       },
       ...currentNotes,
     ].slice(0, 30));
+    setActiveHomeSavedNoteId(noteId);
     setHomeQuickNote("");
     setHomeQuickNoteImages([]);
     setIsHomeNoteDialogOpen(false);
@@ -1845,6 +2113,17 @@ export function App() {
     setHomeSavedNotes((currentNotes) =>
       currentNotes.filter((note) => note.id !== noteId),
     );
+    setActiveHomeSavedNoteId((currentId) =>
+      currentId === noteId ? null : currentId,
+    );
+  };
+  const changeHomeImagePreviewZoom = (delta: number) => {
+    setHomeImagePreviewZoom((currentZoom) =>
+      Math.min(4, Math.max(0.25, Math.round((currentZoom + delta) * 100) / 100)),
+    );
+  };
+  const resetHomeImagePreviewZoom = () => {
+    setHomeImagePreviewZoom(1);
   };
   const activeHomeTodoItem = useMemo(
     () =>
@@ -2086,6 +2365,7 @@ export function App() {
   useWindowChromeState({
     getWindowState: window.desktop?.getWindowState,
     getZoomFactor: window.desktop?.getZoomFactor,
+    onWindowStateChanged: window.desktop?.onWindowStateChanged,
     setIsAlwaysOnTop,
     setIsFullScreen,
     setWindowZoomFactor,
@@ -2336,7 +2616,7 @@ export function App() {
     sidebarTab,
   });
 
-  useQuickCaptureBridge(window.desktop?.onQuickCapture, openQuickCapture);
+  useInspirationNoteBridge(window.desktop?.onInspirationNote, openInspirationNote);
 
   usePendingWorkspaceSearchReveal({
     activeDocument,
@@ -2358,10 +2638,7 @@ export function App() {
 
   function setActiveDocument(documentId: string) {
     setIsHomeOpen(false);
-    setWorkspace((current) => ({
-      ...current,
-      activeDocumentId: documentId,
-    }));
+    setWorkspace((current) => markWorkspaceDocumentOpened(current, documentId));
   }
 
   function toggleDirectoryPath(directoryPath: string) {
@@ -2405,7 +2682,11 @@ export function App() {
       }
 
       setWorkspace((current) =>
-        addCreatedDocumentToWorkspace(current, document, directoryPath),
+        addCreatedDocumentToWorkspace(
+          current,
+          markDocumentOpened(document),
+          directoryPath,
+        ),
       );
       setIsCreateFileOpen(false);
       setIsHomeOpen(false);
@@ -2433,7 +2714,11 @@ export function App() {
     }
 
     setWorkspace((current) =>
-      addCreatedDocumentToWorkspace(current, document, directoryPath),
+      addCreatedDocumentToWorkspace(
+        current,
+        markDocumentOpened(document),
+        directoryPath,
+      ),
     );
     setIsHomeOpen(false);
     setIsActionsOpen(false);
@@ -2626,7 +2911,9 @@ export function App() {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
       }
 
-      setWorkspace((current) => addOpenedDocumentToWorkspace(current, document));
+      setWorkspace((current) =>
+        addOpenedDocumentToWorkspace(current, markDocumentOpened(document)),
+      );
       rememberRecentDirectory(getDirectoryPath(document.filePath));
       setIsHomeOpen(false);
     } catch {
@@ -2652,7 +2939,9 @@ export function App() {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
       }
 
-      setWorkspace((current) => addOpenedDocumentToWorkspace(current, document));
+      setWorkspace((current) =>
+        addOpenedDocumentToWorkspace(current, markDocumentOpened(document)),
+      );
       rememberRecentDirectory(getDirectoryPath(document.filePath));
       setIsHomeOpen(false);
       await loadDirectoryTree(getDirectoryPath(document.filePath));
@@ -3162,12 +3451,17 @@ export function App() {
     }
 
     const referenceText = getDocumentDisplayName(document).trim();
+    const referenceTarget = document.filePath?.trim() || referenceText;
 
-    if (!referenceText) {
+    if (!referenceText || !referenceTarget) {
       return;
     }
 
-    insertMarkdown(`[[${referenceText}]]`);
+    insertMarkdown(
+      referenceTarget === referenceText
+        ? `[[${referenceText}]]`
+        : `[[${referenceTarget}|${referenceText}]]`,
+    );
     setIsDocumentLinkPickerOpen(false);
     setDocumentLinkSourceDocumentId(null);
     setDocumentLinkQuery("");
@@ -3187,41 +3481,10 @@ export function App() {
     }
   }
 
-  function openQuickCapture() {
-    setIsQuickCaptureOpen(true);
+  function openInspirationNote() {
+    setIsHomeNoteDialogOpen(true);
     setTopMenu(null);
     setIsActionsOpen(false);
-  }
-
-  async function createQuickCapture() {
-    const nowDate = new Date();
-    const fallbackTitle = `Capture ${nowDate
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .slice(0, 16)
-      .replace("T", " ")}`;
-    const title = normalizeMarkdownTitle(quickCaptureTitle || fallbackTitle);
-    const tags = getTagInputValues(quickCaptureTags || "inbox");
-    const content = createMarkdownNoteContent({
-      body: quickCaptureBody,
-      properties: {
-        created: nowDate.toISOString(),
-        source: "quick-capture",
-      },
-      tags,
-      title,
-    });
-
-    try {
-      await createMarkdownDocumentWithContent(title, content);
-      setQuickCaptureTitle("");
-      setQuickCaptureBody("");
-      setQuickCaptureTags("inbox");
-      setIsQuickCaptureOpen(false);
-      setSidebarTab("current");
-    } catch {
-      setSaveState("failed");
-    }
   }
 
   async function saveDataUrlAssetForDocument(
@@ -3319,7 +3582,11 @@ export function App() {
       savedFileContentByPathRef.current.set(nextDocument.filePath!, nextDocument.content);
       rememberRecentDirectory(getDirectoryPath(nextDocument.filePath));
       setWorkspace((current) =>
-        addOpenedDocumentToWorkspace(current, nextDocument, document.id),
+        addOpenedDocumentToWorkspace(
+          current,
+          markDocumentOpened(nextDocument),
+          document.id,
+        ),
       );
       setIsHomeOpen(false);
     } catch {
@@ -3359,7 +3626,11 @@ export function App() {
     rememberRecentDirectory(getDirectoryPath(nextDocument.filePath));
 
     setWorkspace((current) =>
-      addOpenedDocumentToWorkspace(current, nextDocument, document.id),
+      addOpenedDocumentToWorkspace(
+        current,
+        markDocumentOpened(nextDocument),
+        document.id,
+      ),
     );
   }
 
@@ -3478,12 +3749,27 @@ export function App() {
   }
 
   function runContextMenuItem(item: AppContextMenuItem) {
-    if (item.type === "separator" || item.disabled) {
+    if (
+      item.type === "separator" ||
+      item.type === "label" ||
+      item.type === "iconGroup"
+    ) {
+      return;
+    }
+
+    if (item.disabled) {
       return;
     }
 
     setContextMenu(null);
     void item.onSelect();
+  }
+
+  function runContextMenuIconAction(
+    action: Extract<AppContextMenuItem, { type: "iconGroup" }>["actions"][number],
+  ) {
+    setContextMenu(null);
+    void action.onSelect();
   }
 
   async function copyTextToClipboard(text: string) {
@@ -3492,6 +3778,18 @@ export function App() {
     }
 
     await navigator.clipboard?.writeText(text);
+  }
+
+  function getEventTargetElement(target: EventTarget | null) {
+    if (target instanceof Element) {
+      return target;
+    }
+
+    if (target instanceof Node) {
+      return target.parentElement;
+    }
+
+    return null;
   }
 
   function getDomSelectionTextWithin(container: Element | null) {
@@ -3579,10 +3877,57 @@ export function App() {
     });
   }
 
+  function getImageContextMenuAlignment(
+    imageElement: HTMLImageElement | null | undefined,
+  ): ImageAlignment | undefined {
+    if (!imageElement) {
+      return undefined;
+    }
+
+    const dataAlign = imageElement.dataset.imageAlign;
+
+    if (
+      dataAlign === "left" ||
+      dataAlign === "center" ||
+      dataAlign === "right"
+    ) {
+      return dataAlign;
+    }
+
+    const style = imageElement.style;
+    const display = style.display.trim().toLowerCase();
+    const marginLeft = style.marginLeft.trim().toLowerCase();
+    const marginRight = style.marginRight.trim().toLowerCase();
+    const float = style.cssFloat.trim().toLowerCase();
+
+    if (float === "right") {
+      return "right";
+    }
+
+    if (float === "left") {
+      return "left";
+    }
+
+    if (display === "block") {
+      if (marginLeft === "auto" && marginRight === "auto") {
+        return "center";
+      }
+
+      if (
+        marginLeft === "auto" &&
+        (marginRight === "" || marginRight === "0" || marginRight === "0px")
+      ) {
+        return "right";
+      }
+    }
+
+    return "left";
+  }
+
   async function getEditorContextMenuInfo(
     event: ReactMouseEvent<HTMLElement>,
   ): Promise<EditorContextMenuInfo> {
-    const target = event.target instanceof Element ? event.target : null;
+    const target = getEventTargetElement(event.target);
     const isTextareaContext = Boolean(target?.closest("textarea.markdown-input"));
     const isPreviewContext = Boolean(target?.closest(".markdown-preview"));
     const taskElement = target?.closest(
@@ -3593,6 +3938,9 @@ export function App() {
     const taskCheckedAttribute =
       taskElement?.getAttribute("data-checked") ??
       taskElement?.getAttribute("data-task-checked");
+    const imageElement = target?.closest<HTMLImageElement>(
+      "img.typora-editable-image, .typora-raw-html-preview img",
+    );
     const domTaskChecked =
       taskCheckedAttribute === "true"
         ? true
@@ -3606,6 +3954,8 @@ export function App() {
     return {
       canPaste: isEditable ? await hasClipboardContentForPaste() : false,
       hasSelection: selectedText.length > 0,
+      imageAlign: getImageContextMenuAlignment(imageElement),
+      isImage: Boolean(imageElement),
       isEditable,
       isListItem: Boolean(listElement) || Boolean(textareaInfo.isListItem),
       isTaskListItem:
@@ -3647,6 +3997,9 @@ export function App() {
 
     const { clientX, clientY } = event;
     const contextInfo = await getEditorContextMenuInfo(event);
+    const canEditSelection = contextInfo.isEditable && contextInfo.hasSelection;
+    const canDeleteTarget =
+      contextInfo.isEditable && (contextInfo.hasSelection || contextInfo.isImage);
     const items: AppContextMenuItem[] = [
       ...(contextInfo.linkHref
         ? [
@@ -3677,10 +4030,41 @@ export function App() {
             { type: "separator" as const },
           ]
         : []),
-      ...(contextInfo.isEditable
+      ...(contextInfo.isEditable && contextInfo.isImage
         ? [
             {
-              disabled: !contextInfo.hasSelection,
+              actions: [
+                {
+                  active: contextInfo.imageAlign === "left",
+                  icon: <AlignLeft size={16} />,
+                  label: "靠左",
+                  onSelect: () =>
+                    runFormatCommand({ type: "imageAlign", align: "left" }),
+                },
+                {
+                  active: contextInfo.imageAlign === "center",
+                  icon: <AlignCenter size={16} />,
+                  label: "居中",
+                  onSelect: () =>
+                    runFormatCommand({ type: "imageAlign", align: "center" }),
+                },
+                {
+                  active: contextInfo.imageAlign === "right",
+                  icon: <AlignRight size={16} />,
+                  label: "靠右",
+                  onSelect: () =>
+                    runFormatCommand({ type: "imageAlign", align: "right" }),
+                },
+              ],
+              label: "布局",
+              type: "iconGroup" as const,
+            },
+            { type: "separator" as const },
+          ]
+        : []),
+      ...(canEditSelection
+        ? [
+            {
               icon: <Scissors size={15} />,
               label: "剪切",
               onSelect: () => runEditCommand("cut"),
@@ -3688,22 +4072,28 @@ export function App() {
             },
           ]
         : []),
-      {
-        disabled: !contextInfo.hasSelection,
-        icon: <Copy size={15} />,
-        label: "复制",
-        onSelect: () => runEditCommand("copy"),
-        shortcut: "Ctrl+C",
-      },
-      ...(contextInfo.isEditable
+      ...(contextInfo.hasSelection
         ? [
             {
-              disabled: !contextInfo.canPaste,
-              icon: <ClipboardPaste size={15} />,
-              label: "粘贴",
-              onSelect: () => runEditCommand("paste"),
-              shortcut: "Ctrl+V",
+              icon: <Copy size={15} />,
+              label: "复制",
+              onSelect: () => runEditCommand("copy"),
+              shortcut: "Ctrl+C",
             },
+          ]
+        : []),
+      ...(contextInfo.isEditable
+        ? [
+            ...(contextInfo.canPaste
+              ? [
+                  {
+                    icon: <ClipboardPaste size={15} />,
+                    label: "粘贴",
+                    onSelect: () => runEditCommand("paste"),
+                    shortcut: "Ctrl+V",
+                  },
+                ]
+              : []),
             {
               icon: <BookOpenText size={15} />,
               label: "插入引用文档...",
@@ -3761,7 +4151,7 @@ export function App() {
             { type: "separator" as const },
           ]
         : []),
-      ...(contextInfo.isEditable
+      ...(canEditSelection
         ? [
             {
               icon: <Bold size={15} />,
@@ -3782,9 +4172,12 @@ export function App() {
               shortcut: "Ctrl+Shift+`",
             },
             { type: "separator" as const },
+          ]
+        : []),
+      ...(canDeleteTarget
+        ? [
             {
               danger: true,
-              disabled: !activeDocument.content,
               icon: <Trash2 size={15} />,
               label: "删除",
               onSelect: () => runEditCommand("delete"),
@@ -4320,6 +4713,23 @@ export function App() {
     setTopMenu(null);
   }
 
+  function closeActiveDocument() {
+    setWorkspace((current) =>
+      current.activeDocumentId
+        ? {
+            ...current,
+            activeDocumentId: "",
+          }
+        : current,
+    );
+    setIsHomeOpen(true);
+    setIsDocumentInspectorOpen(false);
+    setIsFindReplaceOpen(false);
+    setIsActionsOpen(false);
+    setContextMenu(null);
+    setTopMenu(null);
+  }
+
   function closeWorkspaceSearch() {
     setWorkspaceSearchQuery("");
     setSidebarTab("current");
@@ -4361,8 +4771,11 @@ export function App() {
           case "openDocument":
             void openMarkdownFile();
             break;
-          case "quickCapture":
-            openQuickCapture();
+          case "inspirationNote":
+            openInspirationNote();
+            break;
+          case "closeDocument":
+            closeActiveDocument();
             break;
           case "save":
             void saveNow();
@@ -4667,7 +5080,9 @@ export function App() {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
       }
 
-      setWorkspace((current) => addOpenedDocumentToWorkspace(current, document));
+      setWorkspace((current) =>
+        addOpenedDocumentToWorkspace(current, markDocumentOpened(document)),
+      );
       setIsHomeOpen(false);
       setTopMenu(null);
       setSaveState("saved");
@@ -5409,7 +5824,7 @@ export function App() {
               <MenuItem label="Excalidraw 文件" onSelect={() => runTopMenuAction(() => void createStandaloneDrawingDocument())} />
             </MenuSubmenu>
             <MenuItem label="新建窗口" shortcut="Ctrl+Shift+N" onSelect={() => runTopMenuAction(openNewWindow)} />
-            <MenuItem label="快速捕捉..." shortcut="Ctrl+Alt+N" onSelect={() => runTopMenuAction(openQuickCapture)} />
+            <MenuItem label="灵感便签..." shortcut="Ctrl+Alt+N" onSelect={() => runTopMenuAction(openInspirationNote)} />
             <MenuSeparator />
             <MenuItem label="打开..." shortcut="Ctrl+O" onSelect={() => runTopMenuAction(() => void openMarkdownFile())} />
             <MenuItem label="打开文件夹..." onSelect={() => runTopMenuAction(() => void openWorkspaceFolder())} />
@@ -5436,6 +5851,12 @@ export function App() {
             </MenuSubmenu>
             <MenuSeparator />
             <MenuItem label="保存" shortcut="Ctrl+S" onSelect={() => runTopMenuAction(() => void saveNow())} />
+            <MenuItem
+              label="关闭当前文档"
+              shortcut="Ctrl+W"
+              disabled={!activeDocument}
+              onSelect={() => runTopMenuAction(closeActiveDocument)}
+            />
             <MenuItem
               label="另存为..."
               shortcut="Ctrl+Shift+S"
@@ -5574,25 +5995,29 @@ export function App() {
             <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(openWorkspaceSearch)} />
             <MenuItem label="链接总览" onSelect={() => runTopMenuAction(openKnowledgeRelationsPanel)} />
             <MenuItem label="阅读设置..." onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
-            <MenuSubmenu label="编辑模式">
+            <MenuSubmenu label="编辑模式" testId="menu-editor-mode">
               <MenuItem
                 checked={mode === "typora"}
                 label="实时渲染"
+                testId="menu-mode-typora"
                 onSelect={() => runTopMenuAction(() => updateEditorMode("typora"))}
               />
               <MenuItem
                 checked={mode === "source"}
                 label="源码"
+                testId="menu-mode-source"
                 onSelect={() => runTopMenuAction(() => updateEditorMode("source"))}
               />
               <MenuItem
                 checked={mode === "split"}
                 label="分栏"
+                testId="menu-mode-split"
                 onSelect={() => runTopMenuAction(() => updateEditorMode("split"))}
               />
               <MenuItem
                 checked={mode === "preview"}
                 label="预览"
+                testId="menu-mode-preview"
                 onSelect={() => runTopMenuAction(() => updateEditorMode("preview"))}
               />
             </MenuSubmenu>
@@ -5689,6 +6114,17 @@ export function App() {
 
   function handleImmersivePointerLeave() {
     setImmersiveReveal(null);
+  }
+
+  function handleAppShellMouseDown(event: ReactMouseEvent<HTMLElement>) {
+    const root = appShellRef.current;
+
+    if (!root || !(event.target instanceof Node)) {
+      uiSelectionScopeRef.current = null;
+      return;
+    }
+
+    uiSelectionScopeRef.current = getUiSelectionScope(event.target, root);
   }
 
   function shouldPreserveSelectAllFocus(target: EventTarget | null) {
@@ -5893,6 +6329,8 @@ export function App() {
   return (
     <>
       <main
+        ref={appShellRef}
+        data-testid="app-shell"
         className={[
           "app-shell",
           isSidebarHidden ? "app-shell-sidebar-collapsed" : "",
@@ -5911,6 +6349,7 @@ export function App() {
               : "0px",
           } as CSSProperties
         }
+        onMouseDown={handleAppShellMouseDown}
         onPointerMove={handleImmersivePointerMove}
         onPointerLeave={handleImmersivePointerLeave}
       >
@@ -5932,6 +6371,7 @@ export function App() {
               {menubarItems.map((item) => (
                 <div className="menubar-item" key={item.key}>
                   <button
+                    data-testid={`menu-${item.key}`}
                     className={
                       topMenu === item.key
                         ? "menubar-trigger menubar-trigger-active"
@@ -6162,9 +6602,9 @@ export function App() {
                 <FilePlus2 size={16} />
                 新建文件
               </button>
-              <button type="button" onClick={openQuickCapture}>
-                <Inbox size={16} />
-                快速捕捉
+              <button type="button" onClick={openInspirationNote}>
+                <ClipboardPaste size={16} />
+                灵感便签
               </button>
               <button type="button" onClick={() => void createStandaloneSheetDocument()}>
                 <Table2 size={16} />
@@ -6315,33 +6755,21 @@ export function App() {
                       <h2>快捷操作</h2>
                     </header>
                     <div className="home-brand-actions">
-                      <button type="button" onClick={createNewDocument}>
-                        <FilePlus2 size={18} />
-                        <span>
-                          <strong>新建文档</strong>
-                        </span>
-                      </button>
-                      <button type="button" onClick={() => void openWorkspaceFolder()}>
-                        <FolderOpen size={18} />
-                        <span>
-                          <strong>打开文件夹</strong>
-                        </span>
-                      </button>
-                      <button type="button" onClick={openKnowledgeRelationsPanel}>
-                        <BookOpenText size={18} />
-                        <span>
-                          <strong>知识关系</strong>
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsHomeNoteDialogOpen(true)}
-                      >
-                        <ClipboardPaste size={18} />
-                        <span>
-                          <strong>创建便签</strong>
-                        </span>
-                      </button>
+                      <HomeQuickAction
+                        icon={<FilePlus2 size={18} />}
+                        label="新建文档"
+                        onClick={createNewDocument}
+                      />
+                      <HomeQuickAction
+                        icon={<FolderOpen size={18} />}
+                        label="打开文件夹"
+                        onClick={() => void openWorkspaceFolder()}
+                      />
+                      <HomeQuickAction
+                        icon={<BookOpenText size={18} />}
+                        label="知识关系"
+                        onClick={openKnowledgeRelationsPanel}
+                      />
                     </div>
                   </section>
 
@@ -6374,30 +6802,46 @@ export function App() {
                       }
                     >
                       {visibleRecentDocuments.length ? (
-                        visibleRecentDocuments.map((document) => (
-                          <button
-                            className="recent-row"
-                            key={document.id}
-                            title={`${getDocumentDisplayName(document)}\n${getDocumentPathPreview(
-                              document,
-                              workspace.workspacePath,
-                            )}`}
-                            type="button"
-                            onClick={() => void openRecentDocument(document)}
-                            onContextMenu={(event) => {
-                              if (document.filePath) {
-                                openFileContextMenu(event, document.filePath);
-                              }
-                            }}
-                          >
-                            <FileText size={16} />
-                            <strong>{getDocumentDisplayName(document)}</strong>
-                            <span>{getDocumentPathPreview(document, workspace.workspacePath)}</span>
-                            <time dateTime={document.updatedAt}>
-                              {formatRecentTimestamp(document.updatedAt)}
-                            </time>
-                          </button>
-                        ))
+                        visibleRecentDocuments.map((document) => {
+                          const isActiveRecentDocument = isSameWorkspaceDocument(
+                            activeDocument,
+                            document,
+                          );
+
+                          return (
+                            <button
+                              aria-current={isActiveRecentDocument ? "page" : undefined}
+                              data-document-path={document.filePath}
+                              data-document-title={getDocumentDisplayName(document)}
+                              data-testid="recent-document"
+                              className={[
+                                "recent-row",
+                                isActiveRecentDocument ? "recent-row-active" : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                              key={document.id}
+                              title={`${getDocumentDisplayName(document)}\n${getDocumentPathPreview(
+                                document,
+                                workspace.workspacePath,
+                              )}`}
+                              type="button"
+                              onClick={() => void openRecentDocument(document)}
+                              onContextMenu={(event) => {
+                                if (document.filePath) {
+                                  openFileContextMenu(event, document.filePath);
+                                }
+                              }}
+                            >
+                              <FileText size={16} />
+                              <strong>{getDocumentDisplayName(document)}</strong>
+                              <span>{getDocumentPathPreview(document, workspace.workspacePath)}</span>
+                              <time dateTime={getRecentDocumentTimestamp(document)}>
+                                {formatRecentTimestamp(getRecentDocumentTimestamp(document))}
+                              </time>
+                            </button>
+                          );
+                        })
                       ) : (
                         <div className="recent-empty">
                           <strong>还没有最近文档</strong>
@@ -6477,7 +6921,12 @@ export function App() {
                         </button>
                       ) : null}
                       {isHomeTodoCalendarOpen ? (
-                        <div className="home-calendar-popover" role="dialog" aria-label="选择待办日期">
+                        <div
+                          className="home-calendar-popover"
+                          role="dialog"
+                          aria-label="选择待办日期"
+                          onWheel={handleHomeTodoCalendarWheel}
+                        >
                           <div className="home-calendar-header">
                             <button
                               type="button"
@@ -6490,7 +6939,29 @@ export function App() {
                             >
                               <ChevronLeft size={15} />
                             </button>
-                            <strong>{homeTodoMonthLabel}</strong>
+                            <div className="home-calendar-current" title={homeTodoMonthLabel}>
+                              <label className="home-calendar-year-field">
+                                <select
+                                  aria-label="选择年份"
+                                  value={homeTodoSelectedYear}
+                                  onChange={(event) =>
+                                    setHomeTodoSelectedDate((currentDate) =>
+                                      setHomeTodoYearKey(
+                                        currentDate,
+                                        Number(event.target.value),
+                                      ),
+                                    )
+                                  }
+                                >
+                                  {homeTodoYearOptions.map((year) => (
+                                    <option key={year} value={year}>
+                                      {year}年
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <strong>{homeTodoSelectedMonthLabel}</strong>
+                            </div>
                             <button
                               type="button"
                               aria-label="下个月"
@@ -6669,7 +7140,15 @@ export function App() {
                     <div className="home-saved-notes" aria-label="已保存便签">
                       {homeSavedNotes.length ? (
                         homeSavedNotes.map((note) => (
-                          <article className="home-saved-note" key={note.id}>
+                          <article
+                            className={
+                              note.id === activeHomeSavedNoteId
+                                ? "home-saved-note home-saved-note-active"
+                                : "home-saved-note"
+                            }
+                            key={note.id}
+                            onClick={() => setActiveHomeSavedNoteId(note.id)}
+                          >
                             <div>
                               <p>{note.text}</p>
                               {note.images?.length ? (
@@ -6680,7 +7159,10 @@ export function App() {
                                       type="button"
                                       aria-label={`浏览图片 ${image.fileName}`}
                                       key={image.id}
-                                      onClick={() => setHomeImagePreview(image)}
+                                      onClick={() => {
+                                        setActiveHomeSavedNoteId(note.id);
+                                        setHomeImagePreview(image);
+                                      }}
                                     >
                                       <img
                                         alt={image.fileName}
@@ -6699,7 +7181,10 @@ export function App() {
                               className="home-saved-note-delete"
                               type="button"
                               aria-label="删除便签"
-                              onClick={() => deleteHomeSavedNote(note.id)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                deleteHomeSavedNote(note.id);
+                              }}
                             >
                               <Trash2 size={13} />
                             </button>
@@ -6784,9 +7269,11 @@ export function App() {
                   <UniverSheetPreview
                     code={activeDocument.content}
                     filePath={activeDocument.filePath}
+                    maxPreviewRows={80}
                     onEdit={(code) =>
                       void openUniverSheetEditor({ kind: "document" }, code)
                     }
+                    searchQuery={findQuery}
                   />
                 </section>
               ) : isDrawingDocument(activeDocument) ? (
@@ -6812,6 +7299,7 @@ export function App() {
                 </section>
               ) : (
                 <div
+                  data-testid="editor-layout"
                   className={[
                     "editor-layout",
                     `editor-layout-${mode}`,
@@ -6854,6 +7342,7 @@ export function App() {
                   {(mode === "source" || mode === "split") && (
                     <textarea
                       ref={editorRef}
+                      data-testid="source-editor"
                       className="markdown-input"
                       spellCheck={false}
                       value={activeDocument.content}
@@ -6866,6 +7355,7 @@ export function App() {
                   {(mode === "split" || mode === "preview") && (
                     <article
                       className="markdown-preview"
+                      data-testid="markdown-preview"
                       data-select-all-scope="content"
                       onContextMenu={openEditorContextMenu}
                       tabIndex={-1}
@@ -6909,6 +7399,7 @@ export function App() {
             missingAssetReferences={missingAssetReferences}
             saveState={saveState}
             wordCount={activeDocumentWordCount}
+            onCloseDocument={closeActiveDocument}
             onToggleInspector={toggleDocumentInspector}
             onToggleSidebar={toggleSidebarVisibility}
           />
@@ -6982,6 +7473,48 @@ export function App() {
                   key={`separator-${index}`}
                   role="separator"
                 />
+              ) : item.type === "label" ? (
+                <div
+                  className="app-context-menu-heading"
+                  key={`${item.label}-${index}`}
+                  role="presentation"
+                >
+                  <span className="app-context-menu-icon" aria-hidden="true">
+                    {item.icon}
+                  </span>
+                  <span className="app-context-menu-label">{item.label}</span>
+                </div>
+              ) : item.type === "iconGroup" ? (
+                <div
+                  className="app-context-menu-icon-group-row"
+                  key={`${item.label}-${index}`}
+                  role="group"
+                  aria-label={item.label}
+                >
+                  <span className="app-context-menu-icon-group-label">
+                    {item.label}
+                  </span>
+                  <span className="app-context-menu-icon-group">
+                    {item.actions.map((action) => (
+                      <button
+                        className={
+                          action.active
+                            ? "app-context-menu-icon-option app-context-menu-icon-option-active"
+                            : "app-context-menu-icon-option"
+                        }
+                        key={action.label}
+                        type="button"
+                        aria-label={action.label}
+                        aria-pressed={Boolean(action.active)}
+                        title={action.label}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => runContextMenuIconAction(action)}
+                      >
+                        {action.icon}
+                      </button>
+                    ))}
+                  </span>
+                </div>
               ) : (
                 <button
                   className={item.danger ? "app-context-menu-danger" : undefined}
@@ -7117,7 +7650,12 @@ export function App() {
                   </div>
                 </div>
                 <Dialog.Close asChild>
-                  <button className="icon-button" type="button" aria-label="关闭查找">
+                  <button
+                    className="icon-button"
+                    data-testid="find-close"
+                    type="button"
+                    aria-label="关闭查找"
+                  >
                     <X size={16} />
                   </button>
                 </Dialog.Close>
@@ -7128,6 +7666,7 @@ export function App() {
                   <span>查找</span>
                   <input
                     autoFocus
+                    data-testid="find-input"
                     value={findQuery}
                     onChange={(event) => setFindQuery(event.target.value)}
                     onKeyDown={(event) => {
@@ -7240,78 +7779,6 @@ export function App() {
           </Dialog.Portal>
         </Dialog.Root>
 
-        <Dialog.Root open={isQuickCaptureOpen} onOpenChange={setIsQuickCaptureOpen}>
-          <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
-            <Dialog.Content className="quick-capture-dialog">
-              <div className="create-file-header">
-                <div className="create-file-heading">
-                  <span className="create-file-icon">
-                    <Inbox size={18} />
-                  </span>
-                  <div>
-                    <Dialog.Title className="create-file-title">
-                      快速捕捉
-                    </Dialog.Title>
-                    <Dialog.Description>
-                      把临时想法保存为当前工作区中的 Markdown 笔记
-                    </Dialog.Description>
-                  </div>
-                </div>
-                <Dialog.Close asChild>
-                  <button className="icon-button" type="button" aria-label="关闭">
-                    <X size={16} />
-                  </button>
-                </Dialog.Close>
-              </div>
-
-              <form
-                className="quick-capture-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void createQuickCapture();
-                }}
-              >
-                <label>
-                  <span>标题</span>
-                  <input
-                    autoFocus
-                    value={quickCaptureTitle}
-                    onChange={(event) => setQuickCaptureTitle(event.target.value)}
-                    placeholder="可留空，自动使用时间命名"
-                  />
-                </label>
-                <label>
-                  <span>内容</span>
-                  <textarea
-                    value={quickCaptureBody}
-                    onChange={(event) => setQuickCaptureBody(event.target.value)}
-                    placeholder="写下临时想法、链接或待办"
-                  />
-                </label>
-                <label>
-                  <span>标签</span>
-                  <input
-                    value={quickCaptureTags}
-                    onChange={(event) => setQuickCaptureTags(event.target.value)}
-                    placeholder="inbox, idea"
-                  />
-                </label>
-                <div className="quick-capture-actions">
-                  <Dialog.Close asChild>
-                    <button className="secondary-button" type="button">
-                      取消
-                    </button>
-                  </Dialog.Close>
-                  <button className="primary-button" type="submit">
-                    保存捕捉
-                  </button>
-                </div>
-              </form>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-
         <Dialog.Root open={isHomeNoteDialogOpen} onOpenChange={setIsHomeNoteDialogOpen}>
           <Dialog.Portal>
             <Dialog.Overlay className="dialog-overlay" />
@@ -7323,7 +7790,7 @@ export function App() {
                   </span>
                   <div>
                     <Dialog.Title className="create-file-title">
-                      创建便签
+                      灵感便签
                     </Dialog.Title>
                     <Dialog.Description>
                       记录临时想法、截图或参考片段，保存后会回到首页便签列表。
@@ -7337,48 +7804,46 @@ export function App() {
                 </Dialog.Close>
               </div>
 
-              <textarea
-                aria-label="便签内容"
-                autoFocus
-                placeholder="写下一个想法，也可以直接粘贴截图。"
-                value={homeQuickNote}
-                onChange={(event) => setHomeQuickNote(event.target.value)}
-                onPaste={(event) => void handleHomeImagePaste(event, setHomeQuickNoteImages)}
-              />
+              <div className="home-note-editor">
+                <textarea
+                  aria-label="便签内容"
+                  autoFocus
+                  placeholder="写下一个想法，也可以直接粘贴截图。"
+                  value={homeQuickNote}
+                  onChange={(event) => setHomeQuickNote(event.target.value)}
+                  onPaste={(event) => void handleHomeImagePaste(event, setHomeQuickNoteImages)}
+                />
 
-              <div
-                className={
-                  homeQuickNoteImages.length
-                    ? "home-draft-images home-note-dialog-images"
-                    : "home-draft-images home-draft-images-empty home-note-dialog-images"
-                }
-                aria-label="便签草稿图片"
-              >
                 {homeQuickNoteImages.length ? (
-                  homeQuickNoteImages.map((image) => (
-                    <span className="home-draft-image" key={image.id}>
-                      <button
-                        className="home-draft-image-preview"
-                        type="button"
-                        aria-label={`浏览图片 ${image.fileName}`}
-                        onClick={() => setHomeImagePreview(image)}
-                      >
-                        <img alt={image.fileName} src={image.dataUrl} draggable={false} />
-                      </button>
-                      <button
-                        className="home-draft-image-remove"
-                        type="button"
-                        aria-label="移除图片"
-                        onClick={() => removeHomeQuickNoteImage(image.id)}
-                      >
-                        <X size={12} />
-                      </button>
-                    </span>
-                  ))
+                  <div
+                    className="home-draft-images home-note-dialog-images"
+                    aria-label="便签草稿图片"
+                  >
+                    {homeQuickNoteImages.map((image) => (
+                      <span className="home-draft-image" key={image.id}>
+                        <button
+                          className="home-draft-image-preview"
+                          type="button"
+                          aria-label={`浏览图片 ${image.fileName}`}
+                          onClick={() => setHomeImagePreview(image)}
+                        >
+                          <img alt={image.fileName} src={image.dataUrl} draggable={false} />
+                        </button>
+                        <button
+                          className="home-draft-image-remove"
+                          type="button"
+                          aria-label="移除图片"
+                          onClick={() => removeHomeQuickNoteImage(image.id)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
                 ) : null}
               </div>
 
-              <div className="quick-capture-actions">
+              <div className="note-dialog-actions home-note-dialog-actions">
                 <Dialog.Close asChild>
                   <button className="secondary-button" type="button">
                     取消
@@ -7402,6 +7867,7 @@ export function App() {
           onOpenChange={(open) => {
             if (!open) {
               setHomeImagePreview(null);
+              resetHomeImagePreviewZoom();
             }
           }}
         >
@@ -7417,11 +7883,47 @@ export function App() {
                 </button>
               </Dialog.Close>
               {homeImagePreview ? (
-                <img
-                  alt={homeImagePreview.fileName}
-                  src={homeImagePreview.dataUrl}
-                  draggable={false}
-                />
+                <>
+                  <div
+                    className="home-image-preview-viewport"
+                    onWheel={(event) => {
+                      event.preventDefault();
+                      changeHomeImagePreviewZoom(event.deltaY < 0 ? 0.1 : -0.1);
+                    }}
+                  >
+                    <img
+                      alt={homeImagePreview.fileName}
+                      src={homeImagePreview.dataUrl}
+                      draggable={false}
+                      style={{
+                        transform: `scale(${homeImagePreviewZoom})`,
+                      }}
+                    />
+                  </div>
+                  <div className="home-image-preview-toolbar" aria-label="图片缩放">
+                    <button
+                      type="button"
+                      aria-label="缩小图片"
+                      onClick={() => changeHomeImagePreviewZoom(-0.1)}
+                    >
+                      <Minus size={16} />
+                    </button>
+                    <button
+                      className="home-image-preview-zoom-value"
+                      type="button"
+                      onClick={resetHomeImagePreviewZoom}
+                    >
+                      {Math.round(homeImagePreviewZoom * 100)}%
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="放大图片"
+                      onClick={() => changeHomeImagePreviewZoom(0.1)}
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                </>
               ) : null}
             </Dialog.Content>
           </Dialog.Portal>
@@ -7457,7 +7959,7 @@ export function App() {
                     </Dialog.Title>
                     <Dialog.Description>
                       {documentLinkPickerMode === "insertReference"
-                        ? "从当前工作区选择文件，作为一个整体引用文档插入到正文。"
+                        ? "从当前工作区选择文件，作为行内文档引用插入到正文。"
                         : "从当前工作区选择文件，添加到正在编辑的文档元信息中。"}
                     </Dialog.Description>
                     {documentLinkPickerSourceDocument ? (

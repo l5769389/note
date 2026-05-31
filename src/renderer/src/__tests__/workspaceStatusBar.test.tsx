@@ -71,6 +71,23 @@ describe("WorkspaceStatusBar", () => {
     expect(html).toContain("workspace-autosave-status-saved");
   });
 
+  it("renders an icon-only close document action", () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceStatusBar
+        activeDocument={document()}
+        isSidebarHidden={false}
+        missingAssetReferences={[]}
+        saveState="saved"
+        wordCount={12}
+        onCloseDocument={() => {}}
+        onToggleSidebar={() => {}}
+      />,
+    );
+
+    expect(html).toContain("关闭当前文档");
+    expect(html).toContain("workspace-close-document-button");
+  });
+
   it("hides document status content when no document is open", () => {
     const html = renderToStaticMarkup(
       <WorkspaceStatusBar

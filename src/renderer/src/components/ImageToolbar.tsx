@@ -31,6 +31,7 @@ export type ImageToolbarState =
       imageWidth: number;
       left: number;
       pos: number;
+      source?: "markdown" | "html";
       top: number;
       visible: true;
       drawingId?: string;
@@ -166,7 +167,7 @@ export function ImageNameEditor({
     setDraft(visibleName);
   }, [visibleName, visiblePos]);
 
-  if (!state.visible) {
+  if (!state.visible || state.source === "html") {
     return null;
   }
 
@@ -230,4 +231,3 @@ export function ImageResizeHandle({
     />
   );
 }
-

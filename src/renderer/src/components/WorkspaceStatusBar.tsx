@@ -6,6 +6,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
+  X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import {
@@ -48,6 +49,7 @@ type WorkspaceStatusBarProps = {
   missingAssetReferences: string[];
   saveState: SaveState;
   wordCount: number;
+  onCloseDocument?: () => void;
   onToggleInspector?: () => void;
   onToggleSidebar: () => void;
 };
@@ -87,6 +89,7 @@ export function WorkspaceStatusBar({
   missingAssetReferences,
   saveState,
   wordCount,
+  onCloseDocument,
   onToggleInspector,
   onToggleSidebar,
 }: WorkspaceStatusBarProps) {
@@ -105,6 +108,17 @@ export function WorkspaceStatusBar({
         {isSidebarHidden ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
       </button>
       <span className="workspace-status-spacer" />
+      {shouldShowDocumentStatus && onCloseDocument ? (
+        <button
+          className="workspace-close-document-button"
+          type="button"
+          title="关闭当前文档"
+          aria-label="关闭当前文档"
+          onClick={onCloseDocument}
+        >
+          <X size={14} />
+        </button>
+      ) : null}
       {shouldShowDocumentStatus && onToggleInspector ? (
         <button
           className={[
@@ -136,6 +150,7 @@ export function WorkspaceStatusBar({
         <>
           <span
             className={`workspace-autosave-status workspace-autosave-status-${saveState}`}
+            data-testid="autosave-status"
             title={status.title}
             aria-live="polite"
           >

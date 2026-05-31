@@ -1,5 +1,5 @@
 import { Pencil, Table2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   createUniverSheetPreviewRows,
   parseUniverSheetAssetReference,
@@ -10,7 +10,9 @@ import {
 type UniverSheetPreviewProps = {
   code: string;
   filePath?: string;
+  maxPreviewRows?: number;
   onEdit?: (code: string) => void;
+  searchQuery?: string;
 };
 
 type PreviewState =
@@ -56,10 +58,53 @@ function rememberAssetPreviewState(cacheKey: string, state: PreviewState) {
   }
 }
 
+function HighlightedSheetText({
+  query,
+  text,
+}: {
+  query?: string;
+  text: string;
+}) {
+  const normalizedQuery = query?.trim();
+
+  if (!normalizedQuery) {
+    return <>{text}</>;
+  }
+
+  const normalizedText = text.toLocaleLowerCase();
+  const normalizedNeedle = normalizedQuery.toLocaleLowerCase();
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const index = normalizedText.indexOf(normalizedNeedle, cursor);
+
+    if (index < 0) {
+      parts.push(text.slice(cursor));
+      break;
+    }
+
+    if (index > cursor) {
+      parts.push(text.slice(cursor, index));
+    }
+
+    parts.push(
+      <mark key={`${index}-${cursor}`}>
+        {text.slice(index, index + normalizedNeedle.length)}
+      </mark>,
+    );
+    cursor = index + normalizedNeedle.length;
+  }
+
+  return <>{parts}</>;
+}
+
 export function UniverSheetPreview({
   code,
   filePath,
+  maxPreviewRows,
   onEdit,
+  searchQuery,
 }: UniverSheetPreviewProps) {
   const assetReference = useMemo(
     () => parseUniverSheetAssetReference(code),
@@ -169,14 +214,15 @@ export function UniverSheetPreview({
   }
 
   const data = state.data;
-  const rows = createUniverSheetPreviewRows(data);
+  const rows = createUniverSheetPreviewRows(data, maxPreviewRows);
+  const normalizedSearchQuery = searchQuery?.trim().toLocaleLowerCase() ?? "";
 
   return (
     <figure className="univer-sheet-preview">
       <figcaption className="univer-sheet-preview-header">
         <span>
           <Table2 size={16} />
-          {data.title || "在线表格"}
+          <HighlightedSheetText query={searchQuery} text={data.title || "在线表格"} />
         </span>
         {onEdit && (
           <button type="button" onClick={() => onEdit(code)}>
@@ -190,9 +236,20 @@ export function UniverSheetPreview({
           <tbody>
             {rows.map((row, rowIndex) => (
               <tr key={`row-${rowIndex}`}>
-                {row.map((cell, columnIndex) => (
-                  <td key={`cell-${rowIndex}-${columnIndex}`}>{cell.text}</td>
-                ))}
+                {row.map((cell, columnIndex) => {
+                  const hasMatch =
+                    Boolean(normalizedSearchQuery) &&
+                    cell.text.toLocaleLowerCase().includes(normalizedSearchQuery);
+
+                  return (
+                    <td
+                      className={hasMatch ? "univer-sheet-preview-cell-match" : undefined}
+                      key={`cell-${rowIndex}-${columnIndex}`}
+                    >
+                      <HighlightedSheetText query={searchQuery} text={cell.text} />
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>

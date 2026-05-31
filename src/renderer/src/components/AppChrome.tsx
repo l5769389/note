@@ -22,7 +22,10 @@ import {
 } from "../documentModel";
 import type { AppDialogState } from "../useAppDialog";
 import type { MarkdownDocument } from "../types";
-import { formatRecentTimestamp } from "../workspaceDisplay";
+import {
+  formatRecentTimestamp,
+  getRecentDocumentTimestamp,
+} from "../workspaceDisplay";
 
 export function DocumentLoadingIndicator({
   detail,
@@ -210,6 +213,7 @@ export function MenuSeparator() {
 
 export function MenuItem({
   checked,
+  testId,
   disabled,
   label,
   onSelect,
@@ -217,6 +221,7 @@ export function MenuItem({
   submenu,
 }: {
   checked?: boolean;
+  testId?: string;
   disabled?: boolean;
   label: ReactNode;
   onSelect?: () => void;
@@ -236,6 +241,7 @@ export function MenuItem({
         .filter(Boolean)
         .join(" ")}
       disabled={disabled}
+      data-testid={testId}
       onClick={onSelect}
       role={role}
       type="button"
@@ -252,10 +258,12 @@ export function MenuSubmenu({
   children,
   label,
   panelClassName,
+  testId,
 }: {
   children: ReactNode;
   label: ReactNode;
   panelClassName?: string;
+  testId?: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const submenuRef = useRef<HTMLDivElement | null>(null);
@@ -346,6 +354,7 @@ export function MenuSubmenu({
         aria-expanded={isOpen}
         aria-haspopup="menu"
         className="menubar-dropdown-item"
+        data-testid={testId}
         onClick={openSubmenu}
         role="menuitem"
         type="button"
@@ -387,7 +396,9 @@ export function RecentFileMenuItem({
     : document.filePath
       ? getDocumentPathPreview(document)
       : "未保存到本地";
-  const timeLabel = isMissing ? "不存在" : formatRecentTimestamp(document.updatedAt);
+  const timeLabel = isMissing
+    ? "不存在"
+    : formatRecentTimestamp(getRecentDocumentTimestamp(document));
 
   return (
     <button

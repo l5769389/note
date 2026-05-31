@@ -72,11 +72,12 @@ export function WorkspaceSearchPanel({
   const trimmedQuery = query.trim();
 
   return (
-    <div className="workspace-search-panel">
+    <div className="workspace-search-panel" data-testid="workspace-search-panel">
       <div className="workspace-search-input-row">
         <Search size={16} />
         <input
           ref={inputRef}
+          data-testid="workspace-search-input"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           onKeyDown={(event) => {
@@ -111,7 +112,7 @@ export function WorkspaceSearchPanel({
       <div className="workspace-search-results">
         {!trimmedQuery ? (
           <div className="workspace-search-empty">
-            输入内容后会在当前文件夹内搜索 .md 和 .html 文件。
+            输入内容后会在当前文件夹内搜索 .md、.html 和 .univer 文件。
           </div>
         ) : groups.length ? (
           groups.map((group) => (
@@ -130,6 +131,7 @@ export function WorkspaceSearchPanel({
               {group.matches.map((match) => (
                 <button
                   className="workspace-search-match"
+                  data-testid="workspace-search-match"
                   key={`${group.document.filePath ?? group.document.id}-${match.start}`}
                   type="button"
                   onClick={() => onOpenMatch(group.document, match)}

@@ -24,6 +24,9 @@ describe("createParagraphCommandMarkdown", () => {
     expect(createParagraphCommandMarkdown({ type: "orderedList" })).toBe("1. ");
     expect(createParagraphCommandMarkdown({ type: "bulletList" })).toBe("- ");
     expect(createParagraphCommandMarkdown({ type: "taskList" })).toBe("- [ ] ");
+    expect(createParagraphCommandMarkdown({ type: "horizontalRule" })).toBe(
+      "\n---\n",
+    );
   });
 
   it("creates markdown for alert commands", () => {

@@ -158,11 +158,14 @@ describe("getEditorShortcutAction", () => {
 describe("getAppShortcutAction", () => {
   it.each([
     ["Ctrl+N", { ctrlKey: true, key: "n" }, { command: "newMarkdownDocument", type: "file" }],
+    ["Meta+N", { metaKey: true, key: "n" }, { command: "newMarkdownDocument", type: "file" }],
     ["Ctrl+Shift+N", { ctrlKey: true, key: "N", shiftKey: true }, { command: "newWindow", type: "file" }],
-    ["Ctrl+Alt+N", { altKey: true, ctrlKey: true, key: "n" }, { command: "quickCapture", type: "file" }],
+    ["Ctrl+Alt+N", { altKey: true, ctrlKey: true, key: "n" }, { command: "inspirationNote", type: "file" }],
     ["Ctrl+O", { ctrlKey: true, key: "o" }, { command: "openDocument", type: "file" }],
     ["Ctrl+S", { ctrlKey: true, key: "s" }, { command: "save", type: "file" }],
+    ["Meta+S", { metaKey: true, key: "s" }, { command: "save", type: "file" }],
     ["Ctrl+Shift+S", { ctrlKey: true, key: "S", shiftKey: true }, { command: "saveAs", type: "file" }],
+    ["Ctrl+W", { ctrlKey: true, key: "w" }, { command: "closeDocument", type: "file" }],
   ] as const)("maps file shortcut %s", (_, event, action) => {
     expect(getAppShortcutAction(shortcut(event))).toEqual(action);
   });
@@ -214,6 +217,7 @@ describe("getAppShortcutAction", () => {
     ["Alt+Shift+5", { altKey: true, code: "Digit5", key: "%", shiftKey: true }, { action: { command: { type: "strikethrough" }, type: "format" }, type: "editor" }],
     ["Alt+ArrowUp", { altKey: true, key: "ArrowUp" }, { action: { command: "moveLineUp", type: "edit" }, type: "editor" }],
     ["Alt+ArrowDown", { altKey: true, key: "ArrowDown" }, { action: { command: "moveLineDown", type: "edit" }, type: "editor" }],
+    ["Ctrl+Alt+L", { altKey: true, ctrlKey: true, key: "l" }, { action: { type: "insertDocumentReference" }, type: "editor" }],
     ["Tab", { key: "Tab" }, { action: { command: { type: "indentList" }, type: "paragraph" }, type: "editor" }],
     ["Shift+Tab", { key: "Tab", shiftKey: true }, { action: { command: { type: "outdentList" }, type: "paragraph" }, type: "editor" }],
     ["Ctrl+1", { ctrlKey: true, key: "1" }, { action: { command: { level: 1, type: "heading" }, type: "paragraph" }, type: "editor" }],
@@ -237,6 +241,7 @@ describe("getAppShortcutAction", () => {
     ["Ctrl+B", { ctrlKey: true, key: "b" }],
     ["Ctrl+1", { ctrlKey: true, key: "1" }],
     ["Alt+ArrowUp", { altKey: true, key: "ArrowUp" }],
+    ["Ctrl+Alt+L", { altKey: true, ctrlKey: true, key: "l" }],
     ["Tab", { key: "Tab" }],
   ] as const)("ignores editor shortcut %s outside editor context", (_, event) => {
     expect(getAppShortcutAction(shortcut(event))).toBeNull();

@@ -196,8 +196,12 @@ function MarkdownAnchorRenderer({
     >
       {isWikiLink ? (
         <>
-          <FileText aria-hidden="true" size={14} strokeWidth={2.1} />
-          <span className="markdown-wiki-link-kind">文档</span>
+          <FileText
+            aria-hidden="true"
+            className="markdown-wiki-link-icon"
+            size={14}
+            strokeWidth={2.15}
+          />
           <span className="markdown-wiki-link-title">{children}</span>
         </>
       ) : (

@@ -47,19 +47,19 @@ export function useWorkspaceSearchAutoFocus({
   }, [inputRef, isSidebarHidden, sidebarTab]);
 }
 
-export function useQuickCaptureBridge(
+export function useInspirationNoteBridge(
   subscribe: ((callback: () => void) => () => void) | undefined,
-  onQuickCapture: () => void,
+  onInspirationNote: () => void,
 ) {
-  const onQuickCaptureRef = useRef(onQuickCapture);
+  const onInspirationNoteRef = useRef(onInspirationNote);
 
   useEffect(() => {
-    onQuickCaptureRef.current = onQuickCapture;
-  }, [onQuickCapture]);
+    onInspirationNoteRef.current = onInspirationNote;
+  }, [onInspirationNote]);
 
   useEffect(() => {
     return subscribe?.(() => {
-      onQuickCaptureRef.current();
+      onInspirationNoteRef.current();
     });
   }, [subscribe]);
 }

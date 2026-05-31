@@ -8,6 +8,11 @@ type WorkspaceFileChangePayload = {
   updatedAt?: string;
 };
 
+type WindowStateSnapshot = {
+  alwaysOnTop: boolean;
+  fullScreen: boolean;
+};
+
 contextBridge.exposeInMainWorld("desktop", {
   loadAppState: () => ipcRenderer.invoke("app-state:load"),
   saveAppState: (state: PersistedAppState) =>
@@ -67,15 +72,15 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.removeListener("workspace:file-change", listener);
     };
   },
-  onQuickCapture: (callback: () => void) => {
+  onInspirationNote: (callback: () => void) => {
     const listener = () => {
       callback();
     };
 
-    ipcRenderer.on("quick-capture:open", listener);
+    ipcRenderer.on("inspiration-note:open", listener);
 
     return () => {
-      ipcRenderer.removeListener("quick-capture:open", listener);
+      ipcRenderer.removeListener("inspiration-note:open", listener);
     };
   },
   onZoomFactorChanged: (callback: (factor: number) => void) => {
@@ -87,6 +92,17 @@ contextBridge.exposeInMainWorld("desktop", {
 
     return () => {
       ipcRenderer.removeListener("window:zoom-factor-changed", listener);
+    };
+  },
+  onWindowStateChanged: (callback: (state: WindowStateSnapshot) => void) => {
+    const listener = (_: IpcRendererEvent, state: WindowStateSnapshot) => {
+      callback(state);
+    };
+
+    ipcRenderer.on("window:state-changed", listener);
+
+    return () => {
+      ipcRenderer.removeListener("window:state-changed", listener);
     };
   },
   openWorkspaceDirectory: () =>

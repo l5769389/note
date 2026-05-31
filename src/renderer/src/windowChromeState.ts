@@ -12,12 +12,14 @@ export function isValidWindowZoomFactor(value: unknown): value is number {
 export function useWindowChromeState({
   getWindowState,
   getZoomFactor,
+  onWindowStateChanged,
   setIsAlwaysOnTop,
   setIsFullScreen,
   setWindowZoomFactor,
 }: {
   getWindowState?: () => Promise<WindowStateSnapshot | undefined>;
   getZoomFactor?: () => Promise<number>;
+  onWindowStateChanged?: (callback: (state: WindowStateSnapshot) => void) => () => void;
   setIsAlwaysOnTop: (alwaysOnTop: boolean) => void;
   setIsFullScreen: (fullScreen: boolean) => void;
   setWindowZoomFactor: (factor: number) => void;
@@ -46,4 +48,11 @@ export function useWindowChromeState({
       isStale = true;
     };
   }, []);
+
+  useEffect(() => {
+    return onWindowStateChanged?.((state) => {
+      setIsFullScreen(state.fullScreen);
+      setIsAlwaysOnTop(state.alwaysOnTop);
+    });
+  }, [onWindowStateChanged, setIsAlwaysOnTop, setIsFullScreen]);
 }

@@ -52,6 +52,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import {
   formatCodeLanguageLabel,
+  getCodeLanguageSuggestions,
+  getCodeLanguageInputValue,
   isMermaidLanguage,
   normalizeCodeLanguageInput,
 } from "../codeLanguage";
@@ -82,7 +84,6 @@ import {
   getImageDisplayName,
   ImageNameEditor,
   ImageResizeHandle,
-  ImageToolbar,
   type ImageToolbarState,
 } from "./ImageToolbar";
 import {
@@ -205,6 +206,11 @@ export type TyporaEditorHandle = {
   clearSearchHighlight: () => void;
   focusAtClientPoint: (clientX: number, clientY: number) => void;
   insertMarkdown: (markdown: string) => void;
+  prepareContextMenuTarget: (
+    clientX: number,
+    clientY: number,
+    target: EventTarget | null,
+  ) => void;
   revealSearchResult: (options: TyporaSearchRevealOptions) => boolean;
   runEditCommand: (command: TyporaEditCommand) => void;
   runFormatCommand: (command: TyporaFormatCommand) => void;
@@ -256,6 +262,139 @@ function getRawHtmlValue(node: ProseMirrorNode) {
   return typeof node.attrs.value === "string"
     ? node.attrs.value
     : node.textContent;
+}
+
+function isRawHtmlImage(value: string) {
+  return rawHtmlImagePattern.test(value);
+}
+
+function getFirstRawHtmlImage(value: string) {
+  const host = document.createElement("div");
+  host.innerHTML = value.trim();
+
+  return host.querySelector("img");
+}
+
+function getRawHtmlImageWidth(value: string) {
+  const image = getFirstRawHtmlImage(value);
+
+  if (!image) {
+    return undefined;
+  }
+
+  const inlineWidth = image.style.width.trim();
+  const styleMatch = inlineWidth.match(/^(\d+(?:\.\d+)?)px$/i);
+
+  if (styleMatch) {
+    return clampImageWidth(Number(styleMatch[1]));
+  }
+
+  const attrWidth = image.getAttribute("width");
+  const attrMatch = attrWidth?.match(/^(\d+(?:\.\d+)?)$/);
+
+  return attrMatch ? clampImageWidth(Number(attrMatch[1])) : undefined;
+}
+
+function getRawHtmlImageAlignment(value: string): ImageAlignment {
+  const image = getFirstRawHtmlImage(value);
+
+  if (!image) {
+    return "left";
+  }
+
+  const display = image.style.display.trim().toLowerCase();
+  const marginLeft = image.style.marginLeft.trim().toLowerCase();
+  const marginRight = image.style.marginRight.trim().toLowerCase();
+  const float = image.style.cssFloat.trim().toLowerCase();
+
+  if (float === "right") {
+    return "right";
+  }
+
+  if (float === "left") {
+    return "left";
+  }
+
+  if (display !== "block") {
+    return "left";
+  }
+
+  if (marginLeft === "auto" && marginRight === "auto") {
+    return "center";
+  }
+
+  if (
+    marginLeft === "auto" &&
+    (marginRight === "0" || marginRight === "0px" || marginRight === "")
+  ) {
+    return "right";
+  }
+
+  return "left";
+}
+
+function applyRawHtmlImageAlignment(
+  image: HTMLImageElement,
+  align: ImageAlignment,
+) {
+  image.style.removeProperty("float");
+  image.style.display = "block";
+
+  if (align === "center") {
+    image.style.marginLeft = "auto";
+    image.style.marginRight = "auto";
+    return;
+  }
+
+  if (align === "right") {
+    image.style.marginLeft = "auto";
+    image.style.marginRight = "0";
+    return;
+  }
+
+  image.style.marginLeft = "0";
+  image.style.marginRight = "auto";
+}
+
+function patchRawHtmlImage(
+  value: string,
+  patch: Partial<Pick<ImageMeta, "align" | "width">>,
+) {
+  const host = document.createElement("div");
+  host.innerHTML = value.trim();
+  const image = host.querySelector("img");
+
+  if (!image) {
+    return value;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "width")) {
+    if (typeof patch.width === "number") {
+      image.style.width = `${clampImageWidth(patch.width)}px`;
+      image.style.height = "auto";
+      image.style.maxWidth = "100%";
+      image.style.removeProperty("zoom");
+      image.removeAttribute("width");
+      image.removeAttribute("height");
+    } else {
+      image.style.removeProperty("width");
+      image.style.removeProperty("height");
+      image.style.removeProperty("max-width");
+      image.style.removeProperty("zoom");
+      image.removeAttribute("width");
+      image.removeAttribute("height");
+    }
+  }
+
+  if (patch.align) {
+    applyRawHtmlImageAlignment(image, patch.align);
+  }
+
+  if (!image.getAttribute("style")?.trim()) {
+    image.removeAttribute("style");
+  }
+
+  return host.innerHTML;
 }
 
 function isRawHtmlVideo(value: string) {
@@ -383,6 +522,10 @@ function createRenderedHtmlPreview(
     wrapper.classList.add("typora-raw-html-preview-video");
   }
 
+  if (isRawHtmlImage(trimmedValue)) {
+    wrapper.classList.add("typora-raw-html-preview-image");
+  }
+
   wrapper.querySelectorAll("[src]").forEach((element) => {
     const source = element.getAttribute("src");
     const resolvedSource = resolveDocumentResourceUrl(source ?? undefined, filePath);
@@ -460,12 +603,16 @@ function createRawHtmlPreviewDecoration(
                 Decoration.widget(
                   pos + node.nodeSize,
                   () =>
-                    createRenderedHtmlPreview(value, filePathRef.current, pos) ??
+                    createRenderedHtmlPreview(
+                      value,
+                      filePathRef.current,
+                      pos,
+                    ) ??
                     document.createTextNode(""),
                   {
                     ignoreSelection: true,
                     key: `typora-raw-html-preview-${pos}-${value}`,
-                    side: 1,
+                    side: -1,
                     stopEvent: (event) =>
                       event.type === "click" ||
                       event.type === "mousedown" ||
@@ -605,8 +752,13 @@ const codeBlockLanguageDecoration = $prose(
 
             const rawLanguage =
               typeof node.attrs.language === "string" ? node.attrs.language.trim() : "";
-            const language = (rawLanguage || "plain text").toLowerCase();
-            const isActive = selectionTouchesRange(from, to, pos, pos + node.nodeSize);
+            const normalizedLanguage = normalizeCodeLanguageInput(rawLanguage);
+            const language = normalizedLanguage || "plain text";
+            const codeStart = pos + 1;
+            const codeEnd = pos + node.nodeSize - 1;
+            const isActive =
+              (state.selection instanceof NodeSelection && state.selection.from === pos) ||
+              selectionTouchesRange(from, to, codeStart, codeEnd);
 
             decorations.push(
               Decoration.node(pos, pos + node.nodeSize, {
@@ -624,23 +776,35 @@ const codeBlockLanguageDecoration = $prose(
                   pos + node.nodeSize - 1,
                   (view) => {
                     const marker = document.createElement("span");
+                    const trigger = document.createElement("button");
                     const label = document.createElement("span");
+                    const panel = document.createElement("span");
                     const input = document.createElement("input");
+                    const list = document.createElement("span");
                     marker.className = "typora-code-language-editor";
                     marker.contentEditable = "false";
                     marker.dataset.codeLanguage = language;
                     marker.setAttribute("aria-label", "Code block language");
-                    marker.setAttribute("role", "button");
-                    marker.tabIndex = 0;
+                    trigger.className = "typora-code-language-trigger";
+                    trigger.type = "button";
+                    trigger.title = "更改代码块语言";
                     label.className = "typora-code-language-label";
                     label.textContent = formatCodeLanguageLabel(language);
+                    panel.className = "typora-code-language-popover";
+                    panel.hidden = true;
                     input.className = "typora-code-language-input";
-                    input.hidden = true;
+                    input.setAttribute("aria-label", "Code language");
+                    input.autocomplete = "off";
                     input.spellcheck = false;
                     input.type = "text";
-                    input.value = rawLanguage || "text";
-                    marker.append(label, input);
+                    input.value = getCodeLanguageInputValue(rawLanguage);
+                    list.className = "typora-code-language-suggestions";
+                    trigger.append(label);
+                    panel.append(input, list);
+                    marker.append(trigger, panel);
                     let isEditing = false;
+                    let activeSuggestionIndex = 0;
+                    let suggestionValues = getCodeLanguageSuggestions(input.value);
 
                     function syncCodeLanguage() {
                       const nextLanguage = normalizeCodeLanguageInput(input.value);
@@ -662,11 +826,81 @@ const codeBlockLanguageDecoration = $prose(
                       return nextLanguage;
                     }
 
+                    function focusAfterCodeBlock() {
+                      view.focus();
+                      view.dispatch(
+                        view.state.tr.setSelection(
+                          Selection.near(view.state.doc.resolve(pos + node.nodeSize), 1),
+                        ),
+                      );
+                    }
+
                     function setDisplayLanguage(languageValue: string) {
-                      const displayLanguage = languageValue || "plain text";
+                      const normalizedDisplayLanguage =
+                        normalizeCodeLanguageInput(languageValue);
+                      const displayLanguage = normalizedDisplayLanguage || "plain text";
                       marker.dataset.codeLanguage = displayLanguage;
                       label.textContent = formatCodeLanguageLabel(displayLanguage);
-                      input.value = languageValue || "text";
+                      input.value = getCodeLanguageInputValue(languageValue);
+                    }
+
+                    function updateActiveSuggestion() {
+                      const buttons = Array.from(
+                        list.querySelectorAll<HTMLButtonElement>(
+                          ".typora-code-language-suggestion",
+                        ),
+                      );
+
+                      buttons.forEach((button, index) => {
+                        button.classList.toggle(
+                          "typora-code-language-suggestion-active",
+                          index === activeSuggestionIndex,
+                        );
+                      });
+                    }
+
+                    function applySuggestion(index: number) {
+                      const suggestion = suggestionValues[index];
+
+                      if (!suggestion) {
+                        return false;
+                      }
+
+                      input.value = suggestion.value || "text";
+                      return true;
+                    }
+
+                    function renderSuggestions() {
+                      suggestionValues = getCodeLanguageSuggestions(input.value);
+                      activeSuggestionIndex = Math.min(
+                        activeSuggestionIndex,
+                        Math.max(0, suggestionValues.length - 1),
+                      );
+                      list.replaceChildren();
+                      list.hidden = suggestionValues.length === 0;
+
+                      suggestionValues.forEach((suggestion, index) => {
+                        const option = document.createElement("button");
+                        const optionLabel = document.createElement("span");
+                        const optionValue = document.createElement("small");
+                        option.className = "typora-code-language-suggestion";
+                        option.type = "button";
+                        option.dataset.languageValue = suggestion.value;
+                        optionLabel.textContent = suggestion.label;
+                        optionValue.textContent = suggestion.value || "text";
+                        option.append(optionLabel, optionValue);
+                        option.addEventListener("mousedown", (event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          activeSuggestionIndex = index;
+                          applySuggestion(index);
+                          exitEditing(true);
+                          focusAfterCodeBlock();
+                        });
+                        list.append(option);
+                      });
+
+                      updateActiveSuggestion();
                     }
 
                     function enterEditing() {
@@ -679,14 +913,15 @@ const codeBlockLanguageDecoration = $prose(
                         typeof codeNode?.attrs.language === "string" &&
                         codeNode.attrs.language.trim()
                           ? codeNode.attrs.language.trim()
-                          : "text";
+                          : "";
 
                       isEditing = true;
                       marker.classList.add("typora-code-language-editor-editing");
-                      marker.removeAttribute("role");
-                      label.hidden = true;
-                      input.hidden = false;
-                      input.value = editableLanguage;
+                      trigger.hidden = true;
+                      panel.hidden = false;
+                      input.value = getCodeLanguageInputValue(editableLanguage);
+                      activeSuggestionIndex = 0;
+                      renderSuggestions();
 
                       requestAnimationFrame(() => {
                         input.focus();
@@ -706,15 +941,20 @@ const codeBlockLanguageDecoration = $prose(
                           : "";
 
                       isEditing = false;
-                      marker.setAttribute("role", "button");
                       marker.classList.remove("typora-code-language-editor-editing");
-                      input.hidden = true;
-                      label.hidden = false;
+                      panel.hidden = true;
+                      trigger.hidden = false;
                       setDisplayLanguage(String(nextLanguage ?? ""));
                     }
 
                     marker.addEventListener("mousedown", (event) => {
-                      if (event.target === input && isEditing) {
+                      const target =
+                        event.target instanceof Element ? event.target : null;
+
+                      if (
+                        isEditing &&
+                        target?.closest(".typora-code-language-popover")
+                      ) {
                         event.stopPropagation();
                         return;
                       }
@@ -724,8 +964,8 @@ const codeBlockLanguageDecoration = $prose(
                         !selectionTouchesRange(
                           view.state.selection.from,
                           view.state.selection.to,
-                          pos,
-                          pos + node.nodeSize,
+                          codeStart,
+                          codeEnd,
                         )
                       ) {
                         view.dispatch(
@@ -736,11 +976,20 @@ const codeBlockLanguageDecoration = $prose(
                       }
                       enterEditing();
                     });
+                    trigger.addEventListener("click", (event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      enterEditing();
+                    });
                     marker.addEventListener("keydown", (event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         enterEditing();
                       }
+                    });
+                    input.addEventListener("input", () => {
+                      activeSuggestionIndex = 0;
+                      renderSuggestions();
                     });
                     input.addEventListener("blur", () => {
                       exitEditing(true);
@@ -748,18 +997,39 @@ const codeBlockLanguageDecoration = $prose(
                     input.addEventListener("keydown", (event) => {
                       event.stopPropagation();
 
+                      if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        if (!suggestionValues.length) {
+                          return;
+                        }
+                        activeSuggestionIndex = Math.min(
+                          suggestionValues.length - 1,
+                          activeSuggestionIndex + 1,
+                        );
+                        updateActiveSuggestion();
+                        return;
+                      }
+
+                      if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        if (!suggestionValues.length) {
+                          return;
+                        }
+                        activeSuggestionIndex = Math.max(0, activeSuggestionIndex - 1);
+                        updateActiveSuggestion();
+                        return;
+                      }
+
                       if (event.key !== "Enter" && event.key !== "Escape") {
                         return;
                       }
 
                       event.preventDefault();
+                      if (event.key === "Enter") {
+                        applySuggestion(activeSuggestionIndex);
+                      }
                       exitEditing(event.key === "Enter");
-                      view.focus();
-                      view.dispatch(
-                        view.state.tr.setSelection(
-                          Selection.near(view.state.doc.resolve(pos + node.nodeSize), 1),
-                        ),
-                      );
+                      focusAfterCodeBlock();
                     });
 
                     return marker;
@@ -1011,6 +1281,346 @@ function isNonEditorControl(target: EventTarget | null) {
       ),
     )
   );
+}
+
+function getRawHtmlPreviewSourcePosition(preview: HTMLElement) {
+  const pos = Number(preview.dataset.typoraRawHtmlPos ?? NaN);
+
+  return Number.isFinite(pos) ? pos : null;
+}
+
+function getEditableBlockCenter(view: EditorView, position: number, selectionPosition: number) {
+  const dom = view.nodeDOM(position);
+
+  if (dom instanceof HTMLElement) {
+    const rect = dom.getBoundingClientRect();
+
+    if (rect.height > 0) {
+      return (rect.top + rect.bottom) / 2;
+    }
+  }
+
+  try {
+    const coords = view.coordsAtPos(selectionPosition);
+
+    return (coords.top + coords.bottom) / 2;
+  } catch {
+    return null;
+  }
+}
+
+function findRawHtmlPreviewAtMousePosition(
+  event: ReactMouseEvent<HTMLElement>,
+  root: HTMLElement,
+) {
+  const target = event.target instanceof Element ? event.target : null;
+  const directPreview = target?.closest<HTMLElement>(".typora-raw-html-preview");
+
+  if (directPreview && root.contains(directPreview)) {
+    return directPreview;
+  }
+
+  return null;
+}
+
+function focusEditableParagraphAfterRawHtmlPreview(
+  view: EditorView,
+  pos: number,
+  eventY?: number,
+) {
+  const paragraphType = view.state.schema.nodes.paragraph;
+
+  if (!paragraphType) {
+    return false;
+  }
+
+  const docSize = view.state.doc.content.size;
+  const rawHtmlNode = view.state.doc.nodeAt(pos);
+  const insertPosition = Math.min(
+    docSize,
+    pos + (rawHtmlNode?.nodeSize ?? 1),
+  );
+  const emptyParagraphs: Array<{
+    center: number | null;
+    position: number;
+    selectionPosition: number;
+  }> = [];
+
+  for (
+    let paragraphPosition = insertPosition;
+    paragraphPosition <= docSize;
+  ) {
+    const node = view.state.doc.nodeAt(paragraphPosition);
+
+    if (node?.type !== paragraphType || node.content.size !== 0) {
+      break;
+    }
+
+    emptyParagraphs.push({
+      center: getEditableBlockCenter(
+        view,
+        paragraphPosition,
+        Math.min(paragraphPosition + 1, docSize),
+      ),
+      position: paragraphPosition,
+      selectionPosition: Math.min(paragraphPosition + 1, docSize),
+    });
+    paragraphPosition += node.nodeSize;
+  }
+
+  if (emptyParagraphs.length) {
+    const targetParagraph =
+      typeof eventY === "number"
+        ? emptyParagraphs.reduce((best, candidate) => {
+            const bestCenter = best.center;
+            const candidateCenter = candidate.center;
+
+            if (bestCenter === null) {
+              return candidate;
+            }
+
+            if (candidateCenter === null) {
+              return best;
+            }
+
+            return Math.abs(eventY - candidateCenter) <
+              Math.abs(eventY - bestCenter)
+              ? candidate
+              : best;
+          }, emptyParagraphs[0])
+        : emptyParagraphs[0];
+
+    view.dispatch(
+      view.state.tr
+        .setSelection(
+          TextSelection.create(view.state.doc, targetParagraph.selectionPosition),
+        )
+        .scrollIntoView(),
+    );
+    view.focus();
+    return true;
+  }
+
+  const selection =
+    Selection.findFrom(view.state.doc.resolve(insertPosition), 1, true) ??
+    Selection.near(view.state.doc.resolve(insertPosition), 1);
+
+  view.dispatch(
+    view.state.tr.setSelection(selection).scrollIntoView(),
+  );
+  view.focus();
+  return true;
+}
+
+function focusRawHtmlPreviewBoundary(
+  view: EditorView,
+  event: ReactMouseEvent<HTMLElement>,
+  root: HTMLElement,
+) {
+  const preview = findRawHtmlPreviewAtMousePosition(event, root);
+
+  if (!preview) {
+    return false;
+  }
+
+  const target = event.target instanceof Element ? event.target : null;
+
+  if (target?.closest("img, video")) {
+    return false;
+  }
+
+  const pos = getRawHtmlPreviewSourcePosition(preview);
+  const node = pos === null ? null : view.state.doc.nodeAt(pos);
+
+  if (pos === null || !node || node.type.name !== "html") {
+    return false;
+  }
+
+  const media = preview.querySelector<HTMLElement>("img, video");
+  const rect = media?.getBoundingClientRect() ?? preview.getBoundingClientRect();
+  const shouldFocusBefore =
+    event.clientY < rect.top ||
+    (event.clientY <= rect.bottom && event.clientX < rect.left);
+
+  if (!shouldFocusBefore && event.clientY >= rect.bottom) {
+    return focusEditableParagraphAfterRawHtmlPreview(view, pos, event.clientY);
+  }
+
+  const nextPos = shouldFocusBefore ? pos : pos + node.nodeSize;
+  const docSize = view.state.doc.content.size;
+  const resolvedPos = view.state.doc.resolve(
+    Math.min(docSize, Math.max(0, nextPos)),
+  );
+  const selection = Selection.near(resolvedPos, shouldFocusBefore ? -1 : 1);
+
+  view.dispatch(view.state.tr.setSelection(selection));
+  view.focus();
+  return true;
+}
+
+function findEditableImagePosition(
+  view: EditorView,
+  imageElement: HTMLImageElement,
+  coordinates?: { left: number; top: number },
+) {
+  let matchedPosition: number | null = null;
+
+  view.state.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (matchedPosition !== null) {
+      return false;
+    }
+
+    if (node.type.name !== "image") {
+      return true;
+    }
+
+    const nodeDom = view.nodeDOM(pos);
+    const nodeImage =
+      nodeDom instanceof HTMLImageElement
+        ? nodeDom
+        : nodeDom instanceof Element
+          ? nodeDom.querySelector("img")
+          : null;
+
+    if (nodeImage === imageElement) {
+      matchedPosition = pos;
+    }
+
+    return false;
+  });
+
+  if (matchedPosition !== null) {
+    return matchedPosition;
+  }
+
+  const docSize = view.state.doc.content.size;
+  const findNearbyImage = (position: number, radius: number) => {
+    for (let offset = 0; offset <= radius; offset += 1) {
+      for (const candidate of offset === 0 ? [position] : [position - offset, position + offset]) {
+        if (candidate < 0 || candidate > docSize) {
+          continue;
+        }
+
+        if (view.state.doc.nodeAt(candidate)?.type.name === "image") {
+          return candidate;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  try {
+    const domPosition = view.posAtDOM(imageElement, 0);
+    const imagePosition = findNearbyImage(domPosition, 4);
+
+    if (imagePosition !== null) {
+      return imagePosition;
+    }
+  } catch {
+    // Fall through to coordinate-based lookup.
+  }
+
+  if (coordinates) {
+    const position = view.posAtCoords(coordinates);
+
+    if (position) {
+      return findNearbyImage(position.pos, 8);
+    }
+  }
+
+  return null;
+}
+
+function selectEditableImage(
+  view: EditorView,
+  imageElement: HTMLImageElement,
+  event?: MouseEvent,
+) {
+  if (!view.dom.contains(imageElement)) {
+    return false;
+  }
+
+  const imagePos = findEditableImagePosition(
+    view,
+    imageElement,
+    event ? { left: event.clientX, top: event.clientY } : undefined,
+  );
+
+  if (imagePos === null) {
+    return false;
+  }
+
+  event?.preventDefault();
+  view.dispatch(
+    view.state.tr.setSelection(NodeSelection.create(view.state.doc, imagePos)),
+  );
+  view.focus();
+  return true;
+}
+
+function focusEditorAtMousePosition(view: EditorView, event: ReactMouseEvent<HTMLElement>) {
+  const target = event.target instanceof Element ? event.target : null;
+  const isRawHtmlPreviewInteraction = Boolean(
+    target?.closest(".typora-raw-html-preview"),
+  );
+
+  if (
+    event.button !== 0 ||
+    (isNonEditorControl(event.target) &&
+      !(event.target instanceof HTMLImageElement) &&
+      !isRawHtmlPreviewInteraction)
+  ) {
+    return false;
+  }
+
+  const position = view.posAtCoords({
+    left: event.clientX,
+    top: event.clientY,
+  });
+
+  if (!position) {
+    return false;
+  }
+
+  const resolvedPosition = view.state.doc.resolve(position.pos);
+  const selection = resolvedPosition.parent.isTextblock
+    ? TextSelection.create(view.state.doc, position.pos)
+    : Selection.near(resolvedPosition);
+
+  view.dispatch(view.state.tr.setSelection(selection));
+  view.focus();
+  return true;
+}
+
+function shouldRecoverEditorFocusOnMouseDown(
+  event: ReactMouseEvent<HTMLElement>,
+  root: HTMLElement,
+) {
+  if (event.button !== 0) {
+    return false;
+  }
+
+  const target = event.target instanceof Element ? event.target : root;
+  const proseMirror = root.querySelector<HTMLElement>(".ProseMirror");
+
+  if (!proseMirror || !proseMirror.contains(target)) {
+    return false;
+  }
+
+  if (
+    target.closest(
+      "button, input, textarea, select, table, pre, .milkdown-image-toolbar, .milkdown-table-toolbar, .milkdown-video-resize-handle, .milkdown-image-resize-handle, .typora-code-language-editor",
+    )
+  ) {
+    return false;
+  }
+
+  if (target instanceof HTMLImageElement) {
+    return true;
+  }
+
+  return target === proseMirror;
 }
 
 function shouldFocusDocumentEndOnMouseDown(
@@ -2140,63 +2750,48 @@ const editableImageSelection = $prose(
           }
 
           const nodeDom = view.nodeDOM(nodePos);
+          const imageElement =
+            nodeDom instanceof HTMLImageElement
+              ? nodeDom
+              : nodeDom instanceof Element
+                ? nodeDom.querySelector("img")
+                : null;
 
           if (
-            !(nodeDom instanceof HTMLImageElement) ||
-            !nodeDom.classList.contains("typora-editable-image")
+            !(imageElement instanceof HTMLImageElement) ||
+            !imageElement.classList.contains("typora-editable-image")
           ) {
             return false;
           }
 
-          event.preventDefault();
-          view.dispatch(
-            view.state.tr.setSelection(NodeSelection.create(view.state.doc, nodePos)),
-          );
-          view.focus();
-          return true;
+          return selectEditableImage(view, imageElement, event as MouseEvent);
         },
         handleDOMEvents: {
+          mousedown(view, event) {
+            if (!(event.target instanceof Element)) {
+              return false;
+            }
+
+            const imageElement = event.target.closest<HTMLImageElement>(
+              "img.typora-editable-image",
+            );
+
+            return imageElement
+              ? selectEditableImage(view, imageElement, event as MouseEvent)
+              : false;
+          },
           click(view, event) {
             if (!(event.target instanceof Element)) {
               return false;
             }
 
-            const imageElement = event.target.closest("img");
+            const imageElement = event.target.closest<HTMLImageElement>(
+              "img.typora-editable-image",
+            );
 
-            if (
-              !imageElement ||
-              !view.dom.contains(imageElement) ||
-              !imageElement.classList.contains("typora-editable-image")
-            ) {
-              return false;
-            }
-
-            try {
-              const pos = view.posAtDOM(imageElement, 0);
-              const docSize = view.state.doc.content.size;
-              const imagePos = [pos, pos - 1, pos + 1].find((candidate) => {
-                if (candidate < 0 || candidate > docSize) {
-                  return false;
-                }
-
-                return view.state.doc.nodeAt(candidate)?.type.name === "image";
-              });
-
-              if (imagePos === undefined) {
-                return false;
-              }
-
-              event.preventDefault();
-              view.dispatch(
-                view.state.tr.setSelection(
-                  NodeSelection.create(view.state.doc, imagePos),
-                ),
-              );
-              view.focus();
-              return true;
-            } catch {
-              return false;
-            }
+            return imageElement
+              ? selectEditableImage(view, imageElement, event as MouseEvent)
+              : false;
           },
         },
       },
@@ -2575,6 +3170,40 @@ function applyImageMetaPatch(
   return true;
 }
 
+function applyRenderableImageMetaPatch(
+  view: EditorView,
+  pos: number,
+  patch: Partial<Pick<ImageMeta, "align" | "width">>,
+) {
+  const node = view.state.doc.nodeAt(pos);
+
+  if (!node) {
+    return false;
+  }
+
+  if (node.type.name === "image") {
+    return applyImageMetaPatch(view, pos, patch);
+  }
+
+  if (node.type.name !== "html") {
+    return false;
+  }
+
+  const value = getRawHtmlValue(node);
+
+  if (!isRawHtmlImage(value)) {
+    return false;
+  }
+
+  const nextValue = patchRawHtmlImage(value, patch);
+
+  if (nextValue === value) {
+    return true;
+  }
+
+  return replaceRawHtmlNodeValue(view, pos, nextValue);
+}
+
 function applyImageNamePatch(
   view: EditorView,
   pos: number,
@@ -2824,7 +3453,6 @@ function MilkdownRuntime({
   markdownRef,
   onActiveLineChange,
   onChangeRef,
-  onEditDrawing,
   onEditUniverSheet,
   onRequestDocumentReference,
   onRequestTableInsert,
@@ -2840,6 +3468,10 @@ function MilkdownRuntime({
   const [imageToolbar, setImageToolbar] = useState<ImageToolbarState>({
     visible: false,
   });
+  const contextImageTargetRef = useRef<{
+    pos: number;
+    source: "html" | "markdown";
+  } | null>(null);
   const [tableToolbar, setTableToolbar] = useState<TableToolbarState>({
     visible: false,
   });
@@ -3114,6 +3746,88 @@ function MilkdownRuntime({
     });
   }
 
+  function getRawHtmlPreviewImageElement(pos: number) {
+    const root = rootRef.current;
+
+    return (
+      root?.querySelector<HTMLImageElement>(
+        `.typora-raw-html-preview[data-typora-raw-html-pos="${pos}"] img`,
+      ) ?? null
+    );
+  }
+
+  function updateImageToolbarFromRawHtmlImageElement(
+    imageElement: HTMLImageElement | null,
+  ) {
+    const root = rootRef.current;
+
+    if (!root || !imageElement || !root.contains(imageElement)) {
+      setImageToolbar({ visible: false });
+      return;
+    }
+
+    const wrapper = imageElement.closest<HTMLElement>(".typora-raw-html-preview");
+    const pos = Number(wrapper?.dataset.typoraRawHtmlPos ?? NaN);
+
+    if (!Number.isFinite(pos)) {
+      setImageToolbar({ visible: false });
+      return;
+    }
+
+    const editor = get();
+
+    if (!editor) {
+      setImageToolbar({ visible: false });
+      return;
+    }
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const node = view.state.doc.nodeAt(pos);
+      const value = node ? getRawHtmlValue(node) : "";
+
+      if (!node || node.type.name !== "html" || !isRawHtmlImage(value)) {
+        setImageToolbar({ visible: false });
+        return;
+      }
+
+      const overlay = getOverlayContainer(root);
+      const rootRect = root.getBoundingClientRect();
+      const overlayRect = overlay.getBoundingClientRect();
+      const imageRect = imageElement.getBoundingClientRect();
+      const visibleTop = rootRect.top + 8 - overlayRect.top;
+      const maxLeft = overlay.clientWidth - 132;
+      const rawLeft = imageRect.left - overlayRect.left;
+      const left = Math.max(8, Math.min(rawLeft, Math.max(8, maxLeft)));
+      const top = Math.max(visibleTop, imageRect.top - overlayRect.top - 46);
+      const name =
+        imageElement.getAttribute("alt")?.trim() ||
+        imageElement
+          .getAttribute("src")
+          ?.split(/[?#]/)[0]
+          ?.split(/[\\/]/)
+          .filter(Boolean)
+          .pop() ||
+        "HTML Image";
+
+      setImageToolbar({
+        align: getRawHtmlImageAlignment(value),
+        displayWidth: clampImageWidth(imageRect.width || minImageWidth),
+        imageHeight: imageRect.height,
+        imageLeft: imageRect.left - overlayRect.left,
+        imageTop: imageRect.top - overlayRect.top,
+        imageWidth: imageRect.width,
+        left,
+        name,
+        pos,
+        source: "html",
+        top,
+        visible: true,
+        width: getRawHtmlImageWidth(value),
+      });
+    });
+  }
+
   function updateTableToolbarFromView(view?: EditorView) {
     const root = rootRef.current;
 
@@ -3241,6 +3955,13 @@ function MilkdownRuntime({
       return;
     }
 
+    if (imageToolbar.visible && imageToolbar.source === "html") {
+      updateImageToolbarFromRawHtmlImageElement(
+        getRawHtmlPreviewImageElement(imageToolbar.pos),
+      );
+      return;
+    }
+
     editor.action((ctx) => {
       updateImageToolbarFromView(ctx.get(editorViewCtx));
     });
@@ -3267,6 +3988,29 @@ function MilkdownRuntime({
 
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
+      const node = view.state.doc.nodeAt(pos);
+
+      if (node?.type.name === "html") {
+        const value = getRawHtmlValue(node);
+        const nextValue = patchRawHtmlImage(value, patch);
+
+        if (nextValue === value) {
+          requestAnimationFrame(() => {
+            updateImageToolbarFromRawHtmlImageElement(getRawHtmlPreviewImageElement(pos));
+          });
+          return;
+        }
+
+        if (!replaceRawHtmlNodeValue(view, pos, nextValue)) {
+          setImageToolbar({ visible: false });
+          return;
+        }
+
+        requestAnimationFrame(() => {
+          updateImageToolbarFromRawHtmlImageElement(getRawHtmlPreviewImageElement(pos));
+        });
+        return;
+      }
 
       if (!applyImageMetaPatch(view, pos, patch)) {
         setImageToolbar({ visible: false });
@@ -3277,16 +4021,103 @@ function MilkdownRuntime({
     });
   }
 
-  function setImageAlignment(pos: number, align: ImageAlignment) {
-    updateImageMeta(pos, { align });
+  function getEventTargetElement(target: EventTarget | null) {
+    if (target instanceof Element) {
+      return target;
+    }
+
+    if (target instanceof Node) {
+      return target.parentElement;
+    }
+
+    return null;
   }
 
-  function setImageWidth(pos: number, width: number) {
-    updateImageMeta(pos, { width });
-  }
+  function prepareContextMenuTargetForEditor(
+    clientX: number,
+    clientY: number,
+    target: EventTarget | null,
+  ) {
+    const editor = get();
 
-  function resetImageWidth(pos: number) {
-    updateImageMeta(pos, { width: undefined });
+    if (!editor) {
+      return;
+    }
+
+    const targetElement = getEventTargetElement(target);
+    const editableImageElement = targetElement?.closest<HTMLImageElement>(
+      "img.typora-editable-image",
+    );
+    const rawHtmlImageElement = targetElement?.closest<HTMLImageElement>(
+      ".typora-raw-html-preview img",
+    );
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+
+      if (editableImageElement && view.dom.contains(editableImageElement)) {
+        const imagePos = findEditableImagePosition(view, editableImageElement, {
+          left: clientX,
+          top: clientY,
+        });
+
+        if (imagePos !== null) {
+          contextImageTargetRef.current = {
+            pos: imagePos,
+            source: "markdown",
+          };
+          view.dispatch(
+            view.state.tr.setSelection(NodeSelection.create(view.state.doc, imagePos)),
+          );
+          view.focus();
+          setVideoToolbar({ visible: false });
+          requestAnimationFrame(() => updateImageToolbarFromView(view));
+          return;
+        }
+      }
+
+      if (rawHtmlImageElement && rootRef.current?.contains(rawHtmlImageElement)) {
+        const wrapper =
+          rawHtmlImageElement.closest<HTMLElement>(".typora-raw-html-preview");
+        const pos = wrapper ? getRawHtmlPreviewSourcePosition(wrapper) : null;
+        const node = pos === null ? null : view.state.doc.nodeAt(pos);
+        const value = node ? getRawHtmlValue(node) : "";
+
+        if (pos !== null && node?.type.name === "html" && isRawHtmlImage(value)) {
+          contextImageTargetRef.current = {
+            pos,
+            source: "html",
+          };
+          setVideoToolbar({ visible: false });
+          requestAnimationFrame(() =>
+            updateImageToolbarFromRawHtmlImageElement(rawHtmlImageElement),
+          );
+          return;
+        }
+      }
+
+      contextImageTargetRef.current = null;
+
+      const position = view.posAtCoords({ left: clientX, top: clientY });
+
+      if (position) {
+        const { selection } = view.state;
+
+        if (
+          selection.empty ||
+          position.pos < selection.from ||
+          position.pos > selection.to
+        ) {
+          view.dispatch(
+            view.state.tr
+              .setSelection(Selection.near(view.state.doc.resolve(position.pos)))
+              .scrollIntoView(),
+          );
+        }
+      }
+
+      view.focus();
+    });
   }
 
   async function renameImage(pos: number, name: string) {
@@ -3750,6 +4581,39 @@ function MilkdownRuntime({
       .use(createEditableImageDecoration(filePathRef));
   }, []);
 
+  useEffect(() => {
+    const root = rootRef.current;
+
+    if (!root) {
+      return;
+    }
+
+    const selectedRawHtmlImagePos =
+      imageToolbar.visible && imageToolbar.source === "html"
+        ? imageToolbar.pos
+        : null;
+
+    root
+      .querySelectorAll<HTMLElement>(".typora-raw-html-preview-selected")
+      .forEach((preview) => {
+        const previewPos = getRawHtmlPreviewSourcePosition(preview);
+
+        if (previewPos !== selectedRawHtmlImagePos) {
+          preview.classList.remove("typora-raw-html-preview-selected");
+        }
+      });
+
+    if (selectedRawHtmlImagePos === null) {
+      return;
+    }
+
+    root
+      .querySelector<HTMLElement>(
+        `.typora-raw-html-preview[data-typora-raw-html-pos="${selectedRawHtmlImagePos}"]`,
+      )
+      ?.classList.add("typora-raw-html-preview-selected");
+  }, [imageToolbar, rootRef]);
+
   function reportActiveHeading() {
     const root = rootRef.current;
     const activeElement = getElementFromSelection();
@@ -4014,6 +4878,9 @@ function MilkdownRuntime({
           insert(markdown)(ctx);
         });
       },
+      prepareContextMenuTarget(clientX, clientY, target) {
+        prepareContextMenuTargetForEditor(clientX, clientY, target);
+      },
       revealSearchResult(options: TyporaSearchRevealOptions) {
         const editor = get();
         let didReveal = false;
@@ -4181,8 +5048,31 @@ function MilkdownRuntime({
               const image = getSelectedImage(view);
 
               if (image) {
-                applyImageMetaPatch(view, image.pos, { align: command.align });
+                applyRenderableImageMetaPatch(view, image.pos, {
+                  align: command.align,
+                });
                 requestAnimationFrame(() => updateImageToolbarFromView(view));
+                break;
+              }
+
+              const contextImageTarget = contextImageTargetRef.current;
+
+              if (
+                contextImageTarget &&
+                applyRenderableImageMetaPatch(view, contextImageTarget.pos, {
+                  align: command.align,
+                })
+              ) {
+                requestAnimationFrame(() => {
+                  if (contextImageTarget.source === "html") {
+                    updateImageToolbarFromRawHtmlImageElement(
+                      getRawHtmlPreviewImageElement(contextImageTarget.pos),
+                    );
+                  } else {
+                    updateImageToolbarFromView(view);
+                  }
+                });
+                break;
               }
               break;
             }
@@ -4190,8 +5080,31 @@ function MilkdownRuntime({
               const image = getSelectedImage(view);
 
               if (image) {
-                applyImageMetaPatch(view, image.pos, { width: undefined });
+                applyRenderableImageMetaPatch(view, image.pos, {
+                  width: undefined,
+                });
                 requestAnimationFrame(() => updateImageToolbarFromView(view));
+                break;
+              }
+
+              const contextImageTarget = contextImageTargetRef.current;
+
+              if (
+                contextImageTarget &&
+                applyRenderableImageMetaPatch(view, contextImageTarget.pos, {
+                  width: undefined,
+                })
+              ) {
+                requestAnimationFrame(() => {
+                  if (contextImageTarget.source === "html") {
+                    updateImageToolbarFromRawHtmlImageElement(
+                      getRawHtmlPreviewImageElement(contextImageTarget.pos),
+                    );
+                  } else {
+                    updateImageToolbarFromView(view);
+                  }
+                });
+                break;
               }
               break;
             }
@@ -4361,6 +5274,10 @@ function MilkdownRuntime({
           target instanceof Element
             ? target.closest<HTMLVideoElement>(".typora-raw-html-preview video")
             : null;
+        const rawHtmlImageElement =
+          target instanceof Element
+            ? target.closest<HTMLImageElement>(".typora-raw-html-preview img")
+            : null;
         const isVideoInteraction =
           target instanceof Element &&
           Boolean(
@@ -4375,13 +5292,22 @@ function MilkdownRuntime({
         if (videoElement) {
           setImageToolbar({ visible: false });
           requestAnimationFrame(() => updateVideoToolbarFromElement(videoElement));
+        } else if (rawHtmlImageElement) {
+          setVideoToolbar({ visible: false });
+          requestAnimationFrame(() =>
+            updateImageToolbarFromRawHtmlImageElement(rawHtmlImageElement),
+          );
         } else if (!isVideoInteraction) {
           setVideoToolbar({ visible: false });
         }
 
         reportActiveHeading();
-        requestAnimationFrame(refreshImageToolbar);
-        requestAnimationFrame(refreshVideoToolbar);
+        if (!rawHtmlImageElement) {
+          requestAnimationFrame(refreshImageToolbar);
+        }
+        if (!rawHtmlImageElement && !videoElement) {
+          requestAnimationFrame(refreshVideoToolbar);
+        }
 
         if (isTableInteraction) {
           requestAnimationFrame(refreshTableToolbar);
@@ -4408,6 +5334,68 @@ function MilkdownRuntime({
 
         const root = rootRef.current;
 
+        if (event.defaultPrevented) {
+          return;
+        }
+
+        const targetElement =
+          event.target instanceof Element ? event.target : null;
+        const editableImageElement = targetElement?.closest<HTMLImageElement>(
+          "img.typora-editable-image",
+        );
+        const rawHtmlImageElement = targetElement?.closest<HTMLImageElement>(
+          ".typora-raw-html-preview img",
+        );
+
+        if (!editableImageElement && !rawHtmlImageElement) {
+          contextImageTargetRef.current = null;
+        }
+
+        if (root && editor) {
+          let didFocusRawHtmlBoundary = false;
+
+          editor.action((ctx) => {
+            didFocusRawHtmlBoundary = focusRawHtmlPreviewBoundary(
+              ctx.get(editorViewCtx),
+              event,
+              root,
+            );
+          });
+
+          if (didFocusRawHtmlBoundary) {
+            event.preventDefault();
+            setImageToolbar({ visible: false });
+            setVideoToolbar({ visible: false });
+            return;
+          }
+        }
+
+        if (rawHtmlImageElement) {
+          event.preventDefault();
+          setVideoToolbar({ visible: false });
+          requestAnimationFrame(() =>
+            updateImageToolbarFromRawHtmlImageElement(rawHtmlImageElement),
+          );
+          return;
+        }
+
+        if (
+          root &&
+          editor &&
+          shouldRecoverEditorFocusOnMouseDown(event, root)
+        ) {
+          let didFocus = false;
+
+          editor.action((ctx) => {
+            didFocus = focusEditorAtMousePosition(ctx.get(editorViewCtx), event);
+          });
+
+          if (didFocus) {
+            event.preventDefault();
+            return;
+          }
+        }
+
         if (
           !root ||
           !editor ||
@@ -4431,13 +5419,6 @@ function MilkdownRuntime({
       }}
       onKeyDownCapture={handleSlashCommandKeyDownCapture}
     >
-      <ImageToolbar
-        state={imageToolbar}
-        onEditDrawing={onEditDrawing}
-        onResetWidth={resetImageWidth}
-        onSetAlign={setImageAlignment}
-        onSetWidth={setImageWidth}
-      />
       <ImageNameEditor state={imageToolbar} onRename={renameImage} />
       <ImageResizeHandle state={imageToolbar} onResizeStart={startImageResize} />
       <VideoResizeHandle state={videoToolbar} onResizeStart={startVideoResize} />
@@ -4541,6 +5522,13 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
 
           onChangeRef.current(appendMarkdown(valueRef.current, markdown));
         },
+        prepareContextMenuTarget(
+          clientX: number,
+          clientY: number,
+          target: EventTarget | null,
+        ) {
+          controllerRef.current?.prepareContextMenuTarget(clientX, clientY, target);
+        },
         revealSearchResult(options: TyporaSearchRevealOptions) {
           return controllerRef.current?.revealSearchResult(options) ?? false;
         },
@@ -4564,11 +5552,16 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
       <article
         ref={rootRef}
         className="typora-editor typora-rich-editor"
+        data-testid="typora-editor"
         aria-label="Milkdown markdown editor"
         autoCapitalize="off"
         autoCorrect="off"
         onContextMenu={(event) => {
-          controllerRef.current?.focusAtClientPoint(event.clientX, event.clientY);
+          controllerRef.current?.prepareContextMenuTarget(
+            event.clientX,
+            event.clientY,
+            event.target,
+          );
           onContextMenu?.(event);
         }}
         onDoubleClick={(event) => {

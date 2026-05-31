@@ -14,6 +14,10 @@ export function shouldCloseImmersiveSidebar(
   return !isImmersiveMode && isImmersiveSidebarOpen;
 }
 
+export function getImmersiveModeFromWindowFullScreen(fullScreen: boolean) {
+  return fullScreen;
+}
+
 export function useImmersiveModeState<T>({
   immersiveRevealEdge,
   isImmersiveMode,

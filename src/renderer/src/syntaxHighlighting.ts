@@ -49,6 +49,7 @@ const syntaxes: Array<{ name: string; syntax: Syntax }> = [
 
 const aliases: Record<string, string[]> = {
   bash: ["sh", "shell", "zsh"],
+  cpp: ["c++"],
   csharp: ["cs"],
   javascript: ["js", "node"],
   markdown: ["md"],

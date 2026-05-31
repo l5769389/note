@@ -63,6 +63,28 @@ export function useWorkspaceAutosave({
   writeMarkdownFile?: WriteMarkdownFile;
 }) {
   useEffect(() => {
+    if (!writeMarkdownFile) {
+      return undefined;
+    }
+
+    let hasDirtyDocuments = false;
+
+    try {
+      hasDirtyDocuments =
+        getWritableDirtyDocuments({
+          documents: workspace.documents,
+          externalConflictPaths,
+          savedFileContentByPath,
+        }).length > 0;
+    } catch {
+      setSaveState("failed");
+      return undefined;
+    }
+
+    if (!hasDirtyDocuments) {
+      return undefined;
+    }
+
     setSaveState("saving");
     const timer = window.setTimeout(() => {
       try {
@@ -71,6 +93,11 @@ export function useWorkspaceAutosave({
           externalConflictPaths,
           savedFileContentByPath,
         });
+
+        if (!writableDocuments.length) {
+          setSaveState("saved");
+          return;
+        }
 
         void writeWorkspaceDirtyDocuments({
           acknowledgeSavedFileContent,

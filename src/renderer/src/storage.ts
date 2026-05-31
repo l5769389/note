@@ -221,6 +221,10 @@ function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
               : documentType === "drawing"
                 ? ".excalidraw"
                 : ".md"),
+    lastOpenedAt:
+      typeof document.lastOpenedAt === "string"
+        ? document.lastOpenedAt
+        : undefined,
     metadata: normalizeStoredMetadata(document.metadata),
   };
 }

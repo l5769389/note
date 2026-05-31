@@ -18,6 +18,8 @@ import {
 } from "../shared/mediaTypes";
 
 const devServerUrl = process.env.ELECTRON_RENDERER_URL;
+const isE2E = process.env.NOTEDOCK_E2E === "1";
+const testUserDataDirectory = process.env.NOTEDOCK_TEST_USER_DATA_DIR;
 const appName = "noteDock";
 const appUserModelId = "com.local.notedock";
 const appStateFileName = "notedock-state-v1.json";
@@ -26,6 +28,10 @@ const windowZoomMax = 2;
 const windowZoomMin = 0.5;
 const windowZoomStep = 0.1;
 type WindowZoomCommand = "reset" | "zoomIn" | "zoomOut";
+
+if (testUserDataDirectory) {
+  app.setPath("userData", testUserDataDirectory);
+}
 
 type WindowKeyboardInput = {
   alt?: boolean;
@@ -827,29 +833,35 @@ function showMainWindow() {
   return window;
 }
 
-function requestQuickCapture() {
+function requestInspirationNote() {
   const window = showMainWindow();
 
   if (!window || window.isDestroyed()) {
     return;
   }
 
-  const sendQuickCapture = () => {
+  const sendInspirationNote = () => {
     if (!window.isDestroyed()) {
-      window.webContents.send("quick-capture:open");
+      window.webContents.send("inspiration-note:open");
     }
   };
 
   if (window.webContents.isLoading()) {
-    window.webContents.once("did-finish-load", sendQuickCapture);
+    window.webContents.once("did-finish-load", sendInspirationNote);
     return;
   }
 
-  sendQuickCapture();
+  sendInspirationNote();
 }
 
 function hideWindowToTray(window: BrowserWindow) {
   if (window.isDestroyed()) {
+    return;
+  }
+
+  if (isE2E) {
+    isQuitting = true;
+    window.close();
     return;
   }
 
@@ -871,7 +883,7 @@ function updateTrayMenu() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "显示 noteDock", click: showMainWindow },
-      { label: "快速捕捉", click: requestQuickCapture },
+      { label: "灵感便签", click: requestInspirationNote },
       {
         label: "隐藏窗口",
         enabled: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
@@ -888,6 +900,10 @@ function updateTrayMenu() {
 }
 
 function createTray() {
+  if (isE2E) {
+    return null;
+  }
+
   if (tray) {
     updateTrayMenu();
     return tray;
@@ -903,6 +919,21 @@ function createTray() {
 
 function getSenderWindow(event: IpcMainInvokeEvent) {
   return BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? mainWindow;
+}
+
+function getWindowStateSnapshot(window: BrowserWindow | null) {
+  return {
+    alwaysOnTop: Boolean(window?.isAlwaysOnTop()),
+    fullScreen: Boolean(window?.isFullScreen()),
+  };
+}
+
+function sendWindowStateChanged(window: BrowserWindow | null) {
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+
+  window.webContents.send("window:state-changed", getWindowStateSnapshot(window));
 }
 
 function clampWindowZoomFactor(value: number) {
@@ -1030,7 +1061,7 @@ function createMainWindow(): BrowserWindow {
   });
 
   window.on("close", (event) => {
-    if (isQuitting) {
+    if (isQuitting || isE2E) {
       return;
     }
 
@@ -1039,7 +1070,7 @@ function createMainWindow(): BrowserWindow {
   });
 
   window.on("minimize", () => {
-    if (isQuitting) {
+    if (isQuitting || isE2E) {
       return;
     }
 
@@ -1048,6 +1079,8 @@ function createMainWindow(): BrowserWindow {
 
   window.on("show", updateTrayMenu);
   window.on("hide", updateTrayMenu);
+  window.on("enter-full-screen", () => sendWindowStateChanged(window));
+  window.on("leave-full-screen", () => sendWindowStateChanged(window));
 
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -1681,16 +1714,12 @@ function registerWindowIpc() {
 
     const nextAlwaysOnTopState = !window.isAlwaysOnTop();
     window.setAlwaysOnTop(nextAlwaysOnTopState);
+    sendWindowStateChanged(window);
     return nextAlwaysOnTopState;
   });
 
   ipcMain.handle("window:get-state", (event) => {
-    const window = getSenderWindow(event);
-
-    return {
-      alwaysOnTop: Boolean(window?.isAlwaysOnTop()),
-      fullScreen: Boolean(window?.isFullScreen()),
-    };
+    return getWindowStateSnapshot(getSenderWindow(event));
   });
 
   ipcMain.handle("window:close", (event) => {
@@ -1703,7 +1732,9 @@ const singleInstanceLock = app.requestSingleInstanceLock();
 if (!singleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", requestQuickCapture);
+  if (!isE2E) {
+    app.on("second-instance", requestInspirationNote);
+  }
 
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
@@ -1711,9 +1742,11 @@ if (!singleInstanceLock) {
     registerAppStateIpc();
     registerFileIpc();
     registerWindowIpc();
-    createTray();
     createMainWindow();
-    globalShortcut.register("CommandOrControl+Alt+N", requestQuickCapture);
+    if (!isE2E) {
+      createTray();
+      globalShortcut.register("CommandOrControl+Alt+N", requestInspirationNote);
+    }
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -1727,14 +1760,16 @@ if (!singleInstanceLock) {
 }
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (process.platform !== "darwin" || isE2E) {
     app.quit();
   }
 });
 
 app.on("before-quit", () => {
   isQuitting = true;
-  globalShortcut.unregisterAll();
+  if (!isE2E) {
+    globalShortcut.unregisterAll();
+  }
   tray?.destroy();
   tray = null;
 

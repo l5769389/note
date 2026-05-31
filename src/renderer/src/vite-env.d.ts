@@ -81,7 +81,10 @@ type DesktopApi = {
   onWorkspaceFileChanged: (
     callback: (payload: WorkspaceFileChangePayload) => void,
   ) => () => void;
-  onQuickCapture: (callback: () => void) => () => void;
+  onInspirationNote: (callback: () => void) => () => void;
+  onWindowStateChanged: (
+    callback: (state: { alwaysOnTop: boolean; fullScreen: boolean }) => void,
+  ) => () => void;
   onZoomFactorChanged: (callback: (factor: number) => void) => () => void;
   openPath: (targetPath: string) => Promise<string>;
   openWorkspaceDirectory: () => Promise<LocalWorkspaceDirectory | null>;
