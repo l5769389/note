@@ -1700,45 +1700,58 @@ textarea,
 }
 
 .markdown-preview a.markdown-wiki-link,
-.typora-mdx-content a.markdown-wiki-link {
+.typora-mdx-content a.markdown-wiki-link,
+.typora-milkdown-content .ProseMirror .typora-wiki-link-token {
   display: inline-flex;
-  max-width: min(30em, 100%);
   align-items: center;
-  gap: 0.24em;
-  border: 1px solid rgba(79, 70, 229, 0.18);
-  border-radius: 999px;
-  background: rgba(79, 70, 229, 0.07);
-  color: #3730a3;
-  font-weight: 680;
-  line-height: 1;
-  padding: 0.12em 0.46em 0.14em 0.34em;
+  max-width: min(30em, 100%);
+  gap: 0.42em;
+  border: 1px solid rgba(99, 102, 241, 0.24);
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 249, 255, 0.92)),
+    rgba(79, 70, 229, 0.05);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  color: #1f2937;
+  cursor: pointer;
+  font-weight: 650;
+  line-height: 1.15;
+  margin: 0 0.06em;
+  padding: 0.2em 0.5em 0.2em 0.36em;
   text-decoration: none;
-  vertical-align: 0.02em;
+  vertical-align: -0.12em;
   white-space: nowrap;
 }
 
 .markdown-preview a.markdown-wiki-link svg,
-.typora-mdx-content a.markdown-wiki-link svg {
-  width: 0.92em;
-  height: 0.92em;
+.typora-mdx-content a.markdown-wiki-link svg,
+.typora-milkdown-content .ProseMirror .typora-wiki-link-token::before {
+  width: 1em;
+  height: 1em;
   flex: 0 0 auto;
   color: #4f46e5;
   stroke-width: 2.2;
 }
 
 .markdown-preview a.markdown-wiki-link .markdown-wiki-link-title,
-.typora-mdx-content a.markdown-wiki-link .markdown-wiki-link-title {
+.typora-mdx-content a.markdown-wiki-link .markdown-wiki-link-title,
+.typora-milkdown-content .ProseMirror .typora-wiki-link-token::after {
   min-width: 0;
   overflow: hidden;
+  color: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .markdown-preview a.markdown-wiki-link:hover,
-.typora-mdx-content a.markdown-wiki-link:hover {
-  border-color: rgba(99, 102, 241, 0.38);
-  background: rgba(79, 70, 229, 0.12);
-  color: #312e81;
+.typora-mdx-content a.markdown-wiki-link:hover,
+.typora-milkdown-content .ProseMirror .typora-wiki-link-token:hover {
+  border-color: rgba(99, 102, 241, 0.42);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(239, 246, 255, 0.96)),
+    rgba(79, 70, 229, 0.1);
+  color: #1f3f9f;
+  box-shadow: 0 5px 16px rgba(79, 70, 229, 0.12);
 }
 
 .markdown-preview code,
@@ -2503,52 +2516,47 @@ textarea,
 }
 
 .typora-milkdown-content .ProseMirror .typora-wiki-link-token {
-  display: inline-flex;
-  max-width: min(30em, 100%);
-  align-items: center;
-  gap: 0.24em;
-  margin: 0 0.04em;
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  border-radius: 999px;
-  background: rgba(79, 70, 229, 0.07);
-  color: #4338ca;
-  cursor: default;
+  box-sizing: border-box;
+  color: #1f2937;
+  cursor: text;
   font-size: 0;
-  font-weight: 680;
-  line-height: 1;
-  padding: 0.12em 0.46em 0.14em 0.34em;
+  line-height: 1.15;
+  pointer-events: auto;
   user-select: none;
-  vertical-align: 0.02em;
   white-space: nowrap;
 }
 
 .typora-milkdown-content .ProseMirror .typora-wiki-link-token::before {
   content: "";
-  width: 0.82rem;
-  height: 0.96rem;
-  flex: 0 0 auto;
-  border: 1.7px solid currentColor;
-  border-radius: 0.16rem;
-  background:
-    linear-gradient(135deg, transparent 0 68%, rgba(79, 70, 229, 0.18) 68%),
-    rgba(255, 255, 255, 0.36);
-  box-shadow: inset -0.22rem 0.22rem 0 -0.18rem currentColor;
+  display: inline-block;
+  width: 0.95rem;
+  height: 0.95rem;
+  background-color: currentColor;
+  mask-image: url("data:image/svg+xml,%3Csvg%20viewBox%3D%270%200%2024%2024%27%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%3E%3Cpath%20d%3D%27M14%202H6a2%202%200%200%200-2%202v16a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2V8z%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20stroke-width%3D%272%27/%3E%3Cpath%20d%3D%27M14%202v6h6%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20stroke-width%3D%272%27/%3E%3Cpath%20d%3D%27M16%2013H8M16%2017H8M10%209H8%27%20fill%3D%27none%27%20stroke%3D%27black%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20stroke-width%3D%272%27/%3E%3C/svg%3E");
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
 }
 
 .typora-milkdown-content .ProseMirror .typora-wiki-link-token::after {
   content: attr(data-wiki-display);
-  min-width: 0;
+  display: inline-block;
+  max-width: min(28em, 42vw);
   overflow: hidden;
-  color: #3730a3;
-  font-size: 0.94rem;
-  font-weight: 680;
+  color: inherit;
+  font-size: calc(var(--editor-font-size, 18px) * 0.8);
+  font-weight: 650;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.typora-milkdown-content .ProseMirror .typora-wiki-link-token.ProseMirror-selectednode,
-.typora-milkdown-content .ProseMirror .typora-wiki-link-token::selection {
-  background: #c7d2fe;
+.typora-milkdown-content .ProseMirror .typora-wiki-link-card-selected {
+  border-color: rgba(79, 70, 229, 0.58);
+  background: #eef2ff;
+  box-shadow:
+    0 0 0 2px rgba(99, 102, 241, 0.16),
+    0 4px 14px rgba(79, 70, 229, 0.12);
 }
 
 .typora-milkdown-content .ProseMirror .typora-search-active-highlight {
@@ -5599,6 +5607,11 @@ textarea,
   padding: 7px;
 }
 
+.menubar-dropdown-scroll-format {
+  max-height: none;
+  overflow: visible;
+}
+
 .window-controls {
   display: flex;
   height: 30px;
@@ -5765,8 +5778,23 @@ textarea,
 
 .menubar-submenu-panel.recent-file-submenu-panel {
   min-width: 430px;
-  max-height: min(430px, calc(100dvh - 84px));
+  max-height: none;
+  overflow: visible;
   padding: 6px;
+}
+
+.menubar-submenu-panel.find-replace-submenu-panel,
+.menubar-submenu-panel.image-format-submenu-panel {
+  max-height: none;
+  overflow: visible;
+}
+
+.menubar-submenu-panel.find-replace-submenu-panel {
+  min-width: 214px;
+}
+
+.menubar-submenu-panel.image-format-submenu-panel {
+  min-width: 206px;
 }
 
 .recent-file-submenu-panel .recent-file-menu-button {
@@ -5834,6 +5862,7 @@ textarea,
 
 .menubar-dropdown-format {
   min-width: 278px;
+  max-height: none;
   overflow: visible;
 }
 
@@ -13098,36 +13127,42 @@ body.home-todo-global-dragging * {
 :root[data-theme="dark"] .typora-mdx-content a.markdown-wiki-link,
 :root[data-theme="dark"] .typora-milkdown-content .ProseMirror .typora-wiki-link-token {
   border-color: rgba(129, 140, 248, 0.3);
-  background: rgba(99, 102, 241, 0.16);
+  background:
+    linear-gradient(180deg, rgba(30, 41, 59, 0.94), rgba(15, 23, 42, 0.94)),
+    rgba(99, 102, 241, 0.16);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
   color: #c4d7ff;
 }
 
 :root[data-theme="night"] .markdown-preview a.markdown-wiki-link svg,
 :root[data-theme="night"] .typora-mdx-content a.markdown-wiki-link svg,
-:root[data-theme="dark"] .markdown-preview a.markdown-wiki-link svg,
-:root[data-theme="dark"] .typora-mdx-content a.markdown-wiki-link svg {
-  color: #a5b4fc;
-}
-
 :root[data-theme="night"] .typora-milkdown-content .ProseMirror .typora-wiki-link-token::before,
+:root[data-theme="dark"] .markdown-preview a.markdown-wiki-link svg,
+:root[data-theme="dark"] .typora-mdx-content a.markdown-wiki-link svg,
 :root[data-theme="dark"] .typora-milkdown-content .ProseMirror .typora-wiki-link-token::before {
-  background:
-    linear-gradient(135deg, transparent 0 68%, rgba(165, 180, 252, 0.2) 68%),
-    rgba(15, 23, 42, 0.36);
-}
-
-:root[data-theme="night"] .typora-milkdown-content .ProseMirror .typora-wiki-link-token::after,
-:root[data-theme="dark"] .typora-milkdown-content .ProseMirror .typora-wiki-link-token::after {
-  color: #dbeafe;
+  color: #a5b4fc;
 }
 
 :root[data-theme="night"] .markdown-preview a.markdown-wiki-link:hover,
 :root[data-theme="night"] .typora-mdx-content a.markdown-wiki-link:hover,
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror .typora-wiki-link-token:hover,
 :root[data-theme="dark"] .markdown-preview a.markdown-wiki-link:hover,
-:root[data-theme="dark"] .typora-mdx-content a.markdown-wiki-link:hover {
+:root[data-theme="dark"] .typora-mdx-content a.markdown-wiki-link:hover,
+:root[data-theme="dark"] .typora-milkdown-content .ProseMirror .typora-wiki-link-token:hover {
   border-color: rgba(165, 180, 252, 0.5);
-  background: rgba(129, 140, 248, 0.22);
+  background:
+    linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(17, 24, 39, 0.98)),
+    rgba(129, 140, 248, 0.22);
   color: #eef2ff;
+}
+
+:root[data-theme="night"] .typora-milkdown-content .ProseMirror .typora-wiki-link-card-selected,
+:root[data-theme="dark"] .typora-milkdown-content .ProseMirror .typora-wiki-link-card-selected {
+  border-color: rgba(165, 180, 252, 0.64);
+  background: rgba(79, 70, 229, 0.26);
+  box-shadow:
+    0 0 0 2px rgba(129, 140, 248, 0.2),
+    0 5px 18px rgba(0, 0, 0, 0.28);
 }
 
 :root[data-theme="dark"] .typora-milkdown-content .ProseMirror .typora-search-active-highlight {

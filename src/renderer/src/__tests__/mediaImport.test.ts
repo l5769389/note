@@ -23,6 +23,7 @@ import {
   readBrowserClipboardMedia,
   readClipboardMediaFallbackAction,
   replaceMediaImportPlaceholderContent,
+  shouldPreserveImageFileAsAsset,
   shouldTryClipboardMediaFallback,
 } from "../mediaImport";
 
@@ -54,6 +55,12 @@ describe("media import helpers", () => {
     expect(getClipboardMediaMimeType("capture.GIF")).toBe("image/gif");
     expect(isClipboardMediaFile(new File([], "clip.mov"), "video")).toBe(true);
     expect(isClipboardMediaFile(new File([], "note.txt"), "image")).toBe(false);
+    expect(shouldPreserveImageFileAsAsset(new File([], "motion.gif"))).toBe(
+      true,
+    );
+    expect(
+      shouldPreserveImageFileAsAsset(new File([], "still.png", { type: "image/png" })),
+    ).toBe(false);
   });
 
   it("normalizes pasted data URL MIME types", () => {
@@ -98,15 +105,27 @@ describe("media import helpers", () => {
 
   it("plans dropped media imports with local video paths when available", () => {
     const image = new File([], "image.png", { type: "image/png" });
+    const gif = new File([], "motion.gif", { type: "image/gif" });
     const video = new File([], "video.mp4", { type: "video/mp4" });
 
     expect(
       getDroppedMediaImportActions(
-        { files: [image, video] },
-        (file) => (file === video ? "D:/video.mp4" : null),
+        { files: [image, gif, video] },
+        (file) =>
+          file === video
+            ? "D:/video.mp4"
+            : file === gif
+              ? "D:/motion.gif"
+              : null,
       ),
     ).toEqual([
       { action: "imageFile", file: image },
+      {
+        action: "imageFilePath",
+        fileName: "motion.gif",
+        filePath: "D:/motion.gif",
+        mimeType: "image/gif",
+      },
       {
         action: "videoFilePath",
         fileName: "video.mp4",
@@ -168,6 +187,21 @@ describe("media import helpers", () => {
   });
 
   it("plans clipboard file-reference and data-url import actions", () => {
+    expect(
+      getClipboardFileReferenceImportAction([
+        {
+          fileName: "motion.gif",
+          filePath: "D:/motion.gif",
+          mimeType: "image/gif",
+        },
+      ]),
+    ).toEqual({
+      action: "imageFilePath",
+      fileName: "motion.gif",
+      filePath: "D:/motion.gif",
+      mimeType: "image/gif",
+    });
+
     expect(
       getClipboardFileReferenceImportAction([
         {

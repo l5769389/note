@@ -33,6 +33,23 @@ describe("WorkspaceStatusBar", () => {
     expect(html).toContain("12 ");
   });
 
+  it("hides the autosave pill while idle", () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceStatusBar
+        activeDocument={document()}
+        isSidebarHidden={false}
+        missingAssetReferences={[]}
+        saveState="idle"
+        wordCount={12}
+        onToggleSidebar={() => {}}
+      />,
+    );
+
+    expect(html).not.toContain("workspace-autosave-status");
+    expect(html).toContain("workspace-word-count");
+    expect(html).toContain("12 ");
+  });
+
   it("renders preview labels for non-markdown documents", () => {
     const html = renderToStaticMarkup(
       <WorkspaceStatusBar

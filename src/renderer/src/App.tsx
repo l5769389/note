@@ -6,7 +6,6 @@ import {
   AlignRight,
   BookOpenText,
   Bold,
-  CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -18,7 +17,6 @@ import {
   FileText,
   Folder,
   FolderOpen,
-  GripVertical,
   Italic,
   Link2,
   ListTree,
@@ -36,7 +34,6 @@ import {
 import {
   lazy,
   Suspense,
-  Fragment,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -83,18 +80,32 @@ import {
   MenuSubmenu,
   RecentFileMenuItem,
 } from "./components/AppChrome";
-import {
-  KnowledgeRelationsPanel,
-  type RelationPanelFilter,
-  type WorkspaceRelationItem,
+import type {
+  RelationPanelFilter,
+  WorkspaceRelationItem,
 } from "./components/KnowledgeRelationsPanel";
+import { HomeDashboard } from "./features/home/HomeDashboard";
 import {
-  DocumentKnowledgeBar,
-  type DocumentMetadataSuggestionField,
-} from "./components/DocumentKnowledgeBar";
-import { DocumentInspectorSidebar } from "./components/DocumentInspectorSidebar";
-import { UniverSheetPreview } from "./components/UniverSheetPreview";
-import { WorkspaceSearchPanel } from "./components/WorkspaceSearchPanel";
+  createHomeImageAttachmentId,
+  createHomeSavedNoteId,
+  createHomeTodoId,
+  formatHomeTodoDateKey,
+  formatHomeTodoDateLabel,
+  formatHomeTodoMonthLabel,
+  getHomeTodoCalendarDays,
+  getHomeTodoDateTitle,
+  getHomeTodoYearOptions,
+  homeRecentDocumentLimit,
+  parseHomeTodoDateKey,
+  reorderHomeTodoItemsForDate,
+  setHomeTodoYearKey,
+  shiftHomeTodoDateKey,
+  shiftHomeTodoMonthKey,
+  type HomeImageAttachment,
+  type HomeTodoDragState,
+} from "./features/home/homeModel";
+import { useHomeState } from "./features/home/useHomeState";
+import type { DocumentMetadataSuggestionField } from "./components/DocumentKnowledgeBar";
 import { WorkspaceStatusBar } from "./components/WorkspaceStatusBar";
 import type { HtmlDocumentViewerHandle } from "./components/HtmlDocumentViewer";
 import type { TyporaEditorHandle } from "./components/TyporaEditor";
@@ -117,7 +128,6 @@ import {
   getAppShortcutAction,
   type AppShortcutAction,
 } from "./editorShortcuts";
-import { createMarkdownExportHtml } from "./exportDocument";
 import {
   createMarkdownTable,
   type TableSize,
@@ -297,7 +307,6 @@ import {
   useWorkspaceSearchAutoFocus,
 } from "./workspaceUiEffects";
 import {
-  formatRecentTimestamp,
   getRecentDocumentTimestamp,
   getDocumentTypeLabel,
   getDocumentTypeName,
@@ -347,6 +356,18 @@ const KnowledgeGraphModal = lazy(() =>
   })),
 );
 
+const DocumentKnowledgeBar = lazy(() =>
+  import("./components/DocumentKnowledgeBar").then((module) => ({
+    default: module.DocumentKnowledgeBar,
+  })),
+);
+
+const KnowledgeRelationsPanel = lazy(() =>
+  import("./components/KnowledgeRelationsPanel").then((module) => ({
+    default: module.KnowledgeRelationsPanel,
+  })),
+);
+
 const PdfDocumentViewer = lazy(() =>
   import("./components/PdfDocumentViewer").then((module) => ({
     default: module.PdfDocumentViewer,
@@ -359,9 +380,27 @@ const ReactFlowModal = lazy(() =>
   })),
 );
 
+const DocumentInspectorSidebar = lazy(() =>
+  import("./components/DocumentInspectorSidebar").then((module) => ({
+    default: module.DocumentInspectorSidebar,
+  })),
+);
+
+const WorkspaceSearchPanel = lazy(() =>
+  import("./components/WorkspaceSearchPanel").then((module) => ({
+    default: module.WorkspaceSearchPanel,
+  })),
+);
+
 const UniverSheetModal = lazy(() =>
   import("./components/UniverSheetModal").then((module) => ({
     default: module.UniverSheetModal,
+  })),
+);
+
+const UniverSheetPreview = lazy(() =>
+  import("./components/UniverSheetPreview").then((module) => ({
+    default: module.UniverSheetPreview,
   })),
 );
 
@@ -378,579 +417,12 @@ type SidebarTab = "files" | "current" | "search";
 type FileExplorerView = "tree" | "list";
 type DocumentLinkPickerMode = "metadata" | "insertReference";
 
-const homeRecentDocumentLimit = 3;
-const homeTodoStorageKey = "notedock:home-todos";
-const homeQuickNoteStorageKey = "notedock:home-quick-note";
-const homeQuickNoteImagesStorageKey = "notedock:home-quick-note-images";
-const homeSavedNotesStorageKey = "notedock:home-saved-notes";
 const sidebarRecentDirectoryLimit = 5;
 const immersiveRevealHitSlop = 44;
 const defaultWindowZoomFactor = 1;
 const zoomIndicatorVisibleMs = 1500;
 
 type FindPanelMode = "find" | "replace";
-
-type HomeTodoItem = {
-  createdAt: string;
-  date: string;
-  done: boolean;
-  id: string;
-  images?: HomeImageAttachment[];
-  text: string;
-};
-
-type HomeTodoDragState = {
-  height: number;
-  id: string;
-  insertIndex: number;
-  left: number;
-  offsetY: number;
-  pointerId: number;
-  pointerY: number;
-  width: number;
-};
-
-type HomeSavedNote = {
-  createdAt: string;
-  id: string;
-  images?: HomeImageAttachment[];
-  text: string;
-};
-
-type HomeImageAttachment = {
-  dataUrl: string;
-  fileName: string;
-  id: string;
-  mimeType: string;
-};
-
-type HomeCalendarDay = {
-  dateKey: string;
-  day: number;
-  inMonth: boolean;
-  isSelected: boolean;
-  isToday: boolean;
-};
-
-const homeCalendarWeekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
-const homeCalendarRecentYearRadius = 1;
-
-function createHomeTodoId() {
-  return `todo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function createHomeSavedNoteId() {
-  return `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function createHomeImageAttachmentId() {
-  return `image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function formatHomeTodoDateKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function parseHomeTodoDateKey(dateKey: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
-
-  if (!match) {
-    return null;
-  }
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(year, month - 1, day);
-
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
-  }
-
-  return date;
-}
-
-function normalizeHomeTodoDateKey(value: unknown, fallbackDateKey = formatHomeTodoDateKey()) {
-  if (typeof value === "string" && parseHomeTodoDateKey(value)) {
-    return value;
-  }
-
-  return fallbackDateKey;
-}
-
-function getHomeTodoDateKeyFromCreatedAt(createdAt: string) {
-  const createdDate = new Date(createdAt);
-
-  if (Number.isNaN(createdDate.getTime())) {
-    return formatHomeTodoDateKey();
-  }
-
-  return formatHomeTodoDateKey(createdDate);
-}
-
-function shiftHomeTodoDateKey(dateKey: string, offset: number) {
-  const date = parseHomeTodoDateKey(dateKey) ?? new Date();
-  date.setDate(date.getDate() + offset);
-
-  return formatHomeTodoDateKey(date);
-}
-
-function shiftHomeTodoMonthKey(dateKey: string, offset: number) {
-  const date = parseHomeTodoDateKey(dateKey) ?? new Date();
-  const targetYear = date.getFullYear();
-  const targetMonth = date.getMonth() + offset;
-  const targetMonthLastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
-
-  return formatHomeTodoDateKey(
-    new Date(
-      targetYear,
-      targetMonth,
-      Math.min(date.getDate(), targetMonthLastDay),
-    ),
-  );
-}
-
-function setHomeTodoYearKey(dateKey: string, year: number) {
-  const date = parseHomeTodoDateKey(dateKey) ?? new Date();
-  const normalizedYear = Number.isFinite(year) ? Math.trunc(year) : date.getFullYear();
-  const targetMonth = date.getMonth();
-  const targetMonthLastDay = new Date(normalizedYear, targetMonth + 1, 0).getDate();
-
-  return formatHomeTodoDateKey(
-    new Date(
-      normalizedYear,
-      targetMonth,
-      Math.min(date.getDate(), targetMonthLastDay),
-    ),
-  );
-}
-
-function getHomeTodoYearOptions(dateKey: string) {
-  const selectedDate = parseHomeTodoDateKey(dateKey) ?? new Date();
-  const currentYear = new Date().getFullYear();
-  const selectedYear = selectedDate.getFullYear();
-  const years = new Set<number>();
-
-  for (
-    let year = currentYear - homeCalendarRecentYearRadius;
-    year <= currentYear + homeCalendarRecentYearRadius;
-    year += 1
-  ) {
-    years.add(year);
-  }
-
-  years.add(selectedYear);
-
-  return [...years].sort((first, second) => first - second);
-}
-
-function getHomeTodoCalendarDays(dateKey: string): HomeCalendarDay[] {
-  const selectedDate = parseHomeTodoDateKey(dateKey) ?? new Date();
-  const selectedMonth = selectedDate.getMonth();
-  const firstDay = new Date(selectedDate.getFullYear(), selectedMonth, 1);
-  const mondayStartOffset = (firstDay.getDay() + 6) % 7;
-  const gridStartDate = new Date(firstDay);
-  gridStartDate.setDate(firstDay.getDate() - mondayStartOffset);
-  const todayKey = formatHomeTodoDateKey();
-
-  return Array.from({ length: 42 }, (_, index) => {
-    const date = new Date(gridStartDate);
-    date.setDate(gridStartDate.getDate() + index);
-    const dayDateKey = formatHomeTodoDateKey(date);
-
-    return {
-      dateKey: dayDateKey,
-      day: date.getDate(),
-      inMonth: date.getMonth() === selectedMonth,
-      isSelected: dayDateKey === dateKey,
-      isToday: dayDateKey === todayKey,
-    };
-  });
-}
-
-function formatHomeTodoDateLabel(dateKey: string) {
-  const date = parseHomeTodoDateKey(dateKey) ?? new Date();
-
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
-}
-
-function formatHomeTodoMonthLabel(dateKey: string) {
-  const date = parseHomeTodoDateKey(dateKey) ?? new Date();
-
-  return `${date.getFullYear()}年${date.getMonth() + 1}月`;
-}
-
-function getRelativeHomeTodoDateOffset(dateKey: string) {
-  const selectedDate = parseHomeTodoDateKey(dateKey);
-
-  if (!selectedDate) {
-    return null;
-  }
-
-  const today = parseHomeTodoDateKey(formatHomeTodoDateKey()) ?? new Date();
-  const msPerDay = 24 * 60 * 60 * 1000;
-
-  return Math.round((selectedDate.getTime() - today.getTime()) / msPerDay);
-}
-
-function getHomeTodoDateTitle(dateKey: string) {
-  const relativeOffset = getRelativeHomeTodoDateOffset(dateKey);
-
-  if (relativeOffset === 0) {
-    return "今日待办";
-  }
-
-  if (relativeOffset === 1) {
-    return "明日待办";
-  }
-
-  if (relativeOffset === -1) {
-    return "昨日待办";
-  }
-
-  const selectedDate = parseHomeTodoDateKey(dateKey) ?? new Date();
-  const currentYear = new Date().getFullYear();
-  const prefix =
-    selectedDate.getFullYear() === currentYear
-      ? `${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`
-      : `${selectedDate.getFullYear()}年${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`;
-
-  return `${prefix}待办`;
-}
-
-function reorderHomeTodoItemsForDate(
-  items: HomeTodoItem[],
-  dateKey: string,
-  activeTodoId: string,
-  insertIndex: number,
-) {
-  const datedItems = items.filter((item) => item.date === dateKey);
-  const reorderedDatedItems = reorderHomeTodoItems(
-    datedItems,
-    activeTodoId,
-    insertIndex,
-  );
-
-  if (reorderedDatedItems === datedItems) {
-    return items;
-  }
-
-  let datedItemIndex = 0;
-
-  return items.map((item) =>
-    item.date === dateKey ? reorderedDatedItems[datedItemIndex++] : item,
-  );
-}
-
-function loadHomeQuickNote() {
-  if (typeof window === "undefined") {
-    return "";
-  }
-
-  try {
-    return window.localStorage.getItem(homeQuickNoteStorageKey) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function normalizeHomeImageAttachments(value: unknown): HomeImageAttachment[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .filter((image): image is HomeImageAttachment =>
-      Boolean(
-        image &&
-          typeof image.id === "string" &&
-          typeof image.dataUrl === "string" &&
-          typeof image.fileName === "string" &&
-          typeof image.mimeType === "string" &&
-          image.mimeType.startsWith("image/"),
-      ),
-    )
-    .slice(0, 8);
-}
-
-function loadHomeQuickNoteImages(): HomeImageAttachment[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  try {
-    return normalizeHomeImageAttachments(
-      JSON.parse(window.localStorage.getItem(homeQuickNoteImagesStorageKey) ?? "[]"),
-    );
-  } catch {
-    return [];
-  }
-}
-
-function loadHomeSavedNotes(): HomeSavedNote[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  try {
-    const rawNotes = window.localStorage.getItem(homeSavedNotesStorageKey);
-
-    if (!rawNotes) {
-      return [];
-    }
-
-    const parsedNotes = JSON.parse(rawNotes);
-
-    if (!Array.isArray(parsedNotes)) {
-      return [];
-    }
-
-    return parsedNotes
-      .filter((note): note is HomeSavedNote =>
-        Boolean(
-          note &&
-            typeof note.id === "string" &&
-            typeof note.text === "string" &&
-            typeof note.createdAt === "string",
-        ),
-      )
-      .map((note) => ({
-        ...note,
-        images: normalizeHomeImageAttachments(note.images),
-      }))
-      .slice(0, 30);
-  } catch {
-    return [];
-  }
-}
-
-function loadHomeTodoItems(): HomeTodoItem[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  try {
-    const rawItems = window.localStorage.getItem(homeTodoStorageKey);
-
-    if (!rawItems) {
-      return [];
-    }
-
-    const parsedItems = JSON.parse(rawItems);
-
-    if (!Array.isArray(parsedItems)) {
-      return [];
-    }
-
-    return parsedItems
-      .map((item): HomeTodoItem | null => {
-        if (
-          !item ||
-          typeof item.id !== "string" ||
-          typeof item.text !== "string" ||
-          typeof item.done !== "boolean" ||
-          typeof item.createdAt !== "string"
-        ) {
-          return null;
-        }
-
-        return {
-          createdAt: item.createdAt,
-          date: normalizeHomeTodoDateKey(
-            item.date,
-            getHomeTodoDateKeyFromCreatedAt(item.createdAt),
-          ),
-          done: item.done,
-          id: item.id,
-          images: normalizeHomeImageAttachments(item.images),
-          text: item.text,
-        };
-      })
-      .filter((item): item is HomeTodoItem => Boolean(item))
-      .slice(0, 80);
-  } catch {
-    return [];
-  }
-}
-
-function reorderHomeTodoItems(
-  items: HomeTodoItem[],
-  activeTodoId: string,
-  insertIndex: number,
-) {
-  const activeIndex = items.findIndex((item) => item.id === activeTodoId);
-
-  if (activeIndex < 0) {
-    return items;
-  }
-
-  const activeItem = items[activeIndex];
-  const nextItems = items.filter((item) => item.id !== activeTodoId);
-  const targetIndex = clamp(insertIndex, 0, nextItems.length);
-
-  nextItems.splice(targetIndex, 0, activeItem);
-
-  const didOrderChange = nextItems.some((item, index) => item.id !== items[index]?.id);
-
-  return didOrderChange ? nextItems : items;
-}
-
-type HomeTodoRowProps = {
-  item: HomeTodoItem;
-  onDelete: (todoId: string) => void;
-  onDragStart: (
-    event: ReactPointerEvent<HTMLButtonElement>,
-    todoId: string,
-  ) => void;
-  onPreviewImage: (image: HomeImageAttachment) => void;
-  onToggle: (todoId: string) => void;
-  rowRef: (todoId: string, node: HTMLDivElement | null) => void;
-};
-
-function HomeTodoRow({
-  item,
-  onDelete,
-  onDragStart,
-  onPreviewImage,
-  onToggle,
-  rowRef,
-}: HomeTodoRowProps) {
-  return (
-    <div
-      className={
-        [
-          "home-todo-item",
-          item.done ? "home-todo-item-done" : "",
-        ]
-          .filter(Boolean)
-          .join(" ")
-      }
-      ref={(node) => rowRef(item.id, node)}
-    >
-      <button
-        className="home-todo-check"
-        type="button"
-        aria-label={item.done ? "标记为未完成" : "标记为已完成"}
-        aria-pressed={item.done}
-        onClick={() => onToggle(item.id)}
-      >
-        {item.done ? <Check size={14} /> : null}
-      </button>
-      <div className="home-todo-item-content">
-        <span>{item.text}</span>
-        {item.images?.length ? (
-          <div className="home-inline-image-strip" aria-label="待办图片">
-            {item.images.map((image) => (
-              <button
-                className="home-inline-image-preview"
-                type="button"
-                aria-label={`浏览图片 ${image.fileName}`}
-                key={image.id}
-                onClick={() => onPreviewImage(image)}
-              >
-                <img
-                  alt={image.fileName}
-                  src={image.dataUrl}
-                  draggable={false}
-                />
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-      <button
-        className="home-todo-delete"
-        type="button"
-        aria-label="删除待办"
-        onClick={() => onDelete(item.id)}
-      >
-        <Trash2 size={14} />
-      </button>
-      <button
-        className="home-todo-drag-handle"
-        type="button"
-        aria-label="拖拽排序"
-        title="拖拽排序"
-        onPointerDown={(event) => onDragStart(event, item.id)}
-      >
-        <GripVertical size={15} />
-      </button>
-    </div>
-  );
-}
-
-function HomeTodoDropSlot() {
-  return (
-    <div className="home-todo-drop-slot-row" aria-hidden="true">
-      <span />
-      <span />
-    </div>
-  );
-}
-
-function HomeTodoDragPreview({ item }: { item: HomeTodoItem }) {
-  return (
-    <div
-      className={[
-        "home-todo-item",
-        "home-todo-item-preview",
-        item.done ? "home-todo-item-done" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    >
-      <span className="home-todo-check" aria-hidden="true">
-        {item.done ? <Check size={14} /> : null}
-      </span>
-      <div className="home-todo-item-content">
-        <span>{item.text}</span>
-        {item.images?.length ? (
-          <div className="home-inline-image-strip" aria-hidden="true">
-            {item.images.map((image) => (
-              <img
-                alt=""
-                key={image.id}
-                src={image.dataUrl}
-                draggable={false}
-              />
-            ))}
-          </div>
-        ) : null}
-      </div>
-      <span className="home-todo-delete" aria-hidden="true" />
-      <span className="home-todo-drag-handle" aria-hidden="true">
-        <GripVertical size={15} />
-      </span>
-    </div>
-  );
-}
-
-function HomeQuickAction({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" title={label} onClick={onClick}>
-      {icon}
-      <span>
-        <strong>{label}</strong>
-      </span>
-    </button>
-  );
-}
 
 type RevealDocumentRangeOptions = {
   content?: string;
@@ -1003,7 +475,10 @@ type EditorContextMenuInfo = {
   isEditable: boolean;
   isListItem: boolean;
   isTaskListItem: boolean;
+  isVideo: boolean;
   linkHref?: string;
+  mediaKind?: "image" | "video";
+  mediaSource?: string;
   taskChecked?: boolean;
 };
 
@@ -1050,25 +525,6 @@ const uiSelectionScopeSelector = [
   ".workspace-asset-warning",
   ".workspace-word-count",
 ].join(",");
-
-function isSameWorkspaceDocument(
-  left?: MarkdownDocument | null,
-  right?: MarkdownDocument | null,
-) {
-  if (!left || !right) {
-    return false;
-  }
-
-  if (left.id === right.id) {
-    return true;
-  }
-
-  if (!left.filePath || !right.filePath) {
-    return false;
-  }
-
-  return normalizeFilePathKey(left.filePath) === normalizeFilePathKey(right.filePath);
-}
 
 function getSelectionElement(node: Node | null) {
   if (node instanceof Element) {
@@ -1247,24 +703,38 @@ export function App() {
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [windowZoomFactor, setWindowZoomFactor] = useState(defaultWindowZoomFactor);
   const [isZoomIndicatorVisible, setIsZoomIndicatorVisible] = useState(false);
-  const [isHomeOpen, setIsHomeOpen] = useState(true);
-  const [isRecentExpanded, setIsRecentExpanded] = useState(false);
-  const [homeQuickNote, setHomeQuickNote] = useState(loadHomeQuickNote);
-  const [homeQuickNoteImages, setHomeQuickNoteImages] = useState<HomeImageAttachment[]>(
-    loadHomeQuickNoteImages,
-  );
-  const [homeSavedNotes, setHomeSavedNotes] = useState<HomeSavedNote[]>(loadHomeSavedNotes);
-  const [activeHomeSavedNoteId, setActiveHomeSavedNoteId] = useState<string | null>(null);
-  const [isHomeNoteDialogOpen, setIsHomeNoteDialogOpen] = useState(false);
-  const [homeImagePreview, setHomeImagePreview] =
-    useState<HomeImageAttachment | null>(null);
-  const [homeImagePreviewZoom, setHomeImagePreviewZoom] = useState(1);
-  const [homeTodoItems, setHomeTodoItems] = useState<HomeTodoItem[]>(loadHomeTodoItems);
-  const [homeTodoSelectedDate, setHomeTodoSelectedDate] = useState(formatHomeTodoDateKey);
-  const [isHomeTodoCalendarOpen, setIsHomeTodoCalendarOpen] = useState(false);
-  const [homeTodoDraft, setHomeTodoDraft] = useState("");
-  const [homeTodoDraftImages, setHomeTodoDraftImages] = useState<HomeImageAttachment[]>([]);
-  const [homeTodoDrag, setHomeTodoDrag] = useState<HomeTodoDragState | null>(null);
+  const {
+    activeHomeSavedNoteId,
+    homeImagePreview,
+    homeImagePreviewZoom,
+    homeQuickNote,
+    homeQuickNoteImages,
+    homeSavedNotes,
+    homeTodoDraft,
+    homeTodoDraftImages,
+    homeTodoDrag,
+    homeTodoItems,
+    homeTodoSelectedDate,
+    isHomeNoteDialogOpen,
+    isHomeOpen,
+    isHomeTodoCalendarOpen,
+    isRecentExpanded,
+    setActiveHomeSavedNoteId,
+    setHomeImagePreview,
+    setHomeImagePreviewZoom,
+    setHomeQuickNote,
+    setHomeQuickNoteImages,
+    setHomeSavedNotes,
+    setHomeTodoDraft,
+    setHomeTodoDraftImages,
+    setHomeTodoDrag,
+    setHomeTodoItems,
+    setHomeTodoSelectedDate,
+    setIsHomeNoteDialogOpen,
+    setIsHomeOpen,
+    setIsHomeTodoCalendarOpen,
+    setIsRecentExpanded,
+  } = useHomeState();
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [, setBackupMessage] = useState("本地自动保存已启用");
   const [isDrawingOpen, setIsDrawingOpen] = useState(false);
@@ -1437,41 +907,6 @@ export function App() {
       isStale = true;
     };
   }, []);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(homeTodoStorageKey, JSON.stringify(homeTodoItems));
-    } catch {
-      // Todo persistence should never block the editor shell.
-    }
-  }, [homeTodoItems]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(homeQuickNoteStorageKey, homeQuickNote);
-    } catch {
-      // The quick note is intentionally lightweight and should never block startup.
-    }
-  }, [homeQuickNote]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        homeQuickNoteImagesStorageKey,
-        JSON.stringify(homeQuickNoteImages),
-      );
-    } catch {
-      // Large pasted images may exceed browser storage quota. Keep the UI usable.
-    }
-  }, [homeQuickNoteImages]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(homeSavedNotesStorageKey, JSON.stringify(homeSavedNotes));
-    } catch {
-      // Saved notes are a convenience surface and should never block startup.
-    }
-  }, [homeSavedNotes]);
 
   useEffect(() => {
     homeTodoDragRef.current = homeTodoDrag;
@@ -3780,6 +3215,93 @@ export function App() {
     await navigator.clipboard?.writeText(text);
   }
 
+  function getLocalFilePathFromPreviewUrl(source?: string) {
+    if (!source) {
+      return undefined;
+    }
+
+    try {
+      const url = new URL(source);
+
+      if (url.protocol === "file:") {
+        return decodeURIComponent(url.pathname)
+          .replace(/^\/([A-Za-z]:)/, "$1")
+          .replace(/\//g, "\\");
+      }
+
+      if (url.protocol === "typora-local:" && url.hostname === "file") {
+        return decodeURIComponent(url.pathname.replace(/^\/+/, "")).replace(
+          /\//g,
+          "\\",
+        );
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
+  }
+
+  function getMediaSourceFromElement(
+    element?: HTMLImageElement | HTMLVideoElement | null,
+  ) {
+    if (!element) {
+      return undefined;
+    }
+
+    if (element instanceof HTMLVideoElement) {
+      return (
+        element.currentSrc ||
+        element.getAttribute("src") ||
+        element.querySelector("source")?.getAttribute("src") ||
+        undefined
+      );
+    }
+
+    return element.currentSrc || element.getAttribute("src") || undefined;
+  }
+
+  async function copyMediaResourceToClipboard(contextInfo: EditorContextMenuInfo) {
+    const source = contextInfo.mediaSource;
+
+    if (!source) {
+      return;
+    }
+
+    const localPath = getLocalFilePathFromPreviewUrl(source);
+
+    if (
+      contextInfo.mediaKind === "image" &&
+      localPath &&
+      window.desktop?.writeImageFileToClipboard
+    ) {
+      const copied = await window.desktop.writeImageFileToClipboard(localPath);
+
+      if (copied) {
+        return;
+      }
+    }
+
+    if (contextInfo.mediaKind === "image" && navigator.clipboard?.write) {
+      try {
+        const response = await fetch(source);
+        const blob = await response.blob();
+        const mimeType = blob.type || "image/png";
+
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            [mimeType]: blob,
+          }),
+        ]);
+        return;
+      } catch {
+        // Fall back to copying the resource path below.
+      }
+    }
+
+    await copyTextToClipboard(localPath ?? source);
+  }
+
   function getEventTargetElement(target: EventTarget | null) {
     if (target instanceof Element) {
       return target;
@@ -3941,6 +3463,11 @@ export function App() {
     const imageElement = target?.closest<HTMLImageElement>(
       "img.typora-editable-image, .typora-raw-html-preview img",
     );
+    const videoElement = target?.closest<HTMLVideoElement>(
+      ".typora-raw-html-preview video, .markdown-preview video, video.markdown-video-player",
+    );
+    const mediaKind = imageElement ? "image" : videoElement ? "video" : undefined;
+    const mediaSource = getMediaSourceFromElement(imageElement ?? videoElement);
     const domTaskChecked =
       taskCheckedAttribute === "true"
         ? true
@@ -3960,7 +3487,10 @@ export function App() {
       isListItem: Boolean(listElement) || Boolean(textareaInfo.isListItem),
       isTaskListItem:
         Boolean(taskElement) || Boolean(textareaInfo.isTaskListItem),
+      isVideo: Boolean(videoElement),
       linkHref: linkElement?.href || textareaInfo.linkHref,
+      mediaKind,
+      mediaSource,
       taskChecked: domTaskChecked ?? textareaInfo.taskChecked,
     };
   }
@@ -4027,6 +3557,19 @@ export function App() {
                   },
                 ]
               : []),
+            { type: "separator" as const },
+          ]
+        : []),
+      ...(contextInfo.mediaKind
+        ? [
+            {
+              icon: <Copy size={15} />,
+              label:
+                contextInfo.mediaKind === "image"
+                  ? "复制图片"
+                  : "复制视频地址",
+              onSelect: () => copyMediaResourceToClipboard(contextInfo),
+            },
             { type: "separator" as const },
           ]
         : []),
@@ -5284,13 +4827,47 @@ export function App() {
   }
 
   async function handleImageFile(file: File) {
-    await handleImageDataUrl(file.name, await fileToDataUrl(file));
+    const fileName = file.name || createTimestampedImageName(file.type);
+    const mimeType =
+      file.type || getClipboardMediaMimeType(fileName) || "image/png";
+
+    await handleImageDataUrl(
+      fileName,
+      normalizeDataUrlMimeType(await fileToDataUrl(file), mimeType),
+    );
+  }
+
+  async function handleImageFilePath(file: {
+    fileName: string;
+    filePath: string;
+    mimeType: string;
+  }) {
+    const document = activeDocument;
+
+    if (!document || !isMarkdownDocument(document)) {
+      return false;
+    }
+
+    try {
+      const reference = await saveFileAssetForDocument(
+        document,
+        file.fileName,
+        file.filePath,
+        "image.gif",
+      );
+      insertMarkdown(`![${file.fileName}](${reference} "align=left") `);
+      return true;
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
+      return false;
+    }
   }
 
   async function saveFileAssetForDocument(
     document: MarkdownDocument,
     fileName: string,
     sourceFilePath: string,
+    fallbackName = "asset",
   ) {
     if (!document.filePath || !window.desktop?.copyAssetFromFile) {
       return sourceFilePath;
@@ -5298,7 +4875,7 @@ export function App() {
 
     const savedAsset = await window.desktop.copyAssetFromFile({
       documentFilePath: document.filePath,
-      fileName: createAssetFileName(fileName, "recording.webm"),
+      fileName: createAssetFileName(fileName, fallbackName),
       sourceFilePath,
     });
 
@@ -5416,6 +4993,7 @@ export function App() {
         document,
         file.fileName,
         file.filePath,
+        "recording.webm",
       );
       replaceMediaImportPlaceholder(
         importTarget.importId,
@@ -5441,6 +5019,9 @@ export function App() {
     switch (action.action) {
       case "imageFile":
         await handleImageFile(action.file);
+        return;
+      case "imageFilePath":
+        await handleImageFilePath(action);
         return;
       case "videoFile":
         await handleVideoFile(action.file);
@@ -5688,6 +5269,8 @@ export function App() {
     }
 
     try {
+      const { createMarkdownExportHtml } = await import("./exportDocument");
+
       await exportMarkdownDocument({
         createHtml: createMarkdownExportHtml,
         document: activeDocument,
@@ -5912,9 +5495,9 @@ export function App() {
             <MenuSeparator />
             <MenuItem label="删除" shortcut="Delete" onSelect={() => runTopMenuAction(() => void runEditCommand("delete"))} />
             <MenuSeparator />
-            <MenuSubmenu label="查找和替换">
-              <MenuItem label="查找..." shortcut="Ctrl+F" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(false))} />
-              <MenuItem label="替换..." shortcut="Ctrl+H" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(true))} />
+            <MenuSubmenu label="查找和替换" panelClassName="find-replace-submenu-panel">
+              <MenuItem label="查找" shortcut="Ctrl+F" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(false))} />
+              <MenuItem label="替换" shortcut="Ctrl+H" onSelect={() => runTopMenuAction(() => openFindReplaceDialog(true))} />
             </MenuSubmenu>
             <MenuSeparator />
             <MenuItem label="表情与符号" shortcut="Win 键+句号" disabled />
@@ -5978,7 +5561,7 @@ export function App() {
             <MenuItem label="注释" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "comment" }))} />
             <MenuSeparator />
             <MenuItem label="超链接" shortcut="Ctrl+K" onSelect={() => runTopMenuAction(createLinkFromPrompt)} />
-            <MenuSubmenu label="图像">
+            <MenuSubmenu label="图像" panelClassName="image-format-submenu-panel">
               <MenuItem label="插入本地图片..." onSelect={() => runTopMenuAction(() => readFileInput(imageInputRef.current))} />
               <MenuSeparator />
               <MenuItem label="左对齐" onSelect={() => runTopMenuAction(() => runFormatCommand({ type: "imageAlign", align: "left" }))} />
@@ -6404,7 +5987,9 @@ export function App() {
                         }
                       }}
                     >
-                      <div className="menubar-dropdown-scroll">
+                      <div
+                        className={`menubar-dropdown-scroll menubar-dropdown-scroll-${item.key}`}
+                      >
                         {renderMenubarDropdown(item.key)}
                       </div>
                     </div>
@@ -6568,18 +6153,20 @@ export function App() {
               }
               </>
             ) : sidebarTab === "search" ? (
-              <WorkspaceSearchPanel
-                groups={workspaceSearchGroups}
-                inputRef={workspaceSearchInputRef}
-                matchCount={workspaceSearchMatchCount}
-                query={workspaceSearchQuery}
-                workspacePath={workspace.workspacePath}
-                onClose={closeWorkspaceSearch}
-                onOpenMatch={(document, match) => {
-                  void openWorkspaceSearchMatch(document, match);
-                }}
-                onQueryChange={setWorkspaceSearchQuery}
-              />
+              <Suspense fallback={null}>
+                <WorkspaceSearchPanel
+                  groups={workspaceSearchGroups}
+                  inputRef={workspaceSearchInputRef}
+                  matchCount={workspaceSearchMatchCount}
+                  query={workspaceSearchQuery}
+                  workspacePath={workspace.workspacePath}
+                  onClose={closeWorkspaceSearch}
+                  onOpenMatch={(document, match) => {
+                    void openWorkspaceSearchMatch(document, match);
+                  }}
+                  onQueryChange={setWorkspaceSearchQuery}
+                />
+              </Suspense>
             ) : (
               renderCurrentDocumentPanel()
             )}
@@ -6727,481 +6314,85 @@ export function App() {
 
         <section className="workspace">
           {isHomeOpen || !activeDocument ? (
-            <section className="welcome-home">
-              <section className="home-dashboard">
-                <section className="home-main-column">
-                  <section className="home-brand-panel" aria-label="工作台">
-                    <div className="home-brand-logo">
-                      <img src={appLogoUrl} alt="" draggable={false} />
-                    </div>
-                    <div className="home-brand-copy">
-                      <span>noteDock</span>
-                      <h1>工作台</h1>
-                      <p>开始今天的整理、阅读与写作。</p>
-                    </div>
-                    <div className="home-hero-visual" aria-hidden="true">
-                      <div className="home-hero-sheet">
-                        <span />
-                        <span />
-                        <span />
-                      </div>
-                      <div className="home-hero-fold" />
-                      <div className="home-hero-pencil" />
-                    </div>
-                  </section>
-
-                  <section className="home-shortcut-panel" aria-label="快捷操作">
-                    <header className="home-section-header">
-                      <h2>快捷操作</h2>
-                    </header>
-                    <div className="home-brand-actions">
-                      <HomeQuickAction
-                        icon={<FilePlus2 size={18} />}
-                        label="新建文档"
-                        onClick={createNewDocument}
-                      />
-                      <HomeQuickAction
-                        icon={<FolderOpen size={18} />}
-                        label="打开文件夹"
-                        onClick={() => void openWorkspaceFolder()}
-                      />
-                      <HomeQuickAction
-                        icon={<BookOpenText size={18} />}
-                        label="知识关系"
-                        onClick={openKnowledgeRelationsPanel}
-                      />
-                    </div>
-                  </section>
-
-                  <section
-                    className={
-                      isRecentExpanded
-                        ? "recent-documents recent-documents-expanded"
-                        : "recent-documents"
-                    }
-                  >
-                    <div className="recent-header">
-                      <h2>最近文档</h2>
-                      {hasMoreRecentDocuments && (
-                        <button
-                          type="button"
-                          aria-expanded={isRecentExpanded}
-                          onClick={() => setIsRecentExpanded((current) => !current)}
-                        >
-                          {isRecentExpanded ? "收起" : "更多"}
-                          <ChevronRight
-                            className={isRecentExpanded ? "recent-more-icon-expanded" : undefined}
-                            size={16}
-                          />
-                        </button>
-                      )}
-                    </div>
-                    <div
-                      className={
-                        isRecentExpanded ? "recent-list recent-list-expanded" : "recent-list"
-                      }
-                    >
-                      {visibleRecentDocuments.length ? (
-                        visibleRecentDocuments.map((document) => {
-                          const isActiveRecentDocument = isSameWorkspaceDocument(
-                            activeDocument,
-                            document,
-                          );
-
-                          return (
-                            <button
-                              aria-current={isActiveRecentDocument ? "page" : undefined}
-                              data-document-path={document.filePath}
-                              data-document-title={getDocumentDisplayName(document)}
-                              data-testid="recent-document"
-                              className={[
-                                "recent-row",
-                                isActiveRecentDocument ? "recent-row-active" : "",
-                              ]
-                                .filter(Boolean)
-                                .join(" ")}
-                              key={document.id}
-                              title={`${getDocumentDisplayName(document)}\n${getDocumentPathPreview(
-                                document,
-                                workspace.workspacePath,
-                              )}`}
-                              type="button"
-                              onClick={() => void openRecentDocument(document)}
-                              onContextMenu={(event) => {
-                                if (document.filePath) {
-                                  openFileContextMenu(event, document.filePath);
-                                }
-                              }}
-                            >
-                              <FileText size={16} />
-                              <strong>{getDocumentDisplayName(document)}</strong>
-                              <span>{getDocumentPathPreview(document, workspace.workspacePath)}</span>
-                              <time dateTime={getRecentDocumentTimestamp(document)}>
-                                {formatRecentTimestamp(getRecentDocumentTimestamp(document))}
-                              </time>
-                            </button>
-                          );
-                        })
-                      ) : (
-                        <div className="recent-empty">
-                          <strong>还没有最近文档</strong>
-                          <span>打开文件夹或新建文档后，这里会显示最近访问的笔记。</span>
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                </section>
-
-                <section className="home-side-column" aria-label="今日安排">
-                  <section className="home-todo-panel" aria-label="今日待办">
-                    <div className="home-todo-header">
-                      <div className="home-todo-title">
-                        <span>工作台</span>
-                        <h1>{homeTodoDateTitle}</h1>
-                        <div
-                          className="home-todo-progress"
-                          aria-hidden="true"
-                          title={`${homeTodoProgress}%`}
-                        >
-                          <span style={{ width: `${homeTodoProgress}%` }} />
-                        </div>
-                      </div>
-                      <strong>{remainingHomeTodoCount} 项未完成</strong>
-                    </div>
-
-                    <div
-                      className="home-todo-date-bar"
-                      aria-label="切换待办日期"
-                      ref={homeTodoCalendarRef}
-                    >
-                      <button
-                        type="button"
-                        aria-label="前一天"
-                        title="前一天"
-                        onClick={() =>
-                          setHomeTodoSelectedDate((currentDate) =>
-                            shiftHomeTodoDateKey(currentDate, -1),
-                          )
-                        }
-                      >
-                        <ChevronLeft size={15} />
-                      </button>
-                      <button
-                        className="home-todo-date-trigger"
-                        type="button"
-                        aria-expanded={isHomeTodoCalendarOpen}
-                        aria-label={`选择日期，当前为 ${homeTodoDateLabel}`}
-                        onClick={() => setIsHomeTodoCalendarOpen((current) => !current)}
-                      >
-                        <CalendarDays size={15} />
-                        <span>{homeTodoDateLabel}</span>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="后一天"
-                        title="后一天"
-                        onClick={() =>
-                          setHomeTodoSelectedDate((currentDate) =>
-                            shiftHomeTodoDateKey(currentDate, 1),
-                          )
-                        }
-                      >
-                        <ChevronRight size={15} />
-                      </button>
-                      {homeTodoSelectedDate !== todayHomeTodoDate ? (
-                        <button
-                          className="home-todo-today-button"
-                          type="button"
-                          onClick={() => {
-                            setHomeTodoSelectedDate(todayHomeTodoDate);
-                            setIsHomeTodoCalendarOpen(false);
-                          }}
-                        >
-                          今天
-                        </button>
-                      ) : null}
-                      {isHomeTodoCalendarOpen ? (
-                        <div
-                          className="home-calendar-popover"
-                          role="dialog"
-                          aria-label="选择待办日期"
-                          onWheel={handleHomeTodoCalendarWheel}
-                        >
-                          <div className="home-calendar-header">
-                            <button
-                              type="button"
-                              aria-label="上个月"
-                              onClick={() =>
-                                setHomeTodoSelectedDate((currentDate) =>
-                                  shiftHomeTodoMonthKey(currentDate, -1),
-                                )
-                              }
-                            >
-                              <ChevronLeft size={15} />
-                            </button>
-                            <div className="home-calendar-current" title={homeTodoMonthLabel}>
-                              <label className="home-calendar-year-field">
-                                <select
-                                  aria-label="选择年份"
-                                  value={homeTodoSelectedYear}
-                                  onChange={(event) =>
-                                    setHomeTodoSelectedDate((currentDate) =>
-                                      setHomeTodoYearKey(
-                                        currentDate,
-                                        Number(event.target.value),
-                                      ),
-                                    )
-                                  }
-                                >
-                                  {homeTodoYearOptions.map((year) => (
-                                    <option key={year} value={year}>
-                                      {year}年
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <strong>{homeTodoSelectedMonthLabel}</strong>
-                            </div>
-                            <button
-                              type="button"
-                              aria-label="下个月"
-                              onClick={() =>
-                                setHomeTodoSelectedDate((currentDate) =>
-                                  shiftHomeTodoMonthKey(currentDate, 1),
-                                )
-                              }
-                            >
-                              <ChevronRight size={15} />
-                            </button>
-                          </div>
-                          <div className="home-calendar-weekdays" aria-hidden="true">
-                            {homeCalendarWeekdayLabels.map((weekday) => (
-                              <span key={weekday}>{weekday}</span>
-                            ))}
-                          </div>
-                          <div className="home-calendar-grid">
-                            {homeTodoCalendarDays.map((day) => (
-                              <button
-                                className={[
-                                  "home-calendar-day",
-                                  day.inMonth ? "" : "home-calendar-day-muted",
-                                  day.isToday ? "home-calendar-day-today" : "",
-                                  day.isSelected ? "home-calendar-day-selected" : "",
-                                ]
-                                  .filter(Boolean)
-                                  .join(" ")}
-                                key={day.dateKey}
-                                type="button"
-                                aria-pressed={day.isSelected}
-                                onClick={() => {
-                                  setHomeTodoSelectedDate(day.dateKey);
-                                  setIsHomeTodoCalendarOpen(false);
-                                }}
-                              >
-                                {day.day}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <form
-                      className="home-todo-form"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        addHomeTodo();
-                      }}
-                    >
-                      <input
-                        aria-label="添加待办"
-                        placeholder="添加待办"
-                        value={homeTodoDraft}
-                        onChange={(event) => setHomeTodoDraft(event.target.value)}
-                        onPaste={(event) => void handleHomeImagePaste(event, setHomeTodoDraftImages)}
-                      />
-                      <button
-                        type="submit"
-                        disabled={!homeTodoDraft.trim() && homeTodoDraftImages.length === 0}
-                      >
-                        <Plus size={15} />
-                        添加
-                      </button>
-                    </form>
-                    <div
-                      className={
-                        homeTodoDraftImages.length
-                          ? "home-draft-images"
-                          : "home-draft-images home-draft-images-empty"
-                      }
-                      aria-label="待办草稿图片"
-                    >
-                      {homeTodoDraftImages.length ? (
-                        homeTodoDraftImages.map((image) => (
-                          <span className="home-draft-image" key={image.id}>
-                            <button
-                              className="home-draft-image-preview"
-                              type="button"
-                              aria-label={`浏览图片 ${image.fileName}`}
-                              onClick={() => setHomeImagePreview(image)}
-                            >
-                              <img alt={image.fileName} src={image.dataUrl} draggable={false} />
-                            </button>
-                            <button
-                              className="home-draft-image-remove"
-                              type="button"
-                              aria-label="移除图片"
-                              onClick={() => removeHomeTodoDraftImage(image.id)}
-                            >
-                              <X size={12} />
-                            </button>
-                          </span>
-                        ))
-                      ) : null}
-                    </div>
-
-                    <div
-                      className={
-                        homeTodoDrag
-                          ? "home-todo-list home-todo-list-dragging"
-                          : "home-todo-list"
-                      }
-                      ref={homeTodoListRef}
-                    >
-                      {selectedHomeTodoItems.length > 0 ? (
-                        <>
-                          {visibleHomeTodoItems.map((item, index) => (
-                            <Fragment key={item.id}>
-                              {homeTodoDrag?.insertIndex === index ? (
-                                <HomeTodoDropSlot />
-                              ) : null}
-                              <HomeTodoRow
-                                item={item}
-                                onDelete={deleteHomeTodo}
-                                onDragStart={handleHomeTodoDragStart}
-                                onPreviewImage={setHomeImagePreview}
-                                onToggle={toggleHomeTodo}
-                                rowRef={setHomeTodoRowRef}
-                              />
-                            </Fragment>
-                          ))}
-                          {homeTodoDrag?.insertIndex === visibleHomeTodoItems.length ? (
-                            <HomeTodoDropSlot />
-                          ) : null}
-                        </>
-                      ) : (
-                        <div className="home-todo-empty">
-                          <strong>暂无待办</strong>
-                          <span>把今天要处理的笔记、阅读或整理任务放在这里。</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {homeTodoDrag && activeHomeTodoItem ? (
-                      <div
-                        className="home-todo-drag-layer"
-                        style={{
-                          height: homeTodoDrag.height,
-                          left: homeTodoDrag.left,
-                          top: homeTodoDrag.pointerY - homeTodoDrag.offsetY,
-                          width: homeTodoDrag.width,
-                        }}
-                      >
-                        <HomeTodoDragPreview item={activeHomeTodoItem} />
-                      </div>
-                    ) : null}
-
-                    {hasCompletedHomeTodos ? (
-                      <button
-                        className="home-todo-clear"
-                        type="button"
-                        onClick={clearCompletedHomeTodos}
-                      >
-                        清除已完成
-                      </button>
-                    ) : null}
-                  </section>
-
-                  <section className="home-note-panel home-note-panel-side" aria-label="灵感便签">
-                    <header className="home-section-header">
-                      <div>
-                        <h2>灵感便签</h2>
-                        <span>把临时想法收在这里</span>
-                      </div>
-                      <button
-                        className="home-note-entry-button"
-                        type="button"
-                        onClick={() => setIsHomeNoteDialogOpen(true)}
-                      >
-                        <Plus size={15} />
-                        新建
-                      </button>
-                    </header>
-                    <div className="home-saved-notes" aria-label="已保存便签">
-                      {homeSavedNotes.length ? (
-                        homeSavedNotes.map((note) => (
-                          <article
-                            className={
-                              note.id === activeHomeSavedNoteId
-                                ? "home-saved-note home-saved-note-active"
-                                : "home-saved-note"
-                            }
-                            key={note.id}
-                            onClick={() => setActiveHomeSavedNoteId(note.id)}
-                          >
-                            <div>
-                              <p>{note.text}</p>
-                              {note.images?.length ? (
-                                <div className="home-inline-image-strip" aria-label="便签图片">
-                                  {note.images.map((image) => (
-                                    <button
-                                      className="home-inline-image-preview"
-                                      type="button"
-                                      aria-label={`浏览图片 ${image.fileName}`}
-                                      key={image.id}
-                                      onClick={() => {
-                                        setActiveHomeSavedNoteId(note.id);
-                                        setHomeImagePreview(image);
-                                      }}
-                                    >
-                                      <img
-                                        alt={image.fileName}
-                                        src={image.dataUrl}
-                                        draggable={false}
-                                      />
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : null}
-                              <time dateTime={note.createdAt}>
-                                {formatRecentTimestamp(note.createdAt)}
-                              </time>
-                            </div>
-                            <button
-                              className="home-saved-note-delete"
-                              type="button"
-                              aria-label="删除便签"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                deleteHomeSavedNote(note.id);
-                              }}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </article>
-                        ))
-                      ) : (
-                        <div className="home-saved-notes-empty">
-                          保存后的便签会显示在这里。
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                </section>
-              </section>
-            </section>
-          ) : (
-            <section
+            <HomeDashboard
+              activeDocument={activeDocument}
+              activeNoteId={activeHomeSavedNoteId}
+              activeTodoItem={activeHomeTodoItem}
+              calendarDays={homeTodoCalendarDays}
+              calendarRef={homeTodoCalendarRef}
+              draftImages={homeTodoDraftImages}
+              hasCompletedTodos={hasCompletedHomeTodos}
+              hasMoreRecentDocuments={hasMoreRecentDocuments}
+              isCalendarOpen={isHomeTodoCalendarOpen}
+              isRecentExpanded={isRecentExpanded}
+              logoUrl={appLogoUrl}
+              monthLabel={homeTodoMonthLabel}
+              notes={homeSavedNotes}
+              onChangeTodoYear={(year) =>
+                setHomeTodoSelectedDate((currentDate) =>
+                  setHomeTodoYearKey(currentDate, year),
+                )
+              }
+              onClearCompletedTodos={clearCompletedHomeTodos}
+              onCreateDocument={createNewDocument}
+              onDeleteNote={deleteHomeSavedNote}
+              onDeleteTodo={deleteHomeTodo}
+              onDraftPaste={(event) => handleHomeImagePaste(event, setHomeTodoDraftImages)}
+              onOpenKnowledgeRelations={openKnowledgeRelationsPanel}
+              onOpenNoteDialog={() => setIsHomeNoteDialogOpen(true)}
+              onOpenRecentDocument={openRecentDocument}
+              onOpenRecentDocumentContextMenu={(event, document) => {
+                if (document.filePath) {
+                  openFileContextMenu(event, document.filePath);
+                }
+              }}
+              onOpenWorkspaceFolder={openWorkspaceFolder}
+              onPreviewImage={setHomeImagePreview}
+              onRemoveDraftImage={removeHomeTodoDraftImage}
+              onSelectCalendarDay={(dateKey) => {
+                setHomeTodoSelectedDate(dateKey);
+                setIsHomeTodoCalendarOpen(false);
+              }}
+              onSelectNote={setActiveHomeSavedNoteId}
+              onShiftTodoDate={(days) =>
+                setHomeTodoSelectedDate((currentDate) =>
+                  shiftHomeTodoDateKey(currentDate, days),
+                )
+              }
+              onShiftTodoMonth={(months) =>
+                setHomeTodoSelectedDate((currentDate) =>
+                  shiftHomeTodoMonthKey(currentDate, months),
+                )
+              }
+              onSubmitTodo={addHomeTodo}
+              onTodoCalendarWheel={handleHomeTodoCalendarWheel}
+              onTodoDraftChange={setHomeTodoDraft}
+              onTodoDragStart={handleHomeTodoDragStart}
+              onTodoRowRef={setHomeTodoRowRef}
+              onToggleCalendar={() => setIsHomeTodoCalendarOpen((current) => !current)}
+              onToggleRecentExpanded={() => setIsRecentExpanded((current) => !current)}
+              onToggleTodo={toggleHomeTodo}
+              onUseToday={() => {
+                setHomeTodoSelectedDate(todayHomeTodoDate);
+                setIsHomeTodoCalendarOpen(false);
+              }}
+              recentDocuments={visibleRecentDocuments}
+              remainingTodoCount={remainingHomeTodoCount}
+              selectedMonthLabel={homeTodoSelectedMonthLabel}
+              selectedYear={homeTodoSelectedYear}
+              todoDateLabel={homeTodoDateLabel}
+              todoDateTitle={homeTodoDateTitle}
+              todoDraft={homeTodoDraft}
+              todoDrag={homeTodoDrag}
+              todoListRef={homeTodoListRef}
+              todoProgress={homeTodoProgress}
+              todoSelectedDate={homeTodoSelectedDate}
+              todayTodoDate={todayHomeTodoDate}
+              visibleTodoItems={visibleHomeTodoItems}
+              workspacePath={workspace.workspacePath}
+              yearOptions={homeTodoYearOptions}
+            />
+          ) : (            <section
               className="editor-workspace"
               data-select-all-scope="content"
               onPointerDownCapture={focusSelectAllContentScope}
@@ -7420,12 +6611,16 @@ export function App() {
           />
         ) : null}
 
-        <DocumentInspectorSidebar
-          activeDocument={activeDocument}
-          isOpen={isDocumentInspectorOpen}
-          knowledgePanel={inspectorKnowledgePanel}
-          relationsPanel={renderKnowledgeRelationsPanel()}
-        />
+        {isDocumentInspectorOpen ? (
+          <Suspense fallback={null}>
+            <DocumentInspectorSidebar
+              activeDocument={activeDocument}
+              isOpen={isDocumentInspectorOpen}
+              knowledgePanel={inspectorKnowledgePanel}
+              relationsPanel={renderKnowledgeRelationsPanel()}
+            />
+          </Suspense>
+        ) : null}
 
         <input
           ref={imageInputRef}

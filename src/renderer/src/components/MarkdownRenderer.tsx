@@ -39,6 +39,7 @@ import { isMindMapLanguage } from "../mindMapDocument";
 import { isReactFlowLanguage } from "../reactFlowDocument";
 import { isUniverSheetLanguage } from "../univerSheetDocument";
 import type { TyporaAlertKind } from "../editorCommands";
+import { findWikiLinkTokensInMarkdown } from "../wikiLinkTokens";
 
 type MarkdownRendererProps = {
   children: string;
@@ -55,10 +56,6 @@ const localPreviewUrlPattern = /^typora-local:\/\//i;
 const languagePattern = /language-(\S+)/;
 const videoControlsSafeZone = 44;
 const wikiLinkHrefPrefix = "notedock-wikilink:";
-const wikiLinkPattern = /\[\[([^[\]\n]{1,180})\]\]/g;
-const wikiLinkDisplayExtensionPattern =
-  /\.(?:md|markdown|html?|pdf|docx?|xlsx?|univer|excalidraw(?:\.json)?)$/i;
-const markdownCodeRegionPattern = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g;
 
 const markdownAlertIcons: Record<TyporaAlertKind, LucideIcon> = {
   caution: OctagonAlert,
@@ -120,36 +117,22 @@ function getRenderedResourceUrl(url: string | undefined, filePath?: string) {
 }
 
 function renderWikiLinks(markdown: string) {
-  return markdown
-    .split(markdownCodeRegionPattern)
-    .map((part, index) =>
-      index % 2 === 1 ? part : renderWikiLinksInText(part),
-    )
-    .join("");
-}
+  const tokens = findWikiLinkTokensInMarkdown(markdown);
 
-function renderWikiLinksInText(markdown: string) {
-  return markdown.replace(wikiLinkPattern, (_, raw: string) => {
-    const [targetPart, displayPart] = String(raw).split("|");
-    const target = targetPart?.trim();
+  if (!tokens.length) {
+    return markdown;
+  }
 
-    if (!target) {
-      return `[[${raw}]]`;
-    }
+  let rendered = "";
+  let cursor = 0;
 
-    const display =
-      displayPart?.trim() ||
-      target
-        .split("#")[0]
-        ?.replace(/\\/g, "/")
-        .split("/")
-        .filter(Boolean)
-        .at(-1)
-        ?.replace(wikiLinkDisplayExtensionPattern, "") ||
-      target;
-
-    return `[${display}](${wikiLinkHrefPrefix}${encodeURIComponent(target)})`;
+  tokens.forEach((token) => {
+    rendered += markdown.slice(cursor, token.from);
+    rendered += `[${token.display}](${wikiLinkHrefPrefix}${encodeURIComponent(token.target)})`;
+    cursor = token.to;
   });
+
+  return rendered + markdown.slice(cursor);
 }
 
 function handleWikiLinkClick(

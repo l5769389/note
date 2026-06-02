@@ -1,10 +1,13 @@
-import {
-  BooleanNumber,
+import type {
+  ICellData,
+  IWorkbookData,
+  IWorksheetData,
   LocaleType,
-  type ICellData,
-  type IWorkbookData,
-  type IWorksheetData,
 } from "@univerjs/core";
+
+const booleanNumberFalse = 0;
+const booleanNumberTrue = 1;
+const localeTypeZhCn = "zhCN" as LocaleType;
 
 export type UniverSheetData = {
   title: string;
@@ -66,11 +69,11 @@ function createDefaultWorksheet(sheetId: string): IWorksheetData {
       xSplit: 0,
       ySplit: 0,
     },
-    hidden: BooleanNumber.FALSE,
+    hidden: booleanNumberFalse,
     id: sheetId,
     mergeData: [],
     name: "Sheet1",
-    rightToLeft: BooleanNumber.FALSE,
+    rightToLeft: booleanNumberFalse,
     rowCount: defaultRowCount,
     rowData: {},
     rowHeader: {
@@ -78,7 +81,7 @@ function createDefaultWorksheet(sheetId: string): IWorksheetData {
     },
     scrollLeft: 0,
     scrollTop: 0,
-    showGridlines: BooleanNumber.TRUE,
+    showGridlines: booleanNumberTrue,
     tabColor: "",
     zoomRatio: 1,
   };
@@ -95,7 +98,7 @@ export function createDefaultUniverSheetData(): UniverSheetData {
     workbook: {
       appVersion: "0.22.1",
       id: workbookId,
-      locale: LocaleType.ZH_CN,
+      locale: localeTypeZhCn,
       name: title,
       resources: [],
       sheetOrder: [sheetId],

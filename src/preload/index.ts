@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld("desktop", {
   readClipboardImage: () => ipcRenderer.invoke("clipboard:read-image"),
   readClipboardMediaFiles: () => ipcRenderer.invoke("clipboard:read-media-files"),
   readClipboardText: () => ipcRenderer.invoke("clipboard:read-text"),
+  writeImageFileToClipboard: (filePath: string) =>
+    ipcRenderer.invoke("clipboard:write-image-file", filePath),
   checkAssetReferences: (payload: {
     documentFilePath: string;
     references: string[];

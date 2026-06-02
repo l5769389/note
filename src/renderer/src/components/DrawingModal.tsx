@@ -1,6 +1,7 @@
 import { Check, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { Excalidraw, exportToBlob, serializeAsJSON } from "@excalidraw/excalidraw";
+import "@excalidraw/excalidraw/index.css";
 import type { LibraryItems, LibraryItemsSource } from "@excalidraw/excalidraw/types";
 import { getBundledExcalidrawLibraryItems } from "../excalidrawLibraries";
 import { fileToDataUrl } from "../services/imageUpload";

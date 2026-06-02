@@ -17,6 +17,12 @@ export type ClipboardMediaData = {
 
 export type MediaFileImportAction =
   | { action: "imageFile"; file: File }
+  | {
+      action: "imageFilePath";
+      fileName: string;
+      filePath: string;
+      mimeType: string;
+    }
   | { action: "videoFile"; file: File }
   | {
       action: "videoFilePath";
@@ -105,6 +111,14 @@ export function isClipboardMediaFile(file: File, kind: ClipboardMediaKind) {
   return mimeType.startsWith(`${kind}/`);
 }
 
+export function shouldPreserveImageFileAsAsset(
+  file: Pick<File, "name" | "type">,
+) {
+  const mimeType = file.type || getClipboardMediaMimeType(file.name);
+
+  return mimeType === "image/gif";
+}
+
 export function normalizeDataUrlMimeType(dataUrl: string, mimeType: string) {
   if (!mimeType || dataUrl.startsWith(`data:${mimeType}`)) {
     return dataUrl;
@@ -158,6 +172,20 @@ export function getDroppedMediaImportActions(
 ): MediaFileImportAction[] {
   return getDroppedMediaFiles(dataTransfer).map((file) => {
     if (!isClipboardMediaFile(file, "video")) {
+      const filePath = getLocalPathForDroppedFile(file, resolvePath);
+
+      if (filePath && shouldPreserveImageFileAsAsset(file)) {
+        const fileName =
+          file.name || createTimestampedImageName(file.type || "image/gif");
+
+        return {
+          action: "imageFilePath",
+          fileName,
+          filePath,
+          mimeType: file.type || getClipboardMediaMimeType(fileName) || "image/gif",
+        };
+      }
+
       return { action: "imageFile", file };
     }
 
@@ -262,12 +290,23 @@ export function getClipboardFileReferenceImportAction(
 ): MediaFileImportAction | null {
   const video = findFirstClipboardMedia(files, "video");
 
-  return video
+  if (video) {
+    return {
+      action: "videoFilePath",
+      fileName: video.fileName,
+      filePath: video.filePath,
+      mimeType: video.mimeType,
+    };
+  }
+
+  const image = findFirstClipboardMedia(files, "image");
+
+  return image
     ? {
-        action: "videoFilePath",
-        fileName: video.fileName,
-        filePath: video.filePath,
-        mimeType: video.mimeType,
+        action: "imageFilePath",
+        fileName: image.fileName,
+        filePath: image.filePath,
+        mimeType: image.mimeType,
       }
     : null;
 }

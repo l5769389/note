@@ -1,4 +1,5 @@
 import type { DocumentProperty, MarkdownDocument } from "./types";
+import { findWikiLinkTokensInMarkdown } from "./wikiLinkTokens";
 
 export type NoteProperty = DocumentProperty;
 
@@ -47,7 +48,6 @@ type ParsedFrontmatter = {
 };
 
 const frontmatterPattern = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
-const wikiLinkPattern = /\[\[([^[\]\n]{1,180})\]\]/g;
 const inlineTagPattern =
   /(^|[\s([{:>])#([\p{L}\p{N}_/-]{1,64})(?=$|[\s.,;:!?()[\]{}<>])/gu;
 
@@ -307,12 +307,9 @@ export function getWikiLinkTitle(value: string) {
 
 export function parseWikiLinks(content: string) {
   const links: NoteWikiLink[] = [];
-  const stripped = stripMarkdownCode(content);
 
-  for (const match of stripped.matchAll(wikiLinkPattern)) {
-    const raw = match[1]?.trim() ?? "";
-    const [targetPart, displayPart] = raw.split("|");
-    const target = (targetPart ?? "").trim();
+  for (const token of findWikiLinkTokensInMarkdown(content)) {
+    const target = token.target.trim();
     const normalizedTarget = normalizeWikiLinkTarget(target);
 
     if (!target || !normalizedTarget) {
@@ -320,10 +317,10 @@ export function parseWikiLinks(content: string) {
     }
 
     links.push({
-      display: (displayPart ?? "").trim() || getWikiLinkTitle(target) || target,
-      index: match.index ?? 0,
+      display: token.display,
+      index: token.from,
       normalizedTarget,
-      raw,
+      raw: token.inner,
       target,
     });
   }

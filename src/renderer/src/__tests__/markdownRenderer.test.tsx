@@ -18,12 +18,15 @@ describe("MarkdownRenderer", () => {
 
   it("renders wiki links without rewriting code spans", () => {
     const html = renderToStaticMarkup(
-      <MarkdownRenderer>{"See [[Daily Note|today]] and `[[Code]]`."}</MarkdownRenderer>,
+      <MarkdownRenderer>
+        {"See [[Daily Note|today]] and \\[[Escaped]] and `[[Code]]`."}
+      </MarkdownRenderer>,
     );
 
     expect(html).toContain('href="notedock-wikilink:Daily%20Note"');
     expect(html).toContain("markdown-wiki-link-icon");
     expect(html).toContain('markdown-wiki-link-title">today</span>');
+    expect(html).toContain("[[Escaped]]");
     expect(html).toContain("[[Code]]");
   });
 });

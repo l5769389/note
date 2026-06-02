@@ -85,6 +85,14 @@ describe("noteKnowledge", () => {
     ).toEqual(["project"]);
   });
 
+  it("does not extract escaped wiki links", () => {
+    const knowledge = parseDocumentKnowledge(
+      documentFixture("a", "Escaped", String.raw`See \[[Literal]] and [[Real]].`),
+    );
+
+    expect(knowledge.links.map((link) => link.target)).toEqual(["Real"]);
+  });
+
   it("indexes metadata and backlinks for non-markdown documents", () => {
     const project = documentFixture("project", "Project", "See [[Spec]].");
     const spec: MarkdownDocument = {

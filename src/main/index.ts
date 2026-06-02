@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, net, protocol, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, shell, Tray } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions, SaveDialogOptions } from "electron";
 import chokidar, { type FSWatcher } from "chokidar";
 import { randomUUID } from "node:crypto";
@@ -1173,6 +1173,21 @@ function registerFileIpc() {
   });
 
   ipcMain.handle("clipboard:read-text", () => clipboard.readText());
+
+  ipcMain.handle("clipboard:write-image-file", async (_, filePath: string) => {
+    if (typeof filePath !== "string" || !filePath.trim()) {
+      return false;
+    }
+
+    const image = nativeImage.createFromPath(filePath);
+
+    if (image.isEmpty()) {
+      return false;
+    }
+
+    clipboard.writeImage(image);
+    return true;
+  });
 
   ipcMain.handle("workspace:get-default-directory", () => app.getPath("desktop"));
 

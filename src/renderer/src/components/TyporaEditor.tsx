@@ -25,6 +25,9 @@ import { commonmark, htmlSchema } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { $prose, insert, replaceAll } from "@milkdown/kit/utils";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
+import "@milkdown/kit/prose/gapcursor/style/gapcursor.css";
+import "@milkdown/kit/prose/tables/style/tables.css";
+import "@milkdown/kit/prose/view/style/prosemirror.css";
 import "katex/dist/katex.min.css";
 import {
   CircleAlert,
@@ -57,6 +60,7 @@ import {
   isMermaidLanguage,
   normalizeCodeLanguageInput,
 } from "../codeLanguage";
+import { getNewEmptyCodeBlockFocusPosition } from "../codeBlockFocus";
 import {
   markdownSyntaxPluginKey,
   searchHighlightPluginKey,
@@ -144,6 +148,12 @@ import {
 import {
   selectionTouchesRange,
 } from "../selectionRanges";
+import {
+  findWikiLinkTokenAtPosition,
+  findWikiLinkTokensInText,
+  getWikiLinkTokenDeleteRange,
+  type WikiLinkToken,
+} from "../wikiLinkTokens";
 
 export type {
   ImageAlignment,
@@ -770,7 +780,7 @@ const codeBlockLanguageDecoration = $prose(
               }),
             );
 
-            if (isActive) {
+            if (isActive && node.textContent.length > 0) {
               decorations.push(
                 Decoration.widget(
                   pos + node.nodeSize - 1,
@@ -1713,6 +1723,48 @@ function getActiveEmptyCodeBlock(state: EditorState): CodeBlockDomTarget | null 
   return result;
 }
 
+function getNodeAtSafe(state: EditorState, pos: number) {
+  if (pos < 0 || pos > state.doc.content.size) {
+    return null;
+  }
+
+  return state.doc.nodeAt(pos);
+}
+
+function getNewEmptyCodeBlockNearSelection(
+  oldState: EditorState,
+  newState: EditorState,
+): CodeBlockDomTarget | null {
+  const { from, to } = newState.selection;
+  let result: CodeBlockDomTarget | null = null;
+
+  newState.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (result || node.type.name !== "code_block") {
+      return false;
+    }
+
+    const oldNode = getNodeAtSafe(oldState, pos);
+    const focusPosition = getNewEmptyCodeBlockFocusPosition({
+      block: {
+        nodeSize: node.nodeSize,
+        pos,
+        textContent: node.textContent,
+      },
+      selection: { from, to },
+      wasCodeBlockAtSamePosition: oldNode?.type.name === "code_block",
+    });
+
+    if (focusPosition !== null) {
+      result = { node, pos };
+      return false;
+    }
+
+    return true;
+  });
+
+  return result;
+}
+
 function createEmptyCodeBlockFocusTransaction(
   state: EditorState,
   codeBlock: CodeBlockDomTarget,
@@ -1804,7 +1856,7 @@ function createBlankCodeBlockBehavior(
       let pendingDeleteKey: "Backspace" | "Delete" | null = null;
 
       return new Plugin({
-        appendTransaction(transactions, _oldState, newState) {
+        appendTransaction(transactions, oldState, newState) {
           const key = pendingDeleteKey;
 
           if (!transactions.some((transaction) => transaction.docChanged)) {
@@ -1826,7 +1878,9 @@ function createBlankCodeBlockBehavior(
             return null;
           }
 
-          const codeBlock = getActiveEmptyCodeBlock(newState);
+          const codeBlock =
+            getActiveEmptyCodeBlock(newState) ??
+            getNewEmptyCodeBlockNearSelection(oldState, newState);
 
           return codeBlock
             ? createEmptyCodeBlockFocusTransaction(newState, codeBlock)
@@ -2217,37 +2271,6 @@ const markdownAlertDecoration = $prose(
     }),
 );
 
-type WikiLinkTokenRange = {
-  display: string;
-  from: number;
-  raw: string;
-  target: string;
-  to: number;
-};
-
-const wikiLinkTokenPattern = /\[\[([^[\]\n]{1,180})\]\]/g;
-const wikiLinkTokenDisplayExtensionPattern =
-  /\.(?:md|markdown|html?|pdf|docx?|xlsx?|univer|excalidraw(?:\.json)?)$/i;
-
-function getWikiLinkTokenDisplay(raw: string) {
-  const [targetPart, displayPart] = raw.split("|");
-  const target = targetPart?.trim() ?? "";
-
-  return {
-    display:
-      displayPart?.trim() ||
-      target
-        .split("#")[0]
-        ?.replace(/\\/g, "/")
-        .split("/")
-        .filter(Boolean)
-        .at(-1)
-        ?.replace(wikiLinkTokenDisplayExtensionPattern, "") ||
-      target,
-    target,
-  };
-}
-
 function isPlainWikiLinkText(node: ProseMirrorNode, parent?: ProseMirrorNode | null) {
   return (
     node.isText &&
@@ -2258,7 +2281,7 @@ function isPlainWikiLinkText(node: ProseMirrorNode, parent?: ProseMirrorNode | n
 }
 
 function collectWikiLinkTokenRanges(doc: ProseMirrorNode) {
-  const ranges: WikiLinkTokenRange[] = [];
+  const ranges: WikiLinkToken[] = [];
 
   doc.descendants((node: ProseMirrorNode, pos, parent) => {
     if (!isPlainWikiLinkText(node, parent)) {
@@ -2266,25 +2289,7 @@ function collectWikiLinkTokenRanges(doc: ProseMirrorNode) {
     }
 
     const text = node.text ?? "";
-    wikiLinkTokenPattern.lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = wikiLinkTokenPattern.exec(text))) {
-      const raw = match[0];
-      const { display, target } = getWikiLinkTokenDisplay(match[1] ?? "");
-
-      if (!target) {
-        continue;
-      }
-
-      ranges.push({
-        display,
-        from: pos + match.index,
-        raw,
-        target,
-        to: pos + match.index + raw.length,
-      });
-    }
+    ranges.push(...findWikiLinkTokensInText(text, pos));
   });
 
   return ranges;
@@ -2295,17 +2300,29 @@ function findWikiLinkTokenRangeAtPosition(
   position: number,
   direction: "inside" | "backward" | "forward" = "inside",
 ) {
-  return collectWikiLinkTokenRanges(state.doc).find((range) => {
-    if (direction === "backward") {
-      return range.to === position || (range.from < position && position <= range.to);
-    }
+  return findWikiLinkTokenAtPosition(
+    collectWikiLinkTokenRanges(state.doc),
+    position,
+    direction,
+  );
+}
 
-    if (direction === "forward") {
-      return range.from === position || (range.from <= position && position < range.to);
-    }
+function getWikiLinkTokenRangeFromElement(
+  state: EditorState,
+  element: HTMLElement,
+) {
+  const from = Number(element.dataset.wikiFrom);
+  const to = Number(element.dataset.wikiTo);
 
-    return range.from <= position && position <= range.to;
-  });
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    return null;
+  }
+
+  return (
+    collectWikiLinkTokenRanges(state.doc).find(
+      (range) => range.from === from && range.to === to,
+    ) ?? null
+  );
 }
 
 const wikiLinkTokenDecoration = $prose(
@@ -2313,13 +2330,27 @@ const wikiLinkTokenDecoration = $prose(
     new Plugin({
       props: {
         decorations(state) {
-          const decorations = collectWikiLinkTokenRanges(state.doc).map((range) =>
-            Decoration.inline(range.from, range.to, {
-              class: "typora-wiki-link-token",
+          const { from, to } = state.selection;
+          const decorations = collectWikiLinkTokenRanges(state.doc).map((range) => {
+            const isSelected = from <= range.from && range.to <= to;
+
+            return Decoration.inline(range.from, range.to, {
+              class: [
+                "typora-wiki-link-token",
+                isSelected ? "typora-wiki-link-card-selected" : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
               "data-wiki-display": range.display,
+              "data-wiki-from": String(range.from),
               "data-wiki-target": range.target,
-            }),
-          );
+              "data-wiki-to": String(range.to),
+              title: `引用文档：${range.display}`,
+            }, {
+              inclusiveEnd: false,
+              inclusiveStart: false,
+            });
+          });
 
           return DecorationSet.create(state.doc, decorations);
         },
@@ -2327,21 +2358,52 @@ const wikiLinkTokenDecoration = $prose(
           mousedown(view, event) {
             const target =
               event.target instanceof Element
-                ? event.target.closest<HTMLElement>(".typora-wiki-link-token")
+                ? event.target.closest<HTMLElement>(
+                    ".typora-wiki-link-token",
+                  )
                 : null;
 
             if (!target || (event as MouseEvent).button !== 0) {
               return false;
             }
 
-            const position = view.posAtDOM(target, 0);
-            const range = findWikiLinkTokenRangeAtPosition(view.state, position, "inside");
+            const range =
+              getWikiLinkTokenRangeFromElement(view.state, target) ??
+              findWikiLinkTokenRangeAtPosition(
+                view.state,
+                view.posAtDOM(target, 0),
+                "inside",
+              );
 
             if (!range) {
               return false;
             }
 
             event.preventDefault();
+            const mouseEvent = event as MouseEvent;
+            const rect = target.getBoundingClientRect();
+            const boundaryHitArea = Math.min(44, Math.max(22, rect.width * 0.24));
+
+            if (mouseEvent.clientX <= rect.left + boundaryHitArea) {
+              view.dispatch(
+                view.state.tr
+                  .setSelection(TextSelection.create(view.state.doc, range.from))
+                  .scrollIntoView(),
+              );
+              view.focus();
+              return true;
+            }
+
+            if (mouseEvent.clientX >= rect.right - boundaryHitArea) {
+              view.dispatch(
+                view.state.tr
+                  .setSelection(TextSelection.create(view.state.doc, range.to))
+                  .scrollIntoView(),
+              );
+              view.focus();
+              return true;
+            }
+
             view.dispatch(
               view.state.tr
                 .setSelection(TextSelection.create(view.state.doc, range.from, range.to))
@@ -2353,31 +2415,49 @@ const wikiLinkTokenDecoration = $prose(
         },
         handleKeyDown(view, event) {
           const { from, to, empty } = view.state.selection;
+          const ranges = collectWikiLinkTokenRanges(view.state.doc);
 
-          if (event.key === "Backspace") {
-            const range = empty
-              ? findWikiLinkTokenRangeAtPosition(view.state, from, "backward")
-              : collectWikiLinkTokenRanges(view.state.doc).find(
-                  (item) => item.from <= from && item.to >= to,
-                );
+          if (event.key === "Backspace" || event.key === "Delete") {
+            const range = getWikiLinkTokenDeleteRange(ranges, {
+              from,
+              to,
+            }, event.key);
 
-            if (range) {
+            if (range && range.from < range.to) {
               event.preventDefault();
               view.dispatch(view.state.tr.delete(range.from, range.to).scrollIntoView());
               return true;
             }
           }
 
-          if (event.key === "Delete") {
-            const range = empty
-              ? findWikiLinkTokenRangeAtPosition(view.state, from, "forward")
-              : collectWikiLinkTokenRanges(view.state.doc).find(
-                  (item) => item.from <= from && item.to >= to,
-                );
+          if (empty && event.key === "ArrowLeft") {
+            const range = ranges.find(
+              (item) => item.from < from && from <= item.to,
+            );
 
             if (range) {
               event.preventDefault();
-              view.dispatch(view.state.tr.delete(range.from, range.to).scrollIntoView());
+              view.dispatch(
+                view.state.tr
+                  .setSelection(TextSelection.create(view.state.doc, range.from))
+                  .scrollIntoView(),
+              );
+              return true;
+            }
+          }
+
+          if (empty && event.key === "ArrowRight") {
+            const range = ranges.find(
+              (item) => item.from <= from && from < item.to,
+            );
+
+            if (range) {
+              event.preventDefault();
+              view.dispatch(
+                view.state.tr
+                  .setSelection(TextSelection.create(view.state.doc, range.to))
+                  .scrollIntoView(),
+              );
               return true;
             }
           }
@@ -3461,6 +3541,8 @@ function MilkdownRuntime({
   valueRef,
 }: MilkdownRuntimeProps) {
   const applyingExternalValueRef = useRef(false);
+  const pendingLocalMarkdownRef = useRef<string | null>(null);
+  const pendingLocalMarkdownClearTimerRef = useRef<number | null>(null);
   const filePathRef = useRef(filePath);
   const onEditUniverSheetRef = useRef(onEditUniverSheet);
   const onRequestDocumentReferenceRef = useRef(onRequestDocumentReference);
@@ -3503,6 +3585,14 @@ function MilkdownRuntime({
   useEffect(() => {
     onRequestTableInsertRef.current = onRequestTableInsert;
   }, [onRequestTableInsert]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingLocalMarkdownClearTimerRef.current !== null) {
+        window.clearTimeout(pendingLocalMarkdownClearTimerRef.current);
+      }
+    };
+  }, []);
   const previousDocumentIdRef = useRef(documentId);
   const pendingActiveHeadingRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
@@ -4532,6 +4622,19 @@ function MilkdownRuntime({
             markdownRef.current = markdown;
 
             if (!applyingExternalValueRef.current) {
+              pendingLocalMarkdownRef.current = markdown;
+
+              if (pendingLocalMarkdownClearTimerRef.current !== null) {
+                window.clearTimeout(pendingLocalMarkdownClearTimerRef.current);
+              }
+
+              pendingLocalMarkdownClearTimerRef.current = window.setTimeout(() => {
+                if (pendingLocalMarkdownRef.current === markdown) {
+                  pendingLocalMarkdownRef.current = null;
+                }
+
+                pendingLocalMarkdownClearTimerRef.current = null;
+              }, 750);
               onChangeRef.current(markdown);
             }
           })
@@ -4716,6 +4819,8 @@ function MilkdownRuntime({
     }
 
     if (value === markdownRef.current) {
+      pendingLocalMarkdownRef.current = null;
+
       if (isDifferentDocument) {
         editor.action((ctx) => {
           const view = ctx.get(editorViewCtx);
@@ -4732,7 +4837,15 @@ function MilkdownRuntime({
       return;
     }
 
+    if (
+      !isDifferentDocument &&
+      pendingLocalMarkdownRef.current === markdownRef.current
+    ) {
+      return;
+    }
+
     applyingExternalValueRef.current = true;
+    pendingLocalMarkdownRef.current = null;
     markdownRef.current = value;
     editor.action((ctx) => {
       replaceAll(value)(ctx);

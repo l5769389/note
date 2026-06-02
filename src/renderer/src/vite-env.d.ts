@@ -38,6 +38,7 @@ type DesktopApi = {
     }>
   >;
   readClipboardText: () => Promise<string>;
+  writeImageFileToClipboard: (filePath: string) => Promise<boolean>;
   checkAssetReferences: (payload: {
     documentFilePath: string;
     references: string[];

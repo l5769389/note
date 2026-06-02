@@ -93,9 +93,10 @@ export function WorkspaceStatusBar({
   onToggleInspector,
   onToggleSidebar,
 }: WorkspaceStatusBarProps) {
-  const status = autoSaveStatus[saveState];
+  const status = saveState === "idle" ? null : autoSaveStatus[saveState];
   const inspectorTitle = isInspectorOpen ? "隐藏右侧栏" : "显示右侧栏";
   const shouldShowDocumentStatus = Boolean(activeDocument);
+  const shouldShowAutoSaveStatus = shouldShowDocumentStatus && status !== null;
 
   return (
     <footer className="workspace-statusbar">
@@ -148,15 +149,17 @@ export function WorkspaceStatusBar({
       )}
       {shouldShowDocumentStatus ? (
         <>
-          <span
-            className={`workspace-autosave-status workspace-autosave-status-${saveState}`}
-            data-testid="autosave-status"
-            title={status.title}
-            aria-live="polite"
-          >
-            {status.icon}
-            {status.label}
-          </span>
+          {shouldShowAutoSaveStatus ? (
+            <span
+              className={`workspace-autosave-status workspace-autosave-status-${saveState}`}
+              data-testid="autosave-status"
+              title={status.title}
+              aria-live="polite"
+            >
+              {status.icon}
+              {status.label}
+            </span>
+          ) : null}
           <span className="workspace-word-count">
             {getDocumentStatusLabel(activeDocument, wordCount)}
           </span>
