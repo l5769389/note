@@ -149,11 +149,11 @@ import {
   selectionTouchesRange,
 } from "../selectionRanges";
 import {
-  findWikiLinkTokenAtPosition,
-  findWikiLinkTokensInText,
-  getWikiLinkTokenDeleteRange,
-  type WikiLinkToken,
-} from "../wikiLinkTokens";
+  documentReferencePlugins,
+  documentReferenceSchema,
+  isDocumentReferenceNode,
+  serializeDocumentReferenceToken,
+} from "../documentReferenceNode";
 
 export type {
   ImageAlignment,
@@ -208,14 +208,53 @@ type SlashCommandMenuState =
   | { visible: false }
   | {
       left: number;
+      selectedIndex: number;
       top: number;
+      triggerFrom: number;
+      triggerTo: number;
       visible: true;
     };
 
+type SlashCommandAction = "document" | "table";
+
+const slashCommandItems: Array<{
+  command: SlashCommandAction;
+  description: string;
+  icon: LucideIcon;
+  title: string;
+}> = [
+  {
+    command: "table",
+    description: "插入一个 Markdown 表格",
+    icon: Table2,
+    title: "表格",
+  },
+  {
+    command: "document",
+    description: "选择文件并作为整体插入",
+    icon: FileText,
+    title: "引用文档",
+  },
+];
+
+type DocumentReferenceInsertionPoint = {
+  createdAt: number;
+  documentId: string;
+  from: number;
+  source: "contextMenu" | "editor";
+  to: number;
+};
+
+const DOCUMENT_REFERENCE_CONTEXT_ANCHOR_TTL_MS = 3000;
+
 export type TyporaEditorHandle = {
+  clearDocumentReferenceInsertionPoint: () => void;
   clearSearchHighlight: () => void;
+  deleteContextDocumentReference: () => void;
   focusAtClientPoint: (clientX: number, clientY: number) => void;
+  insertDocumentReference: (target: string, display?: string) => void;
   insertMarkdown: (markdown: string) => void;
+  rememberDocumentReferenceInsertionPoint: () => void;
   prepareContextMenuTarget: (
     clientX: number,
     clientY: number,
@@ -1542,6 +1581,78 @@ function findEditableImagePosition(
   return null;
 }
 
+function findDocumentReferencePosition(
+  view: EditorView,
+  referenceElement: HTMLElement,
+  coordinates?: { left: number; top: number },
+) {
+  let matchedPosition: number | null = null;
+
+  view.state.doc.descendants((node: ProseMirrorNode, pos) => {
+    if (matchedPosition !== null) {
+      return false;
+    }
+
+    if (!isDocumentReferenceNode(node)) {
+      return true;
+    }
+
+    const nodeDom = view.nodeDOM(pos);
+
+    if (
+      nodeDom === referenceElement ||
+      (nodeDom instanceof Element && nodeDom.contains(referenceElement))
+    ) {
+      matchedPosition = pos;
+      return false;
+    }
+
+    return true;
+  });
+
+  if (matchedPosition !== null) {
+    return matchedPosition;
+  }
+
+  const docSize = view.state.doc.content.size;
+  const findNearbyReference = (position: number, radius: number) => {
+    for (let offset = 0; offset <= radius; offset += 1) {
+      for (const candidate of offset === 0 ? [position] : [position - offset, position + offset]) {
+        if (candidate < 0 || candidate > docSize) {
+          continue;
+        }
+
+        if (isDocumentReferenceNode(view.state.doc.nodeAt(candidate))) {
+          return candidate;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  try {
+    const domPosition = view.posAtDOM(referenceElement, 0);
+    const referencePosition = findNearbyReference(domPosition, 4);
+
+    if (referencePosition !== null) {
+      return referencePosition;
+    }
+  } catch {
+    // Fall through to coordinate-based lookup.
+  }
+
+  if (coordinates) {
+    const position = view.posAtCoords(coordinates);
+
+    if (position) {
+      return findNearbyReference(position.pos, 8);
+    }
+  }
+
+  return null;
+}
+
 function selectEditableImage(
   view: EditorView,
   imageElement: HTMLImageElement,
@@ -2266,203 +2377,6 @@ const markdownAlertDecoration = $prose(
           });
 
           return DecorationSet.create(state.doc, decorations);
-        },
-      },
-    }),
-);
-
-function isPlainWikiLinkText(node: ProseMirrorNode, parent?: ProseMirrorNode | null) {
-  return (
-    node.isText &&
-    Boolean(node.text) &&
-    parent?.type.name !== "code_block" &&
-    !node.marks.some((mark) => /code/i.test(mark.type.name))
-  );
-}
-
-function collectWikiLinkTokenRanges(doc: ProseMirrorNode) {
-  const ranges: WikiLinkToken[] = [];
-
-  doc.descendants((node: ProseMirrorNode, pos, parent) => {
-    if (!isPlainWikiLinkText(node, parent)) {
-      return;
-    }
-
-    const text = node.text ?? "";
-    ranges.push(...findWikiLinkTokensInText(text, pos));
-  });
-
-  return ranges;
-}
-
-function findWikiLinkTokenRangeAtPosition(
-  state: EditorState,
-  position: number,
-  direction: "inside" | "backward" | "forward" = "inside",
-) {
-  return findWikiLinkTokenAtPosition(
-    collectWikiLinkTokenRanges(state.doc),
-    position,
-    direction,
-  );
-}
-
-function getWikiLinkTokenRangeFromElement(
-  state: EditorState,
-  element: HTMLElement,
-) {
-  const from = Number(element.dataset.wikiFrom);
-  const to = Number(element.dataset.wikiTo);
-
-  if (!Number.isFinite(from) || !Number.isFinite(to)) {
-    return null;
-  }
-
-  return (
-    collectWikiLinkTokenRanges(state.doc).find(
-      (range) => range.from === from && range.to === to,
-    ) ?? null
-  );
-}
-
-const wikiLinkTokenDecoration = $prose(
-  () =>
-    new Plugin({
-      props: {
-        decorations(state) {
-          const { from, to } = state.selection;
-          const decorations = collectWikiLinkTokenRanges(state.doc).map((range) => {
-            const isSelected = from <= range.from && range.to <= to;
-
-            return Decoration.inline(range.from, range.to, {
-              class: [
-                "typora-wiki-link-token",
-                isSelected ? "typora-wiki-link-card-selected" : "",
-              ]
-                .filter(Boolean)
-                .join(" "),
-              "data-wiki-display": range.display,
-              "data-wiki-from": String(range.from),
-              "data-wiki-target": range.target,
-              "data-wiki-to": String(range.to),
-              title: `引用文档：${range.display}`,
-            }, {
-              inclusiveEnd: false,
-              inclusiveStart: false,
-            });
-          });
-
-          return DecorationSet.create(state.doc, decorations);
-        },
-        handleDOMEvents: {
-          mousedown(view, event) {
-            const target =
-              event.target instanceof Element
-                ? event.target.closest<HTMLElement>(
-                    ".typora-wiki-link-token",
-                  )
-                : null;
-
-            if (!target || (event as MouseEvent).button !== 0) {
-              return false;
-            }
-
-            const range =
-              getWikiLinkTokenRangeFromElement(view.state, target) ??
-              findWikiLinkTokenRangeAtPosition(
-                view.state,
-                view.posAtDOM(target, 0),
-                "inside",
-              );
-
-            if (!range) {
-              return false;
-            }
-
-            event.preventDefault();
-            const mouseEvent = event as MouseEvent;
-            const rect = target.getBoundingClientRect();
-            const boundaryHitArea = Math.min(44, Math.max(22, rect.width * 0.24));
-
-            if (mouseEvent.clientX <= rect.left + boundaryHitArea) {
-              view.dispatch(
-                view.state.tr
-                  .setSelection(TextSelection.create(view.state.doc, range.from))
-                  .scrollIntoView(),
-              );
-              view.focus();
-              return true;
-            }
-
-            if (mouseEvent.clientX >= rect.right - boundaryHitArea) {
-              view.dispatch(
-                view.state.tr
-                  .setSelection(TextSelection.create(view.state.doc, range.to))
-                  .scrollIntoView(),
-              );
-              view.focus();
-              return true;
-            }
-
-            view.dispatch(
-              view.state.tr
-                .setSelection(TextSelection.create(view.state.doc, range.from, range.to))
-                .scrollIntoView(),
-            );
-            view.focus();
-            return true;
-          },
-        },
-        handleKeyDown(view, event) {
-          const { from, to, empty } = view.state.selection;
-          const ranges = collectWikiLinkTokenRanges(view.state.doc);
-
-          if (event.key === "Backspace" || event.key === "Delete") {
-            const range = getWikiLinkTokenDeleteRange(ranges, {
-              from,
-              to,
-            }, event.key);
-
-            if (range && range.from < range.to) {
-              event.preventDefault();
-              view.dispatch(view.state.tr.delete(range.from, range.to).scrollIntoView());
-              return true;
-            }
-          }
-
-          if (empty && event.key === "ArrowLeft") {
-            const range = ranges.find(
-              (item) => item.from < from && from <= item.to,
-            );
-
-            if (range) {
-              event.preventDefault();
-              view.dispatch(
-                view.state.tr
-                  .setSelection(TextSelection.create(view.state.doc, range.from))
-                  .scrollIntoView(),
-              );
-              return true;
-            }
-          }
-
-          if (empty && event.key === "ArrowRight") {
-            const range = ranges.find(
-              (item) => item.from <= from && from < item.to,
-            );
-
-            if (range) {
-              event.preventDefault();
-              view.dispatch(
-                view.state.tr
-                  .setSelection(TextSelection.create(view.state.doc, range.to))
-                  .scrollIntoView(),
-              );
-              return true;
-            }
-          }
-
-          return false;
         },
       },
     }),
@@ -3542,17 +3456,21 @@ function MilkdownRuntime({
 }: MilkdownRuntimeProps) {
   const applyingExternalValueRef = useRef(false);
   const pendingLocalMarkdownRef = useRef<string | null>(null);
-  const pendingLocalMarkdownClearTimerRef = useRef<number | null>(null);
   const filePathRef = useRef(filePath);
   const onEditUniverSheetRef = useRef(onEditUniverSheet);
   const onRequestDocumentReferenceRef = useRef(onRequestDocumentReference);
   const onRequestTableInsertRef = useRef(onRequestTableInsert);
+  const documentReferenceInsertionPointRef =
+    useRef<DocumentReferenceInsertionPoint | null>(null);
   const [imageToolbar, setImageToolbar] = useState<ImageToolbarState>({
     visible: false,
   });
   const contextImageTargetRef = useRef<{
     pos: number;
     source: "html" | "markdown";
+  } | null>(null);
+  const contextDocumentReferenceTargetRef = useRef<{
+    pos: number;
   } | null>(null);
   const [tableToolbar, setTableToolbar] = useState<TableToolbarState>({
     visible: false,
@@ -3586,13 +3504,59 @@ function MilkdownRuntime({
     onRequestTableInsertRef.current = onRequestTableInsert;
   }, [onRequestTableInsert]);
 
-  useEffect(() => {
-    return () => {
-      if (pendingLocalMarkdownClearTimerRef.current !== null) {
-        window.clearTimeout(pendingLocalMarkdownClearTimerRef.current);
-      }
+  function resetDocumentReferenceInsertionPoint() {
+    documentReferenceInsertionPointRef.current = null;
+  }
+
+  function storeDocumentReferenceInsertionPoint(
+    view: EditorView,
+    source: DocumentReferenceInsertionPoint["source"] = "editor",
+    options: { preserveRecentContextMenu?: boolean } = {},
+  ) {
+    const existing = documentReferenceInsertionPointRef.current;
+
+    if (
+      options.preserveRecentContextMenu &&
+      existing?.documentId === documentId &&
+      existing.source === "contextMenu" &&
+      Date.now() - existing.createdAt < DOCUMENT_REFERENCE_CONTEXT_ANCHOR_TTL_MS
+    ) {
+      return true;
+    }
+
+    const { selection } = view.state;
+
+    if (!(selection instanceof TextSelection)) {
+      resetDocumentReferenceInsertionPoint();
+      return false;
+    }
+
+    documentReferenceInsertionPointRef.current = {
+      createdAt: Date.now(),
+      documentId,
+      from: selection.from,
+      source,
+      to: selection.to,
     };
-  }, []);
+    return true;
+  }
+
+  function takeDocumentReferenceInsertionRange(view: EditorView) {
+    const insertionPoint = documentReferenceInsertionPointRef.current;
+
+    documentReferenceInsertionPointRef.current = null;
+
+    if (!insertionPoint || insertionPoint.documentId !== documentId) {
+      return null;
+    }
+
+    const maxPosition = view.state.doc.content.size;
+    const from = Math.max(0, Math.min(insertionPoint.from, maxPosition));
+    const to = Math.max(from, Math.min(insertionPoint.to, maxPosition));
+
+    return { from, to };
+  }
+
   const previousDocumentIdRef = useRef(documentId);
   const pendingActiveHeadingRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
@@ -3622,30 +3586,124 @@ function MilkdownRuntime({
     setSlashCommandMenu({ visible: false });
   }
 
-  function openSlashCommandMenu(view: EditorView) {
+  function positionSlashCommandMenu(
+    view: EditorView,
+    triggerFrom: number,
+    triggerTo: number,
+    selectedIndex = 0,
+  ) {
     const root = rootRef.current;
 
     if (!root) {
       return;
     }
 
-    const cursorRect = view.coordsAtPos(view.state.selection.from);
+    const cursorRect = view.coordsAtPos(triggerTo);
     const rootRect = root.getBoundingClientRect();
 
     setSlashCommandMenu({
       left: Math.max(16, cursorRect.left - rootRect.left),
+      selectedIndex,
       top: Math.max(16, cursorRect.bottom - rootRect.top + 8),
+      triggerFrom,
+      triggerTo,
       visible: true,
+    });
+  }
+
+  function openSlashCommandMenu(view: EditorView) {
+    const { selection } = view.state;
+
+    if (!(selection instanceof TextSelection)) {
+      return false;
+    }
+
+    const triggerFrom = selection.from;
+    const triggerTo = triggerFrom + 1;
+    const tr = view.state.tr.insertText("/", selection.from, selection.to);
+
+    view.dispatch(
+      tr
+        .setSelection(TextSelection.create(tr.doc, triggerTo))
+        .scrollIntoView(),
+    );
+    view.focus();
+    positionSlashCommandMenu(view, triggerFrom, triggerTo);
+    return true;
+  }
+
+  function removeSlashCommandTrigger(
+    view: EditorView,
+    menu: Extract<SlashCommandMenuState, { visible: true }>,
+  ) {
+    const maxPosition = view.state.doc.content.size;
+    const from = Math.max(0, Math.min(menu.triggerFrom, maxPosition));
+    const to = Math.max(from, Math.min(menu.triggerTo, maxPosition));
+
+    if (from === to || view.state.doc.textBetween(from, to) !== "/") {
+      return;
+    }
+
+    const tr = view.state.tr.delete(from, to);
+    const nextPos = Math.min(from, tr.doc.content.size);
+
+    view.dispatch(
+      tr
+        .setSelection(TextSelection.create(tr.doc, nextPos))
+        .scrollIntoView(),
+    );
+  }
+
+  function selectSlashCommand(delta: number) {
+    setSlashCommandMenu((current) => {
+      if (!current.visible) {
+        return current;
+      }
+
+      const nextIndex =
+        (current.selectedIndex + delta + slashCommandItems.length) %
+        slashCommandItems.length;
+
+      return {
+        ...current,
+        selectedIndex: nextIndex,
+      };
     });
   }
 
   function handleSlashCommandKeyDownCapture(
     event: ReactKeyboardEvent<HTMLElement>,
   ) {
-    if (event.key === "Escape" && slashCommandMenu.visible) {
-      event.preventDefault();
-      closeSlashCommandMenu();
-      return;
+    if (slashCommandMenu.visible) {
+      if (event.key === "Escape" || event.key === "Backspace") {
+        event.preventDefault();
+        closeSlashCommandMenu();
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        selectSlashCommand(1);
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        selectSlashCommand(-1);
+        return;
+      }
+
+      if (event.key === "Enter" || event.key === "Tab") {
+        const item = slashCommandItems[slashCommandMenu.selectedIndex];
+
+        event.preventDefault();
+
+        if (item) {
+          runSlashCommand(item.command);
+        }
+
+        return;
+      }
     }
 
     if (
@@ -3676,10 +3734,35 @@ function MilkdownRuntime({
     editor.action((ctx) => openSlashCommandMenu(ctx.get(editorViewCtx)));
   }
 
-  function runSlashCommand(command: "document" | "table") {
+  function runSlashCommand(command: SlashCommandAction) {
+    const menu = slashCommandMenu.visible ? slashCommandMenu : null;
+    const editor = get();
+    let didStoreDocumentReferencePoint = false;
+
     closeSlashCommandMenu();
 
+    if (editor && menu) {
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+
+        removeSlashCommandTrigger(view, menu);
+
+        if (command === "document") {
+          didStoreDocumentReferencePoint = storeDocumentReferenceInsertionPoint(
+            view,
+            "editor",
+          );
+        }
+      });
+    }
+
     if (command === "document") {
+      if (!didStoreDocumentReferencePoint && editor) {
+        editor.action((ctx) => {
+          storeDocumentReferenceInsertionPoint(ctx.get(editorViewCtx), "editor");
+        });
+      }
+
       onRequestDocumentReferenceRef.current?.();
       return;
     }
@@ -4141,9 +4224,37 @@ function MilkdownRuntime({
     const rawHtmlImageElement = targetElement?.closest<HTMLImageElement>(
       ".typora-raw-html-preview img",
     );
+    const documentReferenceElement = targetElement?.closest<HTMLElement>(
+      ".typora-document-reference-node",
+    );
 
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
+
+      if (
+        documentReferenceElement &&
+        view.dom.contains(documentReferenceElement)
+      ) {
+        const referencePos = findDocumentReferencePosition(
+          view,
+          documentReferenceElement,
+          {
+            left: clientX,
+            top: clientY,
+          },
+        );
+
+        if (referencePos !== null) {
+          contextDocumentReferenceTargetRef.current = {
+            pos: referencePos,
+          };
+          contextImageTargetRef.current = null;
+          setImageToolbar({ visible: false });
+          setVideoToolbar({ visible: false });
+          view.focus();
+          return;
+        }
+      }
 
       if (editableImageElement && view.dom.contains(editableImageElement)) {
         const imagePos = findEditableImagePosition(view, editableImageElement, {
@@ -4152,6 +4263,7 @@ function MilkdownRuntime({
         });
 
         if (imagePos !== null) {
+          contextDocumentReferenceTargetRef.current = null;
           contextImageTargetRef.current = {
             pos: imagePos,
             source: "markdown",
@@ -4174,6 +4286,7 @@ function MilkdownRuntime({
         const value = node ? getRawHtmlValue(node) : "";
 
         if (pos !== null && node?.type.name === "html" && isRawHtmlImage(value)) {
+          contextDocumentReferenceTargetRef.current = null;
           contextImageTargetRef.current = {
             pos,
             source: "html",
@@ -4186,6 +4299,7 @@ function MilkdownRuntime({
         }
       }
 
+      contextDocumentReferenceTargetRef.current = null;
       contextImageTargetRef.current = null;
 
       const position = view.posAtCoords({ left: clientX, top: clientY });
@@ -4200,12 +4314,13 @@ function MilkdownRuntime({
         ) {
           view.dispatch(
             view.state.tr
-              .setSelection(Selection.near(view.state.doc.resolve(position.pos)))
+              .setSelection(TextSelection.near(view.state.doc.resolve(position.pos)))
               .scrollIntoView(),
           );
         }
       }
 
+      storeDocumentReferenceInsertionPoint(view, "contextMenu");
       view.focus();
     });
   }
@@ -4623,18 +4738,6 @@ function MilkdownRuntime({
 
             if (!applyingExternalValueRef.current) {
               pendingLocalMarkdownRef.current = markdown;
-
-              if (pendingLocalMarkdownClearTimerRef.current !== null) {
-                window.clearTimeout(pendingLocalMarkdownClearTimerRef.current);
-              }
-
-              pendingLocalMarkdownClearTimerRef.current = window.setTimeout(() => {
-                if (pendingLocalMarkdownRef.current === markdown) {
-                  pendingLocalMarkdownRef.current = null;
-                }
-
-                pendingLocalMarkdownClearTimerRef.current = null;
-              }, 750);
               onChangeRef.current(markdown);
             }
           })
@@ -4667,6 +4770,7 @@ function MilkdownRuntime({
       .use(trailing)
       .use(clipboard)
       .use(gfm)
+      .use(documentReferencePlugins)
       .use(math)
       .use(prism)
       .use(disableNativeWritingChecks)
@@ -4677,7 +4781,6 @@ function MilkdownRuntime({
       .use(createUniverSheetBlockDecoration(onEditUniverSheetRef, filePathRef))
       .use(createRawHtmlPreviewDecoration(filePathRef))
       .use(markdownAlertDecoration)
-      .use(wikiLinkTokenDecoration)
       .use(markdownSyntaxDecoration)
       .use(searchHighlightDecoration)
       .use(editableImageSelection)
@@ -4812,6 +4915,7 @@ function MilkdownRuntime({
 
     if (isDifferentDocument) {
       clearClickedHeadingLock();
+      pendingLocalMarkdownRef.current = null;
     }
 
     if (!editor) {
@@ -4978,6 +5082,42 @@ function MilkdownRuntime({
           view.focus();
         });
       },
+      clearDocumentReferenceInsertionPoint() {
+        resetDocumentReferenceInsertionPoint();
+      },
+      deleteContextDocumentReference() {
+        const editor = get();
+        const contextTarget = contextDocumentReferenceTargetRef.current;
+
+        contextDocumentReferenceTargetRef.current = null;
+
+        if (!editor || !contextTarget) {
+          return;
+        }
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const pos = Math.max(
+            0,
+            Math.min(contextTarget.pos, view.state.doc.content.size),
+          );
+          const node = view.state.doc.nodeAt(pos);
+
+          if (!isDocumentReferenceNode(node)) {
+            return;
+          }
+
+          const tr = view.state.tr.delete(pos, pos + node.nodeSize);
+          const nextPos = Math.min(pos, tr.doc.content.size);
+
+          view.dispatch(
+            tr
+              .setSelection(TextSelection.create(tr.doc, nextPos))
+              .scrollIntoView(),
+          );
+          view.focus();
+        });
+      },
       insertMarkdown(markdown: string) {
         const editor = get();
 
@@ -4989,6 +5129,57 @@ function MilkdownRuntime({
         editor.action((ctx) => {
           ctx.get(editorViewCtx).focus();
           insert(markdown)(ctx);
+        });
+      },
+      insertDocumentReference(target: string, display?: string) {
+        const safeTarget = target.trim();
+        const safeDisplay = display?.trim() || safeTarget;
+        const raw = serializeDocumentReferenceToken({
+          display: safeDisplay,
+          target: safeTarget,
+        });
+        const editor = get();
+
+        if (!safeTarget) {
+          return;
+        }
+
+        if (!editor) {
+          onChangeRef.current(appendMarkdown(valueRef.current, raw));
+          return;
+        }
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const insertionRange = takeDocumentReferenceInsertionRange(view);
+          const { from, to } = insertionRange ?? view.state.selection;
+          const node = documentReferenceSchema.type(ctx).create({
+            display: safeDisplay,
+            raw,
+            target: safeTarget,
+          });
+          const tr = view.state.tr.replaceRangeWith(from, to, node);
+          const nextPos = Math.min(from + node.nodeSize, tr.doc.content.size);
+
+          view.dispatch(
+            tr
+              .setSelection(TextSelection.create(tr.doc, nextPos))
+              .scrollIntoView(),
+          );
+          view.focus();
+        });
+      },
+      rememberDocumentReferenceInsertionPoint() {
+        const editor = get();
+
+        if (!editor) {
+          return;
+        }
+
+        editor.action((ctx) => {
+          storeDocumentReferenceInsertionPoint(ctx.get(editorViewCtx), "editor", {
+            preserveRecentContextMenu: true,
+          });
         });
       },
       prepareContextMenuTarget(clientX, clientY, target) {
@@ -5543,28 +5734,42 @@ function MilkdownRuntime({
           onMouseDown={(event) => event.preventDefault()}
           role="menu"
         >
-          <button type="button" onClick={() => runSlashCommand("table")} role="menuitem">
-            <span className="typora-slash-menu-icon">
-              <Table2 size={16} />
-            </span>
-            <span>
-              <strong>表格</strong>
-              <small>插入一个 Markdown 表格</small>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => runSlashCommand("document")}
-            role="menuitem"
-          >
-            <span className="typora-slash-menu-icon">
-              <FileText size={16} />
-            </span>
-            <span>
-              <strong>引用文档</strong>
-              <small>选择文件并作为整体插入</small>
-            </span>
-          </button>
+          {slashCommandItems.map((item, index) => {
+            const Icon = item.icon;
+            const isSelected = index === slashCommandMenu.selectedIndex;
+
+            return (
+              <button
+                key={item.command}
+                className={isSelected ? "is-selected" : undefined}
+                type="button"
+                onClick={() => runSlashCommand(item.command)}
+                onMouseEnter={() =>
+                  setSlashCommandMenu((current) =>
+                    current.visible
+                      ? {
+                          ...current,
+                          selectedIndex: index,
+                        }
+                      : current,
+                  )
+                }
+                role="menuitem"
+                aria-selected={isSelected}
+              >
+                <span className="typora-slash-menu-icon">
+                  <Icon size={16} />
+                </span>
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.description}</small>
+                </span>
+              </button>
+            );
+          })}
+          <div className="typora-slash-menu-hint">
+            ↑↓ 切换 · Enter 插入 · Backspace 保留 /
+          </div>
         </div>
       ) : null}
       <Milkdown />
@@ -5621,11 +5826,29 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
     useImperativeHandle(
       ref,
       () => ({
+        clearDocumentReferenceInsertionPoint() {
+          controllerRef.current?.clearDocumentReferenceInsertionPoint();
+        },
         clearSearchHighlight() {
           controllerRef.current?.clearSearchHighlight();
         },
+        deleteContextDocumentReference() {
+          controllerRef.current?.deleteContextDocumentReference();
+        },
         focusAtClientPoint(clientX: number, clientY: number) {
           controllerRef.current?.focusAtClientPoint(clientX, clientY);
+        },
+        insertDocumentReference(target: string, display?: string) {
+          if (controllerRef.current) {
+            controllerRef.current.insertDocumentReference(target, display);
+            return;
+          }
+
+          const markdown = serializeDocumentReferenceToken({
+            display: display?.trim() || target.trim(),
+            target: target.trim(),
+          });
+          onChangeRef.current(appendMarkdown(valueRef.current, markdown));
         },
         insertMarkdown(markdown: string) {
           if (controllerRef.current) {
@@ -5634,6 +5857,9 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
           }
 
           onChangeRef.current(appendMarkdown(valueRef.current, markdown));
+        },
+        rememberDocumentReferenceInsertionPoint() {
+          controllerRef.current?.rememberDocumentReferenceInsertionPoint();
         },
         prepareContextMenuTarget(
           clientX: number,

@@ -20,7 +20,6 @@ import {
   Italic,
   Link2,
   ListTree,
-  Minus,
   Plus,
   RefreshCw,
   Rows3,
@@ -41,13 +40,10 @@ import {
   useState,
   type ClipboardEvent,
   type CSSProperties,
-  type Dispatch,
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type SetStateAction,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
   defaultAppSettings,
@@ -84,27 +80,7 @@ import type {
   RelationPanelFilter,
   WorkspaceRelationItem,
 } from "./components/KnowledgeRelationsPanel";
-import { HomeDashboard } from "./features/home/HomeDashboard";
-import {
-  createHomeImageAttachmentId,
-  createHomeSavedNoteId,
-  createHomeTodoId,
-  formatHomeTodoDateKey,
-  formatHomeTodoDateLabel,
-  formatHomeTodoMonthLabel,
-  getHomeTodoCalendarDays,
-  getHomeTodoDateTitle,
-  getHomeTodoYearOptions,
-  homeRecentDocumentLimit,
-  parseHomeTodoDateKey,
-  reorderHomeTodoItemsForDate,
-  setHomeTodoYearKey,
-  shiftHomeTodoDateKey,
-  shiftHomeTodoMonthKey,
-  type HomeImageAttachment,
-  type HomeTodoDragState,
-} from "./features/home/homeModel";
-import { useHomeState } from "./features/home/useHomeState";
+import { HomeWorkspace } from "./features/home/HomeWorkspace";
 import type { DocumentMetadataSuggestionField } from "./components/DocumentKnowledgeBar";
 import { WorkspaceStatusBar } from "./components/WorkspaceStatusBar";
 import type { HtmlDocumentViewerHandle } from "./components/HtmlDocumentViewer";
@@ -313,6 +289,11 @@ import {
   getPathLabel,
   normalizeFilePathKey,
 } from "./workspaceDisplay";
+import {
+  type MenubarMenu,
+  type TopMenu,
+} from "./features/app-shell/appShellModel";
+import { AppMenubar } from "./features/app-shell/AppMenubar";
 
 const DrawingModal = lazy(() =>
   import("./components/DrawingModal").then((module) => ({
@@ -410,8 +391,6 @@ const WordDocumentViewer = lazy(() =>
   })),
 );
 
-type MenubarMenu = "file" | "edit" | "paragraph" | "format" | "view" | "theme" | "help";
-type TopMenu = MenubarMenu | null;
 type ImmersiveRevealEdge = "top";
 type SidebarTab = "files" | "current" | "search";
 type FileExplorerView = "tree" | "list";
@@ -469,8 +448,14 @@ type AppContextMenuState = {
 
 type EditorContextMenuInfo = {
   canPaste: boolean;
+  documentReference?: {
+    display: string;
+    raw: string;
+    target: string;
+  };
   hasSelection: boolean;
   imageAlign?: ImageAlignment;
+  isDocumentReference: boolean;
   isImage: boolean;
   isEditable: boolean;
   isListItem: boolean;
@@ -481,16 +466,6 @@ type EditorContextMenuInfo = {
   mediaSource?: string;
   taskChecked?: boolean;
 };
-
-const menubarItems: Array<{ key: MenubarMenu; label: string }> = [
-  { key: "file", label: "文件(F)" },
-  { key: "edit", label: "编辑(E)" },
-  { key: "paragraph", label: "段落(P)" },
-  { key: "format", label: "格式(O)" },
-  { key: "view", label: "视图(V)" },
-  { key: "theme", label: "主题(T)" },
-  { key: "help", label: "帮助(H)" },
-];
 
 const now = () => new Date().toISOString();
 const defaultInspectorWidth = 360;
@@ -703,38 +678,8 @@ export function App() {
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [windowZoomFactor, setWindowZoomFactor] = useState(defaultWindowZoomFactor);
   const [isZoomIndicatorVisible, setIsZoomIndicatorVisible] = useState(false);
-  const {
-    activeHomeSavedNoteId,
-    homeImagePreview,
-    homeImagePreviewZoom,
-    homeQuickNote,
-    homeQuickNoteImages,
-    homeSavedNotes,
-    homeTodoDraft,
-    homeTodoDraftImages,
-    homeTodoDrag,
-    homeTodoItems,
-    homeTodoSelectedDate,
-    isHomeNoteDialogOpen,
-    isHomeOpen,
-    isHomeTodoCalendarOpen,
-    isRecentExpanded,
-    setActiveHomeSavedNoteId,
-    setHomeImagePreview,
-    setHomeImagePreviewZoom,
-    setHomeQuickNote,
-    setHomeQuickNoteImages,
-    setHomeSavedNotes,
-    setHomeTodoDraft,
-    setHomeTodoDraftImages,
-    setHomeTodoDrag,
-    setHomeTodoItems,
-    setHomeTodoSelectedDate,
-    setIsHomeNoteDialogOpen,
-    setIsHomeOpen,
-    setIsHomeTodoCalendarOpen,
-    setIsRecentExpanded,
-  } = useHomeState();
+  const [isHomeOpen, setIsHomeOpen] = useState(true);
+  const [homeNoteDialogRequestId, setHomeNoteDialogRequestId] = useState(0);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [, setBackupMessage] = useState("本地自动保存已启用");
   const [isDrawingOpen, setIsDrawingOpen] = useState(false);
@@ -808,11 +753,6 @@ export function App() {
   const [isImmersiveSidebarOpen, setIsImmersiveSidebarOpen] = useState(false);
   const appShellRef = useRef<HTMLElement | null>(null);
   const uiSelectionScopeRef = useRef<HTMLElement | null>(null);
-  const homeTodoCalendarWheelAtRef = useRef(0);
-  const homeTodoDragRef = useRef<HomeTodoDragState | null>(null);
-  const homeTodoListRef = useRef<HTMLDivElement | null>(null);
-  const homeTodoCalendarRef = useRef<HTMLDivElement | null>(null);
-  const homeTodoRowRefs = useRef(new Map<string, HTMLDivElement>());
   const [newFileName, setNewFileName] = useState("Untitled");
   const {
     applyDirectoryTree,
@@ -907,43 +847,6 @@ export function App() {
       isStale = true;
     };
   }, []);
-
-  useEffect(() => {
-    homeTodoDragRef.current = homeTodoDrag;
-  }, [homeTodoDrag]);
-
-  useEffect(() => {
-    if (!isHomeTodoCalendarOpen) {
-      return;
-    }
-
-    const closeCalendar = (event: PointerEvent) => {
-      const target = event.target;
-
-      if (
-        target instanceof Node &&
-        homeTodoCalendarRef.current?.contains(target)
-      ) {
-        return;
-      }
-
-      setIsHomeTodoCalendarOpen(false);
-    };
-
-    const closeCalendarWithEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsHomeTodoCalendarOpen(false);
-      }
-    };
-
-    window.addEventListener("pointerdown", closeCalendar, true);
-    window.addEventListener("keydown", closeCalendarWithEscape);
-
-    return () => {
-      window.removeEventListener("pointerdown", closeCalendar, true);
-      window.removeEventListener("keydown", closeCalendarWithEscape);
-    };
-  }, [isHomeTodoCalendarOpen]);
 
   useImmersiveModeState({
     immersiveRevealEdge,
@@ -1318,400 +1221,6 @@ export function App() {
 
     return entries.slice(0, sidebarRecentDirectoryLimit);
   }, [recentDirectoryPaths, recentDocuments, workspace.workspacePath]);
-  const hasMoreRecentDocuments = recentDocuments.length > homeRecentDocumentLimit;
-  const visibleRecentDocuments = useMemo(
-    () =>
-      isRecentExpanded
-        ? recentDocuments
-        : recentDocuments.slice(0, homeRecentDocumentLimit),
-    [isRecentExpanded, recentDocuments],
-  );
-  const homeTodoDateTitle = getHomeTodoDateTitle(homeTodoSelectedDate);
-  const homeTodoDateLabel = formatHomeTodoDateLabel(homeTodoSelectedDate);
-  const homeTodoMonthLabel = formatHomeTodoMonthLabel(homeTodoSelectedDate);
-  const homeTodoCalendarDate =
-    parseHomeTodoDateKey(homeTodoSelectedDate) ?? new Date();
-  const homeTodoSelectedYear = homeTodoCalendarDate.getFullYear();
-  const homeTodoSelectedMonthLabel = `${homeTodoCalendarDate.getMonth() + 1}月`;
-  const homeTodoYearOptions = useMemo(
-    () => getHomeTodoYearOptions(homeTodoSelectedDate),
-    [homeTodoSelectedDate],
-  );
-  const todayHomeTodoDate = formatHomeTodoDateKey();
-  const homeTodoCalendarDays = useMemo(
-    () => getHomeTodoCalendarDays(homeTodoSelectedDate),
-    [homeTodoSelectedDate],
-  );
-  const selectedHomeTodoItems = useMemo(
-    () => homeTodoItems.filter((item) => item.date === homeTodoSelectedDate),
-    [homeTodoItems, homeTodoSelectedDate],
-  );
-  const remainingHomeTodoCount = selectedHomeTodoItems.filter((item) => !item.done).length;
-  const completedHomeTodoCount = selectedHomeTodoItems.length - remainingHomeTodoCount;
-  const homeTodoProgress = selectedHomeTodoItems.length
-    ? Math.round((completedHomeTodoCount / selectedHomeTodoItems.length) * 100)
-    : 0;
-  const hasCompletedHomeTodos = selectedHomeTodoItems.some((item) => item.done);
-  const createHomeImageAttachment = ({
-    dataUrl,
-    fileName,
-    mimeType,
-  }: {
-    dataUrl: string;
-    fileName: string;
-    mimeType: string;
-  }): HomeImageAttachment => ({
-    dataUrl,
-    fileName,
-    id: createHomeImageAttachmentId(),
-    mimeType,
-  });
-  const appendHomeImages = (
-    setter: Dispatch<SetStateAction<HomeImageAttachment[]>>,
-    images: HomeImageAttachment[],
-  ) => {
-    if (!images.length) {
-      return;
-    }
-
-    setter((currentImages) => [...currentImages, ...images].slice(0, 8));
-  };
-  const removeHomeTodoDraftImage = (imageId: string) => {
-    setHomeTodoDraftImages((currentImages) =>
-      currentImages.filter((image) => image.id !== imageId),
-    );
-  };
-  const removeHomeQuickNoteImage = (imageId: string) => {
-    setHomeQuickNoteImages((currentImages) =>
-      currentImages.filter((image) => image.id !== imageId),
-    );
-  };
-  const readHomeClipboardImages = async (
-    clipboardData?: DataTransfer | null,
-  ): Promise<HomeImageAttachment[]> => {
-    const directAction = clipboardData
-      ? getClipboardDirectMediaAction(clipboardData)
-      : null;
-
-    if (directAction?.action === "imageFile") {
-      return [
-        createHomeImageAttachment({
-          dataUrl: await fileToDataUrl(directAction.file),
-          fileName: directAction.file.name || createTimestampedImageName(directAction.file.type || "image/png"),
-          mimeType: directAction.file.type || "image/png",
-        }),
-      ];
-    }
-
-    try {
-      const browserImage = await readBrowserClipboardMedia("image");
-
-      if (browserImage) {
-        return [
-          createHomeImageAttachment({
-            dataUrl: await fileToDataUrl(browserImage),
-            fileName: browserImage.name || createTimestampedImageName(browserImage.type || "image/png"),
-            mimeType: browserImage.type || "image/png",
-          }),
-        ];
-      }
-    } catch {
-      // Continue to the desktop bridge fallback.
-    }
-
-    try {
-      const nativeImage = await window.desktop?.readClipboardImage?.();
-
-      if (nativeImage?.dataUrl && nativeImage.mimeType.startsWith("image/")) {
-        return [
-          createHomeImageAttachment({
-            dataUrl: normalizeDataUrlMimeType(nativeImage.dataUrl, nativeImage.mimeType),
-            fileName: nativeImage.fileName || createTimestampedImageName(nativeImage.mimeType),
-            mimeType: nativeImage.mimeType,
-          }),
-        ];
-      }
-    } catch {
-      // Clipboard image support is best effort for the home widgets.
-    }
-
-    return [];
-  };
-  const handleHomeImagePaste = async (
-    event: ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>,
-    setter: Dispatch<SetStateAction<HomeImageAttachment[]>>,
-  ) => {
-    if (!shouldTryClipboardMediaFallback(event.clipboardData)) {
-      return;
-    }
-
-    event.preventDefault();
-    const images = await readHomeClipboardImages(event.clipboardData);
-
-    if (!images.length) {
-      return;
-    }
-
-    appendHomeImages(setter, images);
-  };
-  const addHomeTodo = () => {
-    const text = homeTodoDraft.trim();
-
-    if (!text && homeTodoDraftImages.length === 0) {
-      return;
-    }
-
-    setHomeTodoItems((currentItems) => [
-      {
-        id: createHomeTodoId(),
-        text: text || "图片待办",
-        done: false,
-        date: homeTodoSelectedDate,
-        images: homeTodoDraftImages,
-        createdAt: new Date().toISOString(),
-      },
-      ...currentItems,
-    ]);
-    setHomeTodoDraft("");
-    setHomeTodoDraftImages([]);
-  };
-  const handleHomeTodoCalendarWheel = (
-    event: ReactWheelEvent<HTMLDivElement>,
-  ) => {
-    if ((event.target as HTMLElement | null)?.closest("select")) {
-      return;
-    }
-
-    const wheelDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX)
-      ? event.deltaY
-      : event.deltaX;
-
-    if (Math.abs(wheelDelta) < 8) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const now = Date.now();
-
-    if (now - homeTodoCalendarWheelAtRef.current < 180) {
-      return;
-    }
-
-    homeTodoCalendarWheelAtRef.current = now;
-    setHomeTodoSelectedDate((currentDate) =>
-      shiftHomeTodoMonthKey(currentDate, wheelDelta > 0 ? 1 : -1),
-    );
-  };
-  const toggleHomeTodo = (todoId: string) => {
-    setHomeTodoItems((currentItems) =>
-      currentItems.map((item) =>
-        item.id === todoId ? { ...item, done: !item.done } : item,
-      ),
-    );
-  };
-  const deleteHomeTodo = (todoId: string) => {
-    setHomeTodoItems((currentItems) =>
-      currentItems.filter((item) => item.id !== todoId),
-    );
-  };
-  const clearCompletedHomeTodos = () => {
-    setHomeTodoItems((currentItems) =>
-      currentItems.filter((item) => item.date !== homeTodoSelectedDate || !item.done),
-    );
-  };
-  const saveHomeQuickNote = () => {
-    const text = homeQuickNote.trim();
-
-    if (!text && homeQuickNoteImages.length === 0) {
-      return;
-    }
-
-    const noteId = createHomeSavedNoteId();
-
-    setHomeSavedNotes((currentNotes) => [
-      {
-        id: noteId,
-        text: text || "图片便签",
-        images: homeQuickNoteImages,
-        createdAt: new Date().toISOString(),
-      },
-      ...currentNotes,
-    ].slice(0, 30));
-    setActiveHomeSavedNoteId(noteId);
-    setHomeQuickNote("");
-    setHomeQuickNoteImages([]);
-    setIsHomeNoteDialogOpen(false);
-  };
-  const deleteHomeSavedNote = (noteId: string) => {
-    setHomeSavedNotes((currentNotes) =>
-      currentNotes.filter((note) => note.id !== noteId),
-    );
-    setActiveHomeSavedNoteId((currentId) =>
-      currentId === noteId ? null : currentId,
-    );
-  };
-  const changeHomeImagePreviewZoom = (delta: number) => {
-    setHomeImagePreviewZoom((currentZoom) =>
-      Math.min(4, Math.max(0.25, Math.round((currentZoom + delta) * 100) / 100)),
-    );
-  };
-  const resetHomeImagePreviewZoom = () => {
-    setHomeImagePreviewZoom(1);
-  };
-  const activeHomeTodoItem = useMemo(
-    () =>
-      homeTodoDrag
-        ? selectedHomeTodoItems.find((item) => item.id === homeTodoDrag.id) ?? null
-        : null,
-    [homeTodoDrag, selectedHomeTodoItems],
-  );
-  const visibleHomeTodoItems = useMemo(
-    () =>
-      homeTodoDrag
-        ? selectedHomeTodoItems.filter((item) => item.id !== homeTodoDrag.id)
-        : selectedHomeTodoItems,
-    [homeTodoDrag, selectedHomeTodoItems],
-  );
-  const setHomeTodoRowRef = (todoId: string, node: HTMLDivElement | null) => {
-    if (node) {
-      homeTodoRowRefs.current.set(todoId, node);
-      return;
-    }
-
-    homeTodoRowRefs.current.delete(todoId);
-  };
-  const getHomeTodoInsertIndex = (clientY: number, activeTodoId: string) => {
-    const visibleItems = selectedHomeTodoItems.filter((item) => item.id !== activeTodoId);
-
-    for (let index = 0; index < visibleItems.length; index += 1) {
-      const row = homeTodoRowRefs.current.get(visibleItems[index].id);
-
-      if (!row) {
-        continue;
-      }
-
-      const rect = row.getBoundingClientRect();
-
-      if (clientY < rect.top + rect.height / 2) {
-        return index;
-      }
-    }
-
-    return visibleItems.length;
-  };
-  const handleHomeTodoDragStart = (
-    event: ReactPointerEvent<HTMLButtonElement>,
-    todoId: string,
-  ) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    const row = homeTodoRowRefs.current.get(todoId);
-
-    if (!row) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const rowRect = row.getBoundingClientRect();
-
-    setHomeTodoDrag({
-      height: rowRect.height,
-      id: todoId,
-      insertIndex: getHomeTodoInsertIndex(event.clientY, todoId),
-      left: rowRect.left,
-      offsetY: event.clientY - rowRect.top,
-      pointerId: event.pointerId,
-      pointerY: event.clientY,
-      width: rowRect.width,
-    });
-  };
-  useEffect(() => {
-    if (!homeTodoDrag) {
-      return;
-    }
-
-    const scrollNearEdges = (clientY: number) => {
-      const list = homeTodoListRef.current;
-
-      if (!list) {
-        return;
-      }
-
-      const rect = list.getBoundingClientRect();
-      const edgeSize = 48;
-
-      if (clientY < rect.top + edgeSize) {
-        list.scrollTop -= 12;
-      } else if (clientY > rect.bottom - edgeSize) {
-        list.scrollTop += 12;
-      }
-    };
-    const handlePointerMove = (event: PointerEvent) => {
-      const currentDrag = homeTodoDragRef.current;
-
-      if (!currentDrag || event.pointerId !== currentDrag.pointerId) {
-        return;
-      }
-
-      event.preventDefault();
-      scrollNearEdges(event.clientY);
-
-      setHomeTodoDrag((current) =>
-        current && event.pointerId === current.pointerId
-          ? {
-              ...current,
-              insertIndex: getHomeTodoInsertIndex(event.clientY, current.id),
-              pointerY: event.clientY,
-            }
-          : current,
-      );
-    };
-    const finishDrag = (event: PointerEvent) => {
-      const currentDrag = homeTodoDragRef.current;
-
-      if (!currentDrag || event.pointerId !== currentDrag.pointerId) {
-        return;
-      }
-
-      event.preventDefault();
-      setHomeTodoDrag(null);
-      setHomeTodoItems((currentItems) =>
-        reorderHomeTodoItemsForDate(
-          currentItems,
-          homeTodoSelectedDate,
-          currentDrag.id,
-          currentDrag.insertIndex,
-        ),
-      );
-    };
-    const cancelDrag = (event: PointerEvent) => {
-      const currentDrag = homeTodoDragRef.current;
-
-      if (!currentDrag || event.pointerId !== currentDrag.pointerId) {
-        return;
-      }
-
-      setHomeTodoDrag(null);
-    };
-
-    document.body.classList.add("home-todo-global-dragging");
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", finishDrag);
-    window.addEventListener("pointercancel", cancelDrag);
-
-    return () => {
-      document.body.classList.remove("home-todo-global-dragging");
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", finishDrag);
-      window.removeEventListener("pointercancel", cancelDrag);
-    };
-  }, [homeTodoDrag?.id, homeTodoItems, homeTodoSelectedDate, selectedHomeTodoItems]);
   const activeMarkdownOutline = useMemo(
     () =>
       isMarkdownDocument(activeDocument)
@@ -1770,12 +1279,6 @@ export function App() {
     visibleFindResultStart,
     visibleFindResultStart + 8,
   );
-
-  useEffect(() => {
-    if (!hasMoreRecentDocuments && isRecentExpanded) {
-      setIsRecentExpanded(false);
-    }
-  }, [hasMoreRecentDocuments, isRecentExpanded]);
 
   useWorkspaceDirectoryWatcher(
     workspace.workspacePath,
@@ -2478,18 +1981,25 @@ export function App() {
   }
 
   function updateMarkdown(content: string) {
-    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
-      return;
-    }
+    setWorkspace((current) => {
+      const currentDocument =
+        current.documents.find((item) => item.id === current.activeDocumentId) ?? null;
 
-    const nextContent =
-      mode === "typora"
-        ? replaceMarkdownBodyPreservingFrontmatter(activeDocument.content, content)
-        : content;
+      if (!currentDocument || !isMarkdownDocument(currentDocument)) {
+        return current;
+      }
 
-    patchActiveDocument({
-      content: nextContent,
-      title: renameFromMarkdown(nextContent, activeDocument.title),
+      const nextContent =
+        mode === "typora"
+          ? replaceMarkdownBodyPreservingFrontmatter(currentDocument.content, content)
+          : content;
+
+      return updateDocument(current, {
+        ...currentDocument,
+        content: nextContent,
+        title: renameFromMarkdown(nextContent, currentDocument.title),
+        updatedAt: now(),
+      });
     });
   }
 
@@ -2675,6 +2185,34 @@ export function App() {
     await createDocumentFromMissingWikiLink(target);
   }
 
+  async function openDocumentReferenceTarget(target: string) {
+    const trimmedTarget = target.trim();
+
+    if (!trimmedTarget) {
+      return;
+    }
+
+    const documentByPath = getDocumentByFilePath(trimmedTarget);
+
+    if (documentByPath) {
+      setActiveDocument(documentByPath.id);
+      setSidebarTab("current");
+      return;
+    }
+
+    const documentByLinkKey = workspaceKnowledge.documentByLinkKey.get(
+      normalizeWikiLinkTarget(trimmedTarget),
+    );
+
+    if (documentByLinkKey) {
+      setActiveDocument(documentByLinkKey.id);
+      setSidebarTab("current");
+      return;
+    }
+
+    await openWikiLinkTarget(trimmedTarget);
+  }
+
   function openWikiLinkInsertForm() {
     if (!activeDocument || !isMarkdownDocument(activeDocument)) {
       return;
@@ -2697,7 +2235,7 @@ export function App() {
       return;
     }
 
-    insertMarkdown(`[[${target}]]`);
+    insertDocumentReference(target);
     setWikiLinkTargetDraft("");
   }
 
@@ -2857,6 +2395,12 @@ export function App() {
       return;
     }
 
+    if (mode === "insertReference") {
+      typoraEditorRef.current?.rememberDocumentReferenceInsertionPoint();
+    } else {
+      typoraEditorRef.current?.clearDocumentReferenceInsertionPoint();
+    }
+
     setDocumentLinkPickerMode(mode);
     setDocumentLinkSourceDocumentId(pickerSource.id);
     setDocumentLinkQuery("");
@@ -2864,6 +2408,14 @@ export function App() {
       setIsDocumentInspectorOpen(true);
     }
     setIsDocumentLinkPickerOpen(true);
+  }
+
+  function closeDocumentLinkPicker() {
+    setIsDocumentLinkPickerOpen(false);
+    setDocumentLinkSourceDocumentId(null);
+    setDocumentLinkQuery("");
+    setDocumentLinkPickerMode("metadata");
+    typoraEditorRef.current?.clearDocumentReferenceInsertionPoint();
   }
 
   function openDocumentReferencePicker() {
@@ -2892,11 +2444,7 @@ export function App() {
       return;
     }
 
-    insertMarkdown(
-      referenceTarget === referenceText
-        ? `[[${referenceText}]]`
-        : `[[${referenceTarget}|${referenceText}]]`,
-    );
+    insertDocumentReference(referenceTarget, referenceText);
     setIsDocumentLinkPickerOpen(false);
     setDocumentLinkSourceDocumentId(null);
     setDocumentLinkQuery("");
@@ -2917,7 +2465,8 @@ export function App() {
   }
 
   function openInspirationNote() {
-    setIsHomeNoteDialogOpen(true);
+    setIsHomeOpen(true);
+    setHomeNoteDialogRequestId((requestId) => requestId + 1);
     setTopMenu(null);
     setIsActionsOpen(false);
   }
@@ -3466,6 +3015,26 @@ export function App() {
     const videoElement = target?.closest<HTMLVideoElement>(
       ".typora-raw-html-preview video, .markdown-preview video, video.markdown-video-player",
     );
+    const documentReferenceElement = target?.closest<HTMLElement>(
+      ".typora-document-reference-node",
+    );
+    const documentReference =
+      documentReferenceElement?.dataset.target ||
+      documentReferenceElement?.dataset.display
+        ? {
+            display:
+              documentReferenceElement?.dataset.display ||
+              documentReferenceElement?.dataset.target ||
+              "Untitled document",
+            raw:
+              documentReferenceElement?.dataset.raw ||
+              `[[${documentReferenceElement?.dataset.target || documentReferenceElement?.dataset.display || ""}]]`,
+            target:
+              documentReferenceElement?.dataset.target ||
+              documentReferenceElement?.dataset.display ||
+              "",
+          }
+        : undefined;
     const mediaKind = imageElement ? "image" : videoElement ? "video" : undefined;
     const mediaSource = getMediaSourceFromElement(imageElement ?? videoElement);
     const domTaskChecked =
@@ -3480,8 +3049,10 @@ export function App() {
 
     return {
       canPaste: isEditable ? await hasClipboardContentForPaste() : false,
+      documentReference,
       hasSelection: selectedText.length > 0,
       imageAlign: getImageContextMenuAlignment(imageElement),
+      isDocumentReference: Boolean(documentReferenceElement),
       isImage: Boolean(imageElement),
       isEditable,
       isListItem: Boolean(listElement) || Boolean(textareaInfo.isListItem),
@@ -3527,6 +3098,49 @@ export function App() {
 
     const { clientX, clientY } = event;
     const contextInfo = await getEditorContextMenuInfo(event);
+
+    if (contextInfo.documentReference) {
+      const reference = contextInfo.documentReference;
+      const items: AppContextMenuItem[] = [
+        {
+          icon: <ExternalLink size={15} />,
+          label: "打开引用文档",
+          onSelect: () => void openDocumentReferenceTarget(reference.target),
+        },
+        {
+          icon: <Copy size={15} />,
+          label: "复制引用",
+          onSelect: () => copyTextToClipboard(reference.raw),
+        },
+        {
+          icon: <Copy size={15} />,
+          label: "复制文档名称",
+          onSelect: () => copyTextToClipboard(reference.display),
+        },
+        ...(contextInfo.isEditable
+          ? [
+              { type: "separator" as const },
+              {
+                danger: true,
+                icon: <Trash2 size={15} />,
+                label: "删除引用",
+                onSelect: () =>
+                  typoraEditorRef.current?.deleteContextDocumentReference(),
+                shortcut: "Delete",
+              },
+            ]
+          : []),
+      ];
+
+      openContextMenuAt(
+        clientX,
+        clientY,
+        compactContextMenuItems(items),
+        250,
+      );
+      return;
+    }
+
     const canEditSelection = contextInfo.isEditable && contextInfo.hasSelection;
     const canDeleteTarget =
       contextInfo.isEditable && (contextInfo.hasSelection || contextInfo.isImage);
@@ -4664,6 +4278,30 @@ export function App() {
       const cursor = start + markdown.length;
       editor.setSelectionRange(cursor, cursor);
     });
+  }
+
+  function insertDocumentReference(target: string, display?: string) {
+    if (!activeDocument || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    const safeTarget = target.trim();
+    const safeDisplay = display?.trim() || safeTarget;
+
+    if (!safeTarget) {
+      return;
+    }
+
+    if (mode === "typora" && typoraEditorRef.current) {
+      typoraEditorRef.current.insertDocumentReference(safeTarget, safeDisplay);
+      return;
+    }
+
+    insertMarkdown(
+      safeTarget === safeDisplay
+        ? `[[${safeDisplay}]]`
+        : `[[${safeTarget}|${safeDisplay}]]`,
+    );
   }
 
   function getSelectedEditorText() {
@@ -5936,95 +5574,15 @@ export function App() {
         onPointerMove={handleImmersivePointerMove}
         onPointerLeave={handleImmersivePointerLeave}
       >
-        <header
-          className="app-menubar"
-          onPointerEnter={() => revealImmersiveEdge("top")}
-          onPointerLeave={() => hideImmersiveEdge("top")}
-        >
-          <div className="menubar-left">
-            <button
-              className="app-logo-button"
-              type="button"
-              aria-label="返回首页"
-              onClick={() => setIsHomeOpen(true)}
-            >
-              <img className="app-logo-image" src={appLogoUrl} alt="" draggable={false} />
-            </button>
-            <nav className="menubar-menu" aria-label="应用菜单">
-              {menubarItems.map((item) => (
-                <div className="menubar-item" key={item.key}>
-                  <button
-                    data-testid={`menu-${item.key}`}
-                    className={
-                      topMenu === item.key
-                        ? "menubar-trigger menubar-trigger-active"
-                        : "menubar-trigger"
-                    }
-                    type="button"
-                    aria-expanded={topMenu === item.key}
-                    onMouseEnter={() => {
-                      if (topMenu) {
-                        setTopMenu(item.key);
-                      }
-                    }}
-                    onClick={() =>
-                      setTopMenu((current) => (current === item.key ? null : item.key))
-                    }
-                  >
-                    {item.label}
-                  </button>
-                  {topMenu === item.key && (
-                    <div
-                      className={`menubar-dropdown menubar-dropdown-${item.key}`}
-                      role="menu"
-                      aria-label={item.label}
-                      onPointerDown={(event) => {
-                        if (
-                          event.target instanceof Element &&
-                          !event.target.closest("button")
-                        ) {
-                          setTopMenu(null);
-                        }
-                      }}
-                    >
-                      <div
-                        className={`menubar-dropdown-scroll menubar-dropdown-scroll-${item.key}`}
-                      >
-                        {renderMenubarDropdown(item.key)}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </nav>
-          </div>
-          <div className="window-controls" aria-label="窗口控制">
-            <button
-              className="window-control-button"
-              type="button"
-              aria-label="最小化"
-              onClick={() => void window.desktop?.windowControl?.("minimize")}
-            >
-              <Minus size={15} />
-            </button>
-            <button
-              className="window-control-button"
-              type="button"
-              aria-label="最大化"
-              onClick={() => void window.desktop?.windowControl?.("maximize")}
-            >
-              <Square size={12} />
-            </button>
-            <button
-              className="window-control-button window-control-close"
-              type="button"
-              aria-label="关闭"
-              onClick={() => void window.desktop?.windowControl?.("close")}
-            >
-              <X size={15} />
-            </button>
-          </div>
-        </header>
+        <AppMenubar
+          appLogoUrl={appLogoUrl}
+          onHideTop={() => hideImmersiveEdge("top")}
+          onOpenHome={() => setIsHomeOpen(true)}
+          onRevealTop={() => revealImmersiveEdge("top")}
+          renderDropdown={renderMenubarDropdown}
+          setTopMenu={setTopMenu}
+          topMenu={topMenu}
+        />
 
         {isImmersiveMode && (
           <div
@@ -6314,32 +5872,12 @@ export function App() {
 
         <section className="workspace">
           {isHomeOpen || !activeDocument ? (
-            <HomeDashboard
+            <HomeWorkspace
               activeDocument={activeDocument}
-              activeNoteId={activeHomeSavedNoteId}
-              activeTodoItem={activeHomeTodoItem}
-              calendarDays={homeTodoCalendarDays}
-              calendarRef={homeTodoCalendarRef}
-              draftImages={homeTodoDraftImages}
-              hasCompletedTodos={hasCompletedHomeTodos}
-              hasMoreRecentDocuments={hasMoreRecentDocuments}
-              isCalendarOpen={isHomeTodoCalendarOpen}
-              isRecentExpanded={isRecentExpanded}
               logoUrl={appLogoUrl}
-              monthLabel={homeTodoMonthLabel}
-              notes={homeSavedNotes}
-              onChangeTodoYear={(year) =>
-                setHomeTodoSelectedDate((currentDate) =>
-                  setHomeTodoYearKey(currentDate, year),
-                )
-              }
-              onClearCompletedTodos={clearCompletedHomeTodos}
+              noteDialogRequestId={homeNoteDialogRequestId}
               onCreateDocument={createNewDocument}
-              onDeleteNote={deleteHomeSavedNote}
-              onDeleteTodo={deleteHomeTodo}
-              onDraftPaste={(event) => handleHomeImagePaste(event, setHomeTodoDraftImages)}
               onOpenKnowledgeRelations={openKnowledgeRelationsPanel}
-              onOpenNoteDialog={() => setIsHomeNoteDialogOpen(true)}
               onOpenRecentDocument={openRecentDocument}
               onOpenRecentDocumentContextMenu={(event, document) => {
                 if (document.filePath) {
@@ -6347,50 +5885,8 @@ export function App() {
                 }
               }}
               onOpenWorkspaceFolder={openWorkspaceFolder}
-              onPreviewImage={setHomeImagePreview}
-              onRemoveDraftImage={removeHomeTodoDraftImage}
-              onSelectCalendarDay={(dateKey) => {
-                setHomeTodoSelectedDate(dateKey);
-                setIsHomeTodoCalendarOpen(false);
-              }}
-              onSelectNote={setActiveHomeSavedNoteId}
-              onShiftTodoDate={(days) =>
-                setHomeTodoSelectedDate((currentDate) =>
-                  shiftHomeTodoDateKey(currentDate, days),
-                )
-              }
-              onShiftTodoMonth={(months) =>
-                setHomeTodoSelectedDate((currentDate) =>
-                  shiftHomeTodoMonthKey(currentDate, months),
-                )
-              }
-              onSubmitTodo={addHomeTodo}
-              onTodoCalendarWheel={handleHomeTodoCalendarWheel}
-              onTodoDraftChange={setHomeTodoDraft}
-              onTodoDragStart={handleHomeTodoDragStart}
-              onTodoRowRef={setHomeTodoRowRef}
-              onToggleCalendar={() => setIsHomeTodoCalendarOpen((current) => !current)}
-              onToggleRecentExpanded={() => setIsRecentExpanded((current) => !current)}
-              onToggleTodo={toggleHomeTodo}
-              onUseToday={() => {
-                setHomeTodoSelectedDate(todayHomeTodoDate);
-                setIsHomeTodoCalendarOpen(false);
-              }}
-              recentDocuments={visibleRecentDocuments}
-              remainingTodoCount={remainingHomeTodoCount}
-              selectedMonthLabel={homeTodoSelectedMonthLabel}
-              selectedYear={homeTodoSelectedYear}
-              todoDateLabel={homeTodoDateLabel}
-              todoDateTitle={homeTodoDateTitle}
-              todoDraft={homeTodoDraft}
-              todoDrag={homeTodoDrag}
-              todoListRef={homeTodoListRef}
-              todoProgress={homeTodoProgress}
-              todoSelectedDate={homeTodoSelectedDate}
-              todayTodoDate={todayHomeTodoDate}
-              visibleTodoItems={visibleHomeTodoItems}
+              recentDocuments={recentDocuments}
               workspacePath={workspace.workspacePath}
-              yearOptions={homeTodoYearOptions}
             />
           ) : (            <section
               className="editor-workspace"
@@ -6974,165 +6470,14 @@ export function App() {
           </Dialog.Portal>
         </Dialog.Root>
 
-        <Dialog.Root open={isHomeNoteDialogOpen} onOpenChange={setIsHomeNoteDialogOpen}>
-          <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
-            <Dialog.Content className="home-note-dialog">
-              <div className="create-file-header">
-                <div className="create-file-heading">
-                  <span className="create-file-icon">
-                    <ClipboardPaste size={18} />
-                  </span>
-                  <div>
-                    <Dialog.Title className="create-file-title">
-                      灵感便签
-                    </Dialog.Title>
-                    <Dialog.Description>
-                      记录临时想法、截图或参考片段，保存后会回到首页便签列表。
-                    </Dialog.Description>
-                  </div>
-                </div>
-                <Dialog.Close asChild>
-                  <button className="icon-button" type="button" aria-label="关闭">
-                    <X size={16} />
-                  </button>
-                </Dialog.Close>
-              </div>
-
-              <div className="home-note-editor">
-                <textarea
-                  aria-label="便签内容"
-                  autoFocus
-                  placeholder="写下一个想法，也可以直接粘贴截图。"
-                  value={homeQuickNote}
-                  onChange={(event) => setHomeQuickNote(event.target.value)}
-                  onPaste={(event) => void handleHomeImagePaste(event, setHomeQuickNoteImages)}
-                />
-
-                {homeQuickNoteImages.length ? (
-                  <div
-                    className="home-draft-images home-note-dialog-images"
-                    aria-label="便签草稿图片"
-                  >
-                    {homeQuickNoteImages.map((image) => (
-                      <span className="home-draft-image" key={image.id}>
-                        <button
-                          className="home-draft-image-preview"
-                          type="button"
-                          aria-label={`浏览图片 ${image.fileName}`}
-                          onClick={() => setHomeImagePreview(image)}
-                        >
-                          <img alt={image.fileName} src={image.dataUrl} draggable={false} />
-                        </button>
-                        <button
-                          className="home-draft-image-remove"
-                          type="button"
-                          aria-label="移除图片"
-                          onClick={() => removeHomeQuickNoteImage(image.id)}
-                        >
-                          <X size={12} />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="note-dialog-actions home-note-dialog-actions">
-                <Dialog.Close asChild>
-                  <button className="secondary-button" type="button">
-                    取消
-                  </button>
-                </Dialog.Close>
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={!homeQuickNote.trim() && homeQuickNoteImages.length === 0}
-                  onClick={saveHomeQuickNote}
-                >
-                  保存便签
-                </button>
-              </div>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-
-        <Dialog.Root
-          open={Boolean(homeImagePreview)}
-          onOpenChange={(open) => {
-            if (!open) {
-              setHomeImagePreview(null);
-              resetHomeImagePreviewZoom();
-            }
-          }}
-        >
-          <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
-            <Dialog.Content className="home-image-preview-dialog">
-              <Dialog.Title className="sr-only">
-                {homeImagePreview?.fileName ?? "图片预览"}
-              </Dialog.Title>
-              <Dialog.Close asChild>
-                <button className="home-image-preview-close" type="button" aria-label="关闭">
-                  <X size={18} />
-                </button>
-              </Dialog.Close>
-              {homeImagePreview ? (
-                <>
-                  <div
-                    className="home-image-preview-viewport"
-                    onWheel={(event) => {
-                      event.preventDefault();
-                      changeHomeImagePreviewZoom(event.deltaY < 0 ? 0.1 : -0.1);
-                    }}
-                  >
-                    <img
-                      alt={homeImagePreview.fileName}
-                      src={homeImagePreview.dataUrl}
-                      draggable={false}
-                      style={{
-                        transform: `scale(${homeImagePreviewZoom})`,
-                      }}
-                    />
-                  </div>
-                  <div className="home-image-preview-toolbar" aria-label="图片缩放">
-                    <button
-                      type="button"
-                      aria-label="缩小图片"
-                      onClick={() => changeHomeImagePreviewZoom(-0.1)}
-                    >
-                      <Minus size={16} />
-                    </button>
-                    <button
-                      className="home-image-preview-zoom-value"
-                      type="button"
-                      onClick={resetHomeImagePreviewZoom}
-                    >
-                      {Math.round(homeImagePreviewZoom * 100)}%
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="放大图片"
-                      onClick={() => changeHomeImagePreviewZoom(0.1)}
-                    >
-                      <Plus size={16} />
-                    </button>
-                  </div>
-                </>
-              ) : null}
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-
         <Dialog.Root
           modal={false}
           open={isDocumentLinkPickerOpen}
           onOpenChange={(open) => {
-            setIsDocumentLinkPickerOpen(open);
-            if (!open) {
-              setDocumentLinkSourceDocumentId(null);
-              setDocumentLinkQuery("");
-              setDocumentLinkPickerMode("metadata");
+            if (open) {
+              setIsDocumentLinkPickerOpen(true);
+            } else {
+              closeDocumentLinkPicker();
             }
           }}
         >
