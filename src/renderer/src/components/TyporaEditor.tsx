@@ -313,6 +313,30 @@ function getRawHtmlValue(node: ProseMirrorNode) {
     : node.textContent;
 }
 
+function getStableRawHtmlPreviewHash(value: string) {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return `${value.length}-${(hash >>> 0).toString(36)}`;
+}
+
+function getRawHtmlPreviewWidgetKey(
+  value: string,
+  filePath: string | undefined,
+  index: number,
+) {
+  return [
+    "typora-raw-html-preview",
+    getStableRawHtmlPreviewHash(filePath ?? ""),
+    getStableRawHtmlPreviewHash(value),
+    index,
+  ].join("-");
+}
+
 function isRawHtmlImage(value: string) {
   return rawHtmlImagePattern.test(value);
 }
@@ -567,6 +591,8 @@ function createRenderedHtmlPreview(
     wrapper.dataset.typoraRawHtmlPos = String(sourcePos);
   }
 
+  wrapper.dataset.typoraRawHtmlHash = getStableRawHtmlPreviewHash(value);
+
   if (isRawHtmlVideo(trimmedValue)) {
     wrapper.classList.add("typora-raw-html-preview-video");
   }
@@ -633,6 +659,7 @@ function createRawHtmlPreviewDecoration(
         props: {
           decorations(state) {
             const decorations: Decoration[] = [];
+            let previewIndex = 0;
 
             state.doc.descendants((node: ProseMirrorNode, pos) => {
               if (node.type.name !== "html") {
@@ -644,6 +671,13 @@ function createRawHtmlPreviewDecoration(
               if (!value.trim() || /<script\b/i.test(value)) {
                 return;
               }
+
+              const widgetKey = getRawHtmlPreviewWidgetKey(
+                value,
+                filePathRef.current,
+                previewIndex,
+              );
+              previewIndex += 1;
 
               decorations.push(
                 Decoration.node(pos, pos + node.nodeSize, {
@@ -660,7 +694,7 @@ function createRawHtmlPreviewDecoration(
                     document.createTextNode(""),
                   {
                     ignoreSelection: true,
-                    key: `typora-raw-html-preview-${pos}-${value}`,
+                    key: widgetKey,
                     side: -1,
                     stopEvent: (event) =>
                       event.type === "click" ||
@@ -1332,10 +1366,74 @@ function isNonEditorControl(target: EventTarget | null) {
   );
 }
 
-function getRawHtmlPreviewSourcePosition(preview: HTMLElement) {
+function getRawHtmlPreviewSourcePosition(
+  preview: HTMLElement,
+  view?: EditorView,
+) {
   const pos = Number(preview.dataset.typoraRawHtmlPos ?? NaN);
 
-  return Number.isFinite(pos) ? pos : null;
+  if (!view) {
+    return Number.isFinite(pos) ? pos : null;
+  }
+
+  const currentPos = Number.isFinite(pos) ? pos : null;
+  const previewHash = preview.dataset.typoraRawHtmlHash;
+
+  if (currentPos !== null) {
+    const currentNode = view.state.doc.nodeAt(currentPos);
+
+    if (
+      currentNode?.type.name === "html" &&
+      (!previewHash ||
+        getStableRawHtmlPreviewHash(getRawHtmlValue(currentNode)) === previewHash)
+    ) {
+      return currentPos;
+    }
+  }
+
+  let domPosition: number | null = null;
+
+  try {
+    domPosition = view.posAtDOM(preview, 0);
+  } catch {
+    domPosition = null;
+  }
+
+  let matchedPosition: number | null = null;
+  let matchedDistance = Number.POSITIVE_INFINITY;
+
+  view.state.doc.descendants((node: ProseMirrorNode, candidatePos) => {
+    if (node.type.name !== "html") {
+      return true;
+    }
+
+    const value = getRawHtmlValue(node);
+
+    if (
+      previewHash &&
+      getStableRawHtmlPreviewHash(value) !== previewHash
+    ) {
+      return false;
+    }
+
+    const distance =
+      domPosition === null
+        ? 0
+        : Math.abs(candidatePos + node.nodeSize - domPosition);
+
+    if (distance < matchedDistance) {
+      matchedDistance = distance;
+      matchedPosition = candidatePos;
+    }
+
+    return false;
+  });
+
+  if (matchedPosition !== null) {
+    preview.dataset.typoraRawHtmlPos = String(matchedPosition);
+  }
+
+  return matchedPosition;
 }
 
 function getEditableBlockCenter(view: EditorView, position: number, selectionPosition: number) {
@@ -1478,7 +1576,7 @@ function focusRawHtmlPreviewBoundary(
     return false;
   }
 
-  const pos = getRawHtmlPreviewSourcePosition(preview);
+  const pos = getRawHtmlPreviewSourcePosition(preview, view);
   const node = pos === null ? null : view.state.doc.nodeAt(pos);
 
   if (pos === null || !node || node.type.name !== "html") {
@@ -3921,12 +4019,39 @@ function MilkdownRuntime({
 
   function getRawHtmlPreviewImageElement(pos: number) {
     const root = rootRef.current;
-
-    return (
+    const directMatch =
       root?.querySelector<HTMLImageElement>(
         `.typora-raw-html-preview[data-typora-raw-html-pos="${pos}"] img`,
-      ) ?? null
-    );
+      ) ?? null;
+
+    if (directMatch) {
+      return directMatch;
+    }
+
+    const editor = get();
+    let matchedImage: HTMLImageElement | null = null;
+
+    if (!root || !editor) {
+      return null;
+    }
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+
+      root
+        .querySelectorAll<HTMLElement>(".typora-raw-html-preview")
+        .forEach((preview) => {
+          if (matchedImage) {
+            return;
+          }
+
+          if (getRawHtmlPreviewSourcePosition(preview, view) === pos) {
+            matchedImage = preview.querySelector<HTMLImageElement>("img");
+          }
+        });
+    });
+
+    return matchedImage;
   }
 
   function updateImageToolbarFromRawHtmlImageElement(
@@ -3935,14 +4060,6 @@ function MilkdownRuntime({
     const root = rootRef.current;
 
     if (!root || !imageElement || !root.contains(imageElement)) {
-      setImageToolbar({ visible: false });
-      return;
-    }
-
-    const wrapper = imageElement.closest<HTMLElement>(".typora-raw-html-preview");
-    const pos = Number(wrapper?.dataset.typoraRawHtmlPos ?? NaN);
-
-    if (!Number.isFinite(pos)) {
       setImageToolbar({ visible: false });
       return;
     }
@@ -3956,6 +4073,17 @@ function MilkdownRuntime({
 
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
+      const wrapper = imageElement.closest<HTMLElement>(".typora-raw-html-preview");
+      const pos =
+        wrapper instanceof HTMLElement
+          ? getRawHtmlPreviewSourcePosition(wrapper, view)
+          : null;
+
+      if (pos === null) {
+        setImageToolbar({ visible: false });
+        return;
+      }
+
       const node = view.state.doc.nodeAt(pos);
       const value = node ? getRawHtmlValue(node) : "";
 
@@ -4049,14 +4177,39 @@ function MilkdownRuntime({
 
   function getVideoPreviewElement(pos: number) {
     const root = rootRef.current;
+    const directMatch =
+      root?.querySelector<HTMLVideoElement>(
+        `.typora-raw-html-preview[data-typora-raw-html-pos="${pos}"] video`,
+      ) ?? null;
 
-    if (!root) {
+    if (directMatch) {
+      return directMatch;
+    }
+
+    const editor = get();
+    let matchedVideo: HTMLVideoElement | null = null;
+
+    if (!root || !editor) {
       return null;
     }
 
-    return root.querySelector<HTMLVideoElement>(
-      `.typora-raw-html-preview[data-typora-raw-html-pos="${pos}"] video`,
-    );
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+
+      root
+        .querySelectorAll<HTMLElement>(".typora-raw-html-preview")
+        .forEach((preview) => {
+          if (matchedVideo) {
+            return;
+          }
+
+          if (getRawHtmlPreviewSourcePosition(preview, view) === pos) {
+            matchedVideo = preview.querySelector<HTMLVideoElement>("video");
+          }
+        });
+    });
+
+    return matchedVideo;
   }
 
   function updateVideoToolbarFromElement(videoElement: HTMLVideoElement | null) {
@@ -4068,16 +4221,19 @@ function MilkdownRuntime({
       return;
     }
 
-    const wrapper = videoElement.closest<HTMLElement>(".typora-raw-html-preview");
-    const pos = Number(wrapper?.dataset.typoraRawHtmlPos ?? NaN);
-
-    if (!Number.isFinite(pos)) {
-      setVideoToolbar({ visible: false });
-      return;
-    }
-
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
+      const wrapper = videoElement.closest<HTMLElement>(".typora-raw-html-preview");
+      const pos =
+        wrapper instanceof HTMLElement
+          ? getRawHtmlPreviewSourcePosition(wrapper, view)
+          : null;
+
+      if (pos === null) {
+        setVideoToolbar({ visible: false });
+        return;
+      }
+
       const node = view.state.doc.nodeAt(pos);
       const value = node ? getRawHtmlValue(node) : "";
 

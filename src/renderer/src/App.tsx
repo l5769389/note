@@ -67,6 +67,7 @@ import { usePersistedAppStateWriter } from "./appPersistenceHooks";
 import { createAssetFileName } from "./assetManager";
 import { DirectoryFileList } from "./components/DirectoryFileList";
 import { DirectoryTreeItems } from "./components/DirectoryTree";
+import { DrawingDocumentViewer } from "./components/DrawingDocumentViewer";
 import {
   AppConfirmationDialog,
   AboutDialog,
@@ -5964,6 +5965,12 @@ export function App() {
                   />
                 </section>
               ) : isDrawingDocument(activeDocument) ? (
+                <DrawingDocumentViewer
+                  document={activeDocument!}
+                  displayName={getDocumentDisplayName(activeDocument!)}
+                  onEdit={() => setDrawingDialogOpen(true)}
+                />
+              ) : false ? (
                 <section
                   className="standalone-document-viewer standalone-drawing-viewer"
                   data-select-all-scope="content"
@@ -5972,7 +5979,9 @@ export function App() {
                   <div className="standalone-document-card">
                     <FileText size={26} />
                     <div>
-                      <h2>{getDocumentDisplayName(activeDocument)}</h2>
+                      <h2>
+                        {activeDocument ? getDocumentDisplayName(activeDocument!) : ""}
+                      </h2>
                       <p>Excalidraw drawing file</p>
                     </div>
                     <button

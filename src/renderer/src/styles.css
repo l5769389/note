@@ -3122,6 +3122,223 @@ textarea,
   font-size: 13px;
 }
 
+.standalone-drawing-viewer {
+  align-content: start;
+  justify-items: center;
+}
+
+.drawing-document-panel {
+  display: grid;
+  width: min(1080px, 100%);
+  gap: 0;
+}
+
+.drawing-document-preview-shell {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+}
+
+.drawing-document-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid #d8e1ef;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98)),
+    #ffffff;
+  padding: 16px;
+  box-shadow:
+    0 18px 46px rgba(15, 23, 42, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.88) inset;
+}
+
+.drawing-document-file-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  border-radius: 13px;
+  background:
+    linear-gradient(180deg, rgba(238, 242, 255, 0.95), rgba(239, 246, 255, 0.95)),
+    #eef2ff;
+  color: #4f46e5;
+}
+
+.drawing-document-title {
+  min-width: 0;
+}
+
+.drawing-document-title h2 {
+  margin: 0;
+  overflow: hidden;
+  color: #111827;
+  font-size: 19px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawing-document-title p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.drawing-document-header .primary-button {
+  gap: 7px;
+  min-height: 40px;
+  border-radius: 10px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.drawing-document-preview {
+  position: relative;
+  display: grid;
+  width: min(var(--drawing-preview-width, 920px), 100%);
+  min-height: clamp(360px, 58vh, 720px);
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #d8e1ef;
+  border-radius: 18px;
+  background:
+    linear-gradient(45deg, rgba(148, 163, 184, 0.08) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(148, 163, 184, 0.08) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.08) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.08) 75%),
+    #ffffff;
+  background-position:
+    0 0,
+    0 10px,
+    10px -10px,
+    -10px 0;
+  background-size: 20px 20px;
+  color: #334155;
+  cursor: default;
+  padding: 28px;
+  box-shadow:
+    0 24px 70px rgba(15, 23, 42, 0.1),
+    0 1px 0 rgba(255, 255, 255, 0.88) inset;
+  user-select: none;
+}
+
+.drawing-document-preview-ready {
+  min-height: 0;
+  padding: 18px;
+}
+
+.drawing-document-preview:hover {
+  border-color: rgba(99, 102, 241, 0.42);
+  box-shadow:
+    0 28px 80px rgba(79, 70, 229, 0.14),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.drawing-document-preview-selected,
+.drawing-document-preview-selected:hover,
+.drawing-document-preview-resizing,
+.drawing-document-preview-resizing:hover {
+  border-color: rgba(99, 91, 255, 0.8);
+  box-shadow:
+    0 0 0 3px rgba(99, 91, 255, 0.14),
+    0 28px 80px rgba(79, 70, 229, 0.14),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.drawing-document-preview:focus-visible {
+  outline: 3px solid rgba(99, 102, 241, 0.22);
+  outline-offset: 3px;
+}
+
+.drawing-document-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.drawing-document-resize-handle {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  border-right: 2px solid #635bff;
+  border-bottom: 2px solid #635bff;
+  border-radius: 0 0 5px;
+  background: rgba(99, 91, 255, 0.08);
+  box-shadow: 0 8px 20px rgba(79, 70, 229, 0.16);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.drawing-document-resize-handle::after {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid #635bff;
+  border-bottom: 2px solid #635bff;
+  content: "";
+}
+
+.drawing-document-preview-state {
+  display: inline-flex;
+  max-width: min(420px, 100%);
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid rgba(203, 213, 225, 0.88);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 12px 16px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.08);
+}
+
+.drawing-document-preview-state svg {
+  flex: 0 0 auto;
+}
+
+.drawing-document-preview-state .lucide-loader-2 {
+  animation: spin 900ms linear infinite;
+}
+
+.drawing-document-preview-state span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.drawing-document-preview-state strong,
+.drawing-document-preview-state small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawing-document-preview-state small {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.drawing-document-context-menu {
+  min-width: 176px;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
