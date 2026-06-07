@@ -71,4 +71,10 @@ describe("drawing document helpers", () => {
       ),
     ).toBe("Old excalidraw:next scene=scene.json width=240 align=right");
   });
+
+  it("uses a readable default preview size for newly inserted drawings", () => {
+    expect(createExcalidrawImageTitle("next", "scene.json")).toBe(
+      "excalidraw:next scene=scene.json width=640 align=center",
+    );
+  });
 });

@@ -17,6 +17,7 @@ import {
   type EditorState,
   NodeSelection,
   Plugin,
+  PluginKey,
   Selection,
   TextSelection,
 } from "@milkdown/kit/prose/state";
@@ -820,13 +821,126 @@ const searchHighlightDecoration = $prose(
     }),
 );
 
+type CodeBlockLanguagePromptState = {
+  armedForPos: number | null;
+  openForPos: number | null;
+  query: string;
+};
+
+type CodeBlockLanguagePromptMeta = Partial<CodeBlockLanguagePromptState>;
+
+const codeBlockLanguagePluginKey = new PluginKey<CodeBlockLanguagePromptState>(
+  "typoraCodeBlockLanguagePrompt",
+);
+
+function isCodeLanguagePromptKey(event: KeyboardEvent) {
+  return (
+    event.key.length === 1 &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.isComposing &&
+    /^[a-zA-Z0-9+#._-]$/.test(event.key)
+  );
+}
+
 const codeBlockLanguageDecoration = $prose(
   () =>
-    new Plugin({
+    new Plugin<CodeBlockLanguagePromptState>({
+      key: codeBlockLanguagePluginKey,
+      state: {
+        init: (): CodeBlockLanguagePromptState => ({
+          armedForPos: null,
+          openForPos: null,
+          query: "",
+        }),
+        apply(transaction, pluginState) {
+          const meta = transaction.getMeta(codeBlockLanguagePluginKey) as
+            | CodeBlockLanguagePromptMeta
+            | undefined;
+          let armedForPos = pluginState.armedForPos;
+          let openForPos = pluginState.openForPos;
+          let query = pluginState.query;
+
+          if (armedForPos !== null && transaction.docChanged) {
+            armedForPos = transaction.mapping.map(armedForPos, -1);
+            const armedNode = transaction.doc.nodeAt(armedForPos);
+
+            if (
+              armedNode?.type.name !== "code_block" ||
+              armedNode.textContent.length > 0
+            ) {
+              armedForPos = null;
+            }
+          }
+
+          if (openForPos !== null && transaction.docChanged) {
+            openForPos = transaction.mapping.map(openForPos, -1);
+
+            if (transaction.doc.nodeAt(openForPos)?.type.name !== "code_block") {
+              openForPos = null;
+              query = "";
+            }
+          }
+
+          if (armedForPos !== null && transaction.selectionSet) {
+            const armedNode = transaction.doc.nodeAt(armedForPos);
+
+            if (
+              armedNode?.type.name !== "code_block" ||
+              !selectionTouchesRange(
+                transaction.selection.from,
+                transaction.selection.to,
+                armedForPos,
+                armedForPos + armedNode.nodeSize,
+              )
+            ) {
+              armedForPos = null;
+            }
+          }
+
+          if (meta) {
+            if (Object.prototype.hasOwnProperty.call(meta, "armedForPos")) {
+              armedForPos = meta.armedForPos ?? null;
+            }
+
+            if (Object.prototype.hasOwnProperty.call(meta, "openForPos")) {
+              openForPos = meta.openForPos ?? null;
+            }
+
+            if (Object.prototype.hasOwnProperty.call(meta, "query")) {
+              query = meta.query ?? "";
+            }
+          }
+
+          return { armedForPos, openForPos, query };
+        },
+      },
+      appendTransaction(transactions, oldState, newState) {
+        if (
+          !transactions.some((transaction) => transaction.docChanged) ||
+          transactions.some((transaction) =>
+            Boolean(transaction.getMeta(codeBlockLanguagePluginKey)),
+          )
+        ) {
+          return null;
+        }
+
+        const codeBlock = getNewEmptyCodeBlockNearSelection(oldState, newState);
+
+        if (!codeBlock) {
+          return null;
+        }
+
+        return newState.tr.setMeta(codeBlockLanguagePluginKey, {
+          armedForPos: codeBlock.pos,
+        } satisfies CodeBlockLanguagePromptMeta);
+      },
       props: {
         decorations(state) {
           const decorations: Decoration[] = [];
           const { from, to } = state.selection;
+          const promptState = codeBlockLanguagePluginKey.getState(state);
 
           state.doc.descendants((node: ProseMirrorNode, pos) => {
             if (node.type.name !== "code_block") {
@@ -842,6 +956,12 @@ const codeBlockLanguageDecoration = $prose(
             const isActive =
               (state.selection instanceof NodeSelection && state.selection.from === pos) ||
               selectionTouchesRange(from, to, codeStart, codeEnd);
+            const shouldOpenEditor = promptState?.openForPos === pos;
+            const shouldShowLanguageEditor =
+              isActive &&
+              (node.textContent.length > 0 ||
+                rawLanguage.length > 0 ||
+                shouldOpenEditor);
 
             decorations.push(
               Decoration.node(pos, pos + node.nodeSize, {
@@ -853,7 +973,9 @@ const codeBlockLanguageDecoration = $prose(
               }),
             );
 
-            if (isActive && node.textContent.length > 0) {
+            if (shouldShowLanguageEditor) {
+              const seedQuery = shouldOpenEditor ? promptState?.query ?? "" : undefined;
+
               decorations.push(
                 Decoration.widget(
                   pos + node.nodeSize - 1,
@@ -889,31 +1011,55 @@ const codeBlockLanguageDecoration = $prose(
                     let activeSuggestionIndex = 0;
                     let suggestionValues = getCodeLanguageSuggestions(input.value);
 
+                    function closeLanguagePrompt(transaction = view.state.tr) {
+                      const currentPromptState =
+                        codeBlockLanguagePluginKey.getState(view.state);
+
+                      return currentPromptState?.openForPos === pos
+                        ? transaction.setMeta(codeBlockLanguagePluginKey, {
+                            armedForPos: null,
+                            openForPos: null,
+                            query: "",
+                          } satisfies CodeBlockLanguagePromptMeta)
+                        : transaction;
+                    }
+
                     function syncCodeLanguage() {
                       const nextLanguage = normalizeCodeLanguageInput(input.value);
                       const codeNode = view.state.doc.nodeAt(pos);
+                      let transaction = closeLanguagePrompt();
+                      let shouldDispatch = Boolean(
+                        transaction.getMeta(codeBlockLanguagePluginKey),
+                      );
 
                       if (!codeNode || codeNode.type.name !== "code_block") {
+                        if (shouldDispatch) {
+                          view.dispatch(transaction);
+                        }
+
                         return nextLanguage;
                       }
 
                       if ((codeNode.attrs.language ?? "") !== nextLanguage) {
-                        view.dispatch(
-                          view.state.tr.setNodeMarkup(pos, undefined, {
-                            ...codeNode.attrs,
-                            language: nextLanguage,
-                          }),
-                        );
+                        transaction = transaction.setNodeMarkup(pos, undefined, {
+                          ...codeNode.attrs,
+                          language: nextLanguage,
+                        });
+                        shouldDispatch = true;
+                      }
+
+                      if (shouldDispatch) {
+                        view.dispatch(transaction);
                       }
 
                       return nextLanguage;
                     }
 
-                    function focusAfterCodeBlock() {
+                    function focusCodeBlockContent() {
                       view.focus();
                       view.dispatch(
                         view.state.tr.setSelection(
-                          Selection.near(view.state.doc.resolve(pos + node.nodeSize), 1),
+                          Selection.near(view.state.doc.resolve(pos + 1), 1),
                         ),
                       );
                     }
@@ -978,7 +1124,7 @@ const codeBlockLanguageDecoration = $prose(
                           activeSuggestionIndex = index;
                           applySuggestion(index);
                           exitEditing(true);
-                          focusAfterCodeBlock();
+                          focusCodeBlockContent();
                         });
                         list.append(option);
                       });
@@ -986,13 +1132,15 @@ const codeBlockLanguageDecoration = $prose(
                       updateActiveSuggestion();
                     }
 
-                    function enterEditing() {
+                    function enterEditing(initialQuery?: string) {
                       if (isEditing) {
                         return;
                       }
 
                       const codeNode = view.state.doc.nodeAt(pos);
+                      const hasInitialQuery = typeof initialQuery === "string";
                       const editableLanguage =
+                        !hasInitialQuery &&
                         typeof codeNode?.attrs.language === "string" &&
                         codeNode.attrs.language.trim()
                           ? codeNode.attrs.language.trim()
@@ -1002,13 +1150,19 @@ const codeBlockLanguageDecoration = $prose(
                       marker.classList.add("typora-code-language-editor-editing");
                       trigger.hidden = true;
                       panel.hidden = false;
-                      input.value = getCodeLanguageInputValue(editableLanguage);
+                      input.value = hasInitialQuery
+                        ? initialQuery
+                        : getCodeLanguageInputValue(editableLanguage);
                       activeSuggestionIndex = 0;
                       renderSuggestions();
 
                       requestAnimationFrame(() => {
                         input.focus();
-                        input.select();
+                        if (hasInitialQuery) {
+                          input.setSelectionRange(input.value.length, input.value.length);
+                        } else {
+                          input.select();
+                        }
                       });
                     }
 
@@ -1022,6 +1176,14 @@ const codeBlockLanguageDecoration = $prose(
                         : typeof view.state.doc.nodeAt(pos)?.attrs.language === "string"
                           ? view.state.doc.nodeAt(pos)?.attrs.language
                           : "";
+
+                      if (!shouldSave) {
+                        const transaction = closeLanguagePrompt();
+
+                        if (transaction.getMeta(codeBlockLanguagePluginKey)) {
+                          view.dispatch(transaction);
+                        }
+                      }
 
                       isEditing = false;
                       marker.classList.remove("typora-code-language-editor-editing");
@@ -1112,8 +1274,23 @@ const codeBlockLanguageDecoration = $prose(
                         applySuggestion(activeSuggestionIndex);
                       }
                       exitEditing(event.key === "Enter");
-                      focusAfterCodeBlock();
+                      focusCodeBlockContent();
                     });
+
+                    if (shouldOpenEditor) {
+                      requestAnimationFrame(() => {
+                        const currentPromptState =
+                          codeBlockLanguagePluginKey.getState(view.state);
+                        const codeNode = view.state.doc.nodeAt(pos);
+
+                        if (
+                          currentPromptState?.openForPos === pos &&
+                          codeNode?.type.name === "code_block"
+                        ) {
+                          enterEditing(seedQuery);
+                        }
+                      });
+                    }
 
                     return marker;
                   },
@@ -1130,6 +1307,32 @@ const codeBlockLanguageDecoration = $prose(
           });
 
           return DecorationSet.create(state.doc, decorations);
+        },
+        handleDOMEvents: {
+          keydown(view, event) {
+            const keyboardEvent = event as KeyboardEvent;
+
+            if (!isCodeLanguagePromptKey(keyboardEvent)) {
+              return false;
+            }
+
+            const codeBlock = getActiveEmptyCodeBlock(view.state);
+            const promptState = codeBlockLanguagePluginKey.getState(view.state);
+
+            if (!codeBlock || promptState?.armedForPos !== codeBlock.pos) {
+              return false;
+            }
+
+            keyboardEvent.preventDefault();
+            view.dispatch(
+              view.state.tr.setMeta(codeBlockLanguagePluginKey, {
+                armedForPos: null,
+                openForPos: codeBlock.pos,
+                query: keyboardEvent.key,
+              } satisfies CodeBlockLanguagePromptMeta),
+            );
+            return true;
+          },
         },
       },
     }),
@@ -2800,14 +3003,23 @@ function createEditableImageDecoration(
               }
 
               const meta = parseImageMeta(node.attrs.title);
+              const isExcalidrawImage = Boolean(getExcalidrawDrawingId(node.attrs.title));
               const className = [
                 "typora-editable-image",
+                isExcalidrawImage ? "typora-editable-image-excalidraw" : "",
                 `typora-editable-image-${meta.align}`,
-              ].join(" ");
+              ]
+                .filter(Boolean)
+                .join(" ");
               const attrs: Record<string, string> = {
                 class: className,
                 "data-image-align": meta.align,
               };
+
+              if (isExcalidrawImage) {
+                attrs["data-image-kind"] = "excalidraw";
+              }
+
               const resolvedSrc = resolveDocumentResourceUrl(
                 node.attrs.src,
                 filePathRef.current,

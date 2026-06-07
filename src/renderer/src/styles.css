@@ -3753,6 +3753,31 @@ textarea,
   margin-left: auto;
 }
 
+.typora-milkdown-content .ProseMirror img.typora-editable-image-excalidraw:not([data-image-width]) {
+  display: block;
+  width: clamp(320px, 58%, 760px);
+  min-width: min(260px, 100%);
+  max-width: 100%;
+  margin-top: 0.55em;
+  margin-bottom: 0.55em;
+  background: #ffffff;
+}
+
+.typora-milkdown-content .ProseMirror img.typora-editable-image-excalidraw[data-image-align="left"]:not([data-image-width]) {
+  margin-right: auto;
+  margin-left: 0;
+}
+
+.typora-milkdown-content .ProseMirror img.typora-editable-image-excalidraw[data-image-align="center"]:not([data-image-width]) {
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.typora-milkdown-content .ProseMirror img.typora-editable-image-excalidraw[data-image-align="right"]:not([data-image-width]) {
+  margin-right: 0;
+  margin-left: auto;
+}
+
 .typora-milkdown-content .ProseMirror img.typora-editable-image:hover,
 .typora-milkdown-content .ProseMirror img.typora-editable-image.ProseMirror-selectednode {
   border-color: rgba(99, 102, 241, 0.28);

@@ -6,6 +6,8 @@ import {
 } from "./imageMeta";
 import type { DrawingAsset, MarkdownDocument } from "./types";
 
+export const defaultExcalidrawPreviewWidth = 640;
+
 export type ExcalidrawMarkdownImage = {
   alt: string;
   sceneReference: string | null;
@@ -86,6 +88,8 @@ export function createExcalidrawImageTitle(
 
   return serializeImageMeta({
     ...meta,
+    align: previousTitle ? meta.align : "center",
     titleText,
+    width: meta.width ?? defaultExcalidrawPreviewWidth,
   });
 }
