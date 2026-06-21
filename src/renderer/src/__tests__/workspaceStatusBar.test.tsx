@@ -124,4 +124,33 @@ describe("WorkspaceStatusBar", () => {
     expect(html).not.toContain("workspace-autosave-status");
     expect(html).not.toContain("workspace-word-count");
   });
+
+  it("renders settings and lets disabled sync open configuration", () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceStatusBar
+        activeDocument={null}
+        isSidebarHidden={false}
+        missingAssetReferences={[]}
+        saveState="idle"
+        syncStatus={{
+          configuration: {
+            enabled: false,
+            serverUrl: "",
+            tokenConfigured: false,
+            workspaceId: "default",
+          },
+          state: "disabled",
+        }}
+        wordCount={0}
+        onConfigureSync={() => {}}
+        onOpenSettings={() => {}}
+        onToggleSidebar={() => {}}
+      />,
+    );
+
+    expect(html).toContain("workspace-settings-button");
+    expect(html).toContain("workspace-sync-status-disabled");
+    expect(html).toContain("配置同步信息");
+    expect(html).not.toContain("disabled=\"\"");
+  });
 });

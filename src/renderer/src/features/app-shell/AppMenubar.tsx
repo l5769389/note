@@ -1,4 +1,4 @@
-import { Minus, Square, X } from "lucide-react";
+import { Minimize2, Minus, Square, X } from "lucide-react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 
 import {
@@ -9,6 +9,8 @@ import {
 
 type AppMenubarProps = {
   appLogoUrl: string;
+  isFullScreen: boolean;
+  isMaximized: boolean;
   onHideTop: () => void;
   onOpenHome: () => void;
   onRevealTop: () => void;
@@ -19,6 +21,8 @@ type AppMenubarProps = {
 
 export function AppMenubar({
   appLogoUrl,
+  isFullScreen,
+  isMaximized,
   onHideTop,
   onOpenHome,
   onRevealTop,
@@ -26,6 +30,22 @@ export function AppMenubar({
   setTopMenu,
   topMenu,
 }: AppMenubarProps) {
+  const isWindowRestorable = isFullScreen || isMaximized;
+  const sizeControlLabel = isFullScreen
+    ? "退出全屏"
+    : isMaximized
+      ? "还原窗口"
+      : "最大化";
+
+  function toggleWindowSize() {
+    if (isFullScreen) {
+      void window.desktop?.toggleFullScreen?.();
+      return;
+    }
+
+    void window.desktop?.windowControl?.("maximize");
+  }
+
   return (
     <header
       className="app-menubar"
@@ -101,10 +121,11 @@ export function AppMenubar({
         <button
           className="window-control-button"
           type="button"
-          aria-label="最大化"
-          onClick={() => void window.desktop?.windowControl?.("maximize")}
+          aria-label={sizeControlLabel}
+          title={sizeControlLabel}
+          onClick={toggleWindowSize}
         >
-          <Square size={12} />
+          {isWindowRestorable ? <Minimize2 size={13} /> : <Square size={12} />}
         </button>
         <button
           className="window-control-button window-control-close"

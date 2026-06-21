@@ -3,9 +3,12 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Cloud,
+  CloudOff,
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
+  Settings,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -18,6 +21,7 @@ import {
   isWordDocument,
 } from "../documentModel";
 import type { MarkdownDocument, SaveState } from "../types";
+import type { SyncStatusSnapshot } from "../../../shared/sync";
 
 const autoSaveStatus = {
   failed: {
@@ -48,8 +52,12 @@ type WorkspaceStatusBarProps = {
   isSidebarHidden: boolean;
   missingAssetReferences: string[];
   saveState: SaveState;
+  syncStatus?: SyncStatusSnapshot;
   wordCount: number;
   onCloseDocument?: () => void;
+  onConfigureSync?: () => void;
+  onOpenSettings?: () => void;
+  onSyncNow?: () => void;
   onToggleInspector?: () => void;
   onToggleSidebar: () => void;
 };
@@ -82,21 +90,85 @@ function getDocumentStatusLabel(document: MarkdownDocument | null, wordCount: nu
   return `${document ? wordCount : 0} 词`;
 }
 
+function getSyncStatusDisplay(syncStatus?: SyncStatusSnapshot) {
+  const state = syncStatus?.state ?? "disabled";
+  const message = syncStatus?.message;
+
+  switch (state) {
+    case "failed":
+      return {
+        icon: <AlertTriangle size={14} />,
+        label: "同步失败",
+        title: message || "云端同步失败，点击重试。",
+      };
+    case "pending":
+      return {
+        icon: <RefreshCw size={14} />,
+        label: "待同步",
+        title: message || "本地变更正在等待同步。",
+      };
+    case "syncing":
+      return {
+        icon: <RefreshCw size={14} />,
+        label: "同步中",
+        title: message || "正在同步本地工作区。",
+      };
+    case "synced":
+      return {
+        icon: <Cloud size={14} />,
+        label: "已同步",
+        title: message || "本地工作区已和云端同步。",
+      };
+    case "idle":
+      return {
+        icon: <Cloud size={14} />,
+        label: "云同步",
+        title: message || "云同步已启用，点击立即同步。",
+      };
+    case "disabled":
+    default:
+      return {
+        icon: <CloudOff size={14} />,
+        label: "未同步",
+        title: "云同步未启用，点击配置同步信息。",
+      };
+  }
+}
+
 export function WorkspaceStatusBar({
   activeDocument,
   isInspectorOpen = false,
   isSidebarHidden,
   missingAssetReferences,
   saveState,
+  syncStatus,
   wordCount,
   onCloseDocument,
+  onConfigureSync,
+  onOpenSettings,
+  onSyncNow,
   onToggleInspector,
   onToggleSidebar,
 }: WorkspaceStatusBarProps) {
   const status = saveState === "idle" ? null : autoSaveStatus[saveState];
+  const syncDisplay = getSyncStatusDisplay(syncStatus);
+  const syncState = syncStatus?.state ?? "disabled";
+  const canUseSyncStatus =
+    syncState === "disabled"
+      ? Boolean(onConfigureSync ?? onOpenSettings)
+      : Boolean(onSyncNow) && syncState !== "pending" && syncState !== "syncing";
   const inspectorTitle = isInspectorOpen ? "隐藏右侧栏" : "显示右侧栏";
   const shouldShowDocumentStatus = Boolean(activeDocument);
   const shouldShowAutoSaveStatus = shouldShowDocumentStatus && status !== null;
+
+  function handleSyncStatusClick() {
+    if (syncState === "disabled") {
+      (onConfigureSync ?? onOpenSettings)?.();
+      return;
+    }
+
+    onSyncNow?.();
+  }
 
   return (
     <footer className="workspace-statusbar">
@@ -109,6 +181,31 @@ export function WorkspaceStatusBar({
         {isSidebarHidden ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
       </button>
       <span className="workspace-status-spacer" />
+      {onOpenSettings ? (
+        <button
+          className="workspace-settings-button"
+          type="button"
+          title="打开设置"
+          aria-label="打开设置"
+          onClick={onOpenSettings}
+        >
+          <Settings size={15} />
+        </button>
+      ) : null}
+      <button
+        className={[
+          "workspace-sync-status",
+          `workspace-sync-status-${syncStatus?.state ?? "disabled"}`,
+        ].join(" ")}
+        type="button"
+        title={syncDisplay.title}
+        aria-label={syncDisplay.title}
+        disabled={!canUseSyncStatus}
+        onClick={handleSyncStatusClick}
+      >
+        {syncDisplay.icon}
+        {syncDisplay.label}
+      </button>
       {shouldShowDocumentStatus && onCloseDocument ? (
         <button
           className="workspace-close-document-button"

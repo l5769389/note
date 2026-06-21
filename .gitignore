@@ -5,6 +5,8 @@ release/
 .idea/
 .env
 .env.local
+.local/
+.notedock-sync-data/
 npm-debug.log*
 *.tsbuildinfo
 coverage/

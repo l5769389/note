@@ -2,6 +2,7 @@ import type {
   DocumentMetadata,
   DocumentType,
   MarkdownDocument,
+  WorkspaceSource,
   WorkspaceSnapshot,
 } from "./types";
 import {
@@ -229,6 +230,59 @@ function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
   };
 }
 
+function normalizeWorkspaceSource(
+  value: unknown,
+  workspacePath?: string,
+): WorkspaceSource | undefined {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Partial<WorkspaceSource>)
+      : null;
+
+  if (record?.kind === "cloud") {
+    const workspaceId =
+      typeof record.workspaceId === "string" ? record.workspaceId.trim() : "";
+    const workspaceName =
+      typeof record.workspaceName === "string" && record.workspaceName.trim()
+        ? record.workspaceName.trim()
+        : "云端笔记";
+    const cachePath =
+      typeof record.cachePath === "string" && record.cachePath.trim()
+        ? record.cachePath.trim()
+        : workspacePath;
+
+    if (workspaceId && cachePath) {
+      return {
+        cachePath,
+        kind: "cloud",
+        workspaceId,
+        workspaceName,
+      };
+    }
+  }
+
+  if (record?.kind === "local") {
+    const directoryPath =
+      typeof record.directoryPath === "string" && record.directoryPath.trim()
+        ? record.directoryPath.trim()
+        : workspacePath;
+
+    return directoryPath
+      ? {
+          directoryPath,
+          kind: "local",
+        }
+      : undefined;
+  }
+
+  return workspacePath
+    ? {
+        directoryPath: workspacePath,
+        kind: "local",
+      }
+    : undefined;
+}
+
 function serializeDocument(document: MarkdownDocument): MarkdownDocument {
   return document.documentType === "pdf" ||
     document.documentType === "word" ||
@@ -249,6 +303,7 @@ export function normalizeWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
     ...parsed,
     activeDocumentId: "",
     documents: parsed.documents.map(normalizeStoredDocument),
+    source: normalizeWorkspaceSource(parsed.source, parsed.workspacePath),
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : now(),
     version: 1,
   };

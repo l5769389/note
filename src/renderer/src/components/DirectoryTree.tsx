@@ -136,6 +136,14 @@ export function DirectoryTreeItems({
             type="button"
             onClick={() => onOpenFile(child.path)}
             onContextMenu={(event) => onFileContextMenu?.(event, child.path)}
+            onMouseDown={(event) => {
+              if (event.detail > 1) {
+                event.preventDefault();
+              }
+            }}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+            }}
             onKeyDown={(event) => {
               if (!isQuickDocumentLinkShortcut(event)) {
                 return;

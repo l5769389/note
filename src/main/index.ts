@@ -12,6 +12,16 @@ import {
   type PersistedAppState,
 } from "../shared/appState";
 import {
+  getWorkspaceRelativeSyncPath,
+  scanWorkspaceSyncFiles,
+  SyncService,
+} from "./syncService";
+import type {
+  SyncConfigurationInput,
+  SyncLoginInput,
+  SyncStatusSnapshot,
+} from "../shared/sync";
+import {
   getClipboardFormatMimeType,
   getMediaFileExtensionFromMimeType,
   getMediaMimeTypeForExtension,
@@ -20,6 +30,11 @@ import {
 const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 const isE2E = process.env.NOTEDOCK_E2E === "1";
 const testUserDataDirectory = process.env.NOTEDOCK_TEST_USER_DATA_DIR;
+const allowMultipleInstances = process.env.NOTEDOCK_ALLOW_MULTI_INSTANCE === "1";
+const skipInitialAppStateRestore =
+  process.env.NOTEDOCK_SKIP_INITIAL_APP_STATE_RESTORE === "1";
+const skipInitialSyncConfigurationRestore =
+  process.env.NOTEDOCK_SKIP_INITIAL_SYNC_CONFIG_RESTORE === "1";
 const appName = "noteDock";
 const appUserModelId = "com.local.notedock";
 const appStateFileName = "notedock-state-v1.json";
@@ -57,7 +72,9 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let syncService: SyncService | null = null;
 const workspaceWatchers = new Map<number, FSWatcher>();
+const syncFileWrites = new Map<string, number>();
 const ignoredDirectoryNames = new Set([
   "build",
   "dist",
@@ -111,6 +128,10 @@ function getAppStateFilePath() {
   return join(app.getPath("userData"), appStateFileName);
 }
 
+function createEmptyPersistedAppState(): PersistedAppState {
+  return { version: persistedAppStateVersion };
+}
+
 async function readPersistedAppState(): Promise<PersistedAppState> {
   try {
     return normalizePersistedAppState(
@@ -153,6 +174,7 @@ type ExportDocumentPayload = {
 type WorkspaceFileChangePayload = {
   event: "add" | "change" | "unlink";
   filePath: string;
+  source?: "sync";
   updatedAt?: string;
 };
 
@@ -621,6 +643,35 @@ function closeWorkspaceWatcher(webContentsId: number) {
   void watcher.close();
 }
 
+function getSyncFileWriteKey(filePath: string) {
+  return resolve(filePath).replace(/\\/g, "/").toLowerCase();
+}
+
+function rememberSyncFileWrite(filePath: string) {
+  syncFileWrites.set(getSyncFileWriteKey(filePath), Date.now() + 10_000);
+}
+
+function consumeSyncFileWrite(filePath: string) {
+  const key = getSyncFileWriteKey(filePath);
+  const expiresAt = syncFileWrites.get(key);
+
+  if (!expiresAt) {
+    return false;
+  }
+
+  if (expiresAt <= Date.now()) {
+    syncFileWrites.delete(key);
+    return false;
+  }
+
+  syncFileWrites.delete(key);
+  return true;
+}
+
+function queueSync() {
+  syncService?.scheduleSync();
+}
+
 function shouldIgnoreWatchPath(path: string) {
   return path
     .split(/[\\/]/)
@@ -631,16 +682,23 @@ async function createWorkspaceFileChangePayload(
   event: WorkspaceFileChangePayload["event"],
   filePath: string,
 ): Promise<WorkspaceFileChangePayload> {
+  const source = consumeSyncFileWrite(filePath) ? "sync" : undefined;
+
   if (event === "unlink") {
-    return { event, filePath };
+    return { event, filePath, ...(source ? { source } : {}) };
   }
 
   try {
     const fileStat = await stat(filePath);
 
-    return { event, filePath, updatedAt: fileStat.mtime.toISOString() };
+    return {
+      event,
+      filePath,
+      ...(source ? { source } : {}),
+      updatedAt: fileStat.mtime.toISOString(),
+    };
   } catch {
-    return { event, filePath };
+    return { event, filePath, ...(source ? { source } : {}) };
   }
 }
 
@@ -925,6 +983,7 @@ function getWindowStateSnapshot(window: BrowserWindow | null) {
   return {
     alwaysOnTop: Boolean(window?.isAlwaysOnTop()),
     fullScreen: Boolean(window?.isFullScreen()),
+    maximized: Boolean(window?.isMaximized()),
   };
 }
 
@@ -1069,18 +1128,13 @@ function createMainWindow(): BrowserWindow {
     hideWindowToTray(window);
   });
 
-  window.on("minimize", () => {
-    if (isQuitting || isE2E) {
-      return;
-    }
-
-    hideWindowToTray(window);
-  });
-
   window.on("show", updateTrayMenu);
   window.on("hide", updateTrayMenu);
   window.on("enter-full-screen", () => sendWindowStateChanged(window));
   window.on("leave-full-screen", () => sendWindowStateChanged(window));
+  window.on("maximize", () => sendWindowStateChanged(window));
+  window.on("unmaximize", () => sendWindowStateChanged(window));
+  window.on("restore", () => sendWindowStateChanged(window));
 
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -1113,10 +1167,156 @@ function createMainWindow(): BrowserWindow {
 }
 
 function registerAppStateIpc() {
-  ipcMain.handle("app-state:load", () => readPersistedAppState());
+  let shouldSkipInitialAppStateLoad = skipInitialAppStateRestore;
+
+  ipcMain.handle("app-state:load", () => {
+    if (shouldSkipInitialAppStateLoad) {
+      shouldSkipInitialAppStateLoad = false;
+      return createEmptyPersistedAppState();
+    }
+
+    return readPersistedAppState();
+  });
 
   ipcMain.handle("app-state:save", async (_, state: PersistedAppState) => {
-    return writePersistedAppState(state);
+    const nextState = await writePersistedAppState(state);
+    queueSync();
+    return nextState;
+  });
+}
+
+function sendSyncStatusChanged(status: SyncStatusSnapshot) {
+  BrowserWindow.getAllWindows().forEach((window) => {
+    if (!window.webContents.isDestroyed()) {
+      window.webContents.send("sync:status-changed", status);
+    }
+  });
+}
+
+async function initializeSyncService() {
+  syncService = new SyncService({
+    getAppState: readPersistedAppState,
+    markSyncFileWrite: rememberSyncFileWrite,
+    notifyStatus: sendSyncStatusChanged,
+    setAppState: writePersistedAppState,
+    skipInitialConfigurationRestore: skipInitialSyncConfigurationRestore,
+    userDataPath: app.getPath("userData"),
+  });
+  await syncService.initialize();
+}
+
+function registerSyncIpc() {
+  ipcMain.handle("sync:configure", async (_, input: SyncConfigurationInput) => {
+    return syncService?.configure(input);
+  });
+
+  ipcMain.handle("sync:create-access-token", async (_, input: SyncLoginInput) => {
+    return syncService?.createAccessToken(input);
+  });
+
+  ipcMain.handle("sync:get-status", () => {
+    return syncService?.getStatus();
+  });
+
+  ipcMain.handle("sync:open-cloud-workspace", async () => {
+    const workspace = await syncService?.openCloudWorkspace();
+
+    if (!workspace) {
+      return null;
+    }
+
+    const [files, tree] = await Promise.all([
+      listMarkdownFiles(workspace.directoryPath),
+      readDirectoryTree(workspace.directoryPath),
+    ]);
+
+    return {
+      ...workspace,
+      files,
+      source: {
+        cachePath: workspace.directoryPath,
+        kind: "cloud",
+        workspaceId: workspace.workspaceId,
+        workspaceName: workspace.workspaceName,
+      },
+      tree,
+    };
+  });
+
+  ipcMain.handle(
+    "sync:import-local-directory-to-cloud",
+    async (_, inputDirectoryPath?: string) => {
+      const sourceDirectoryPath =
+        inputDirectoryPath && (await pathExists(inputDirectoryPath))
+          ? inputDirectoryPath
+          : await pickWorkspaceDirectory();
+
+      if (!sourceDirectoryPath) {
+        return null;
+      }
+
+      const workspace = await syncService?.openCloudWorkspace();
+
+      if (!workspace) {
+        return null;
+      }
+
+      const sourceFiles = await scanWorkspaceSyncFiles(sourceDirectoryPath);
+      let importedCount = 0;
+      let skippedCount = 0;
+
+      for (const sourceFilePath of sourceFiles) {
+        const relativePath = getWorkspaceRelativeSyncPath(
+          sourceDirectoryPath,
+          sourceFilePath,
+        );
+
+        if (!relativePath) {
+          continue;
+        }
+
+        const targetPath = resolve(
+          workspace.directoryPath,
+          ...relativePath.split("/"),
+        );
+
+        if (await pathExists(targetPath)) {
+          skippedCount += 1;
+          continue;
+        }
+
+        await mkdir(dirname(targetPath), { recursive: true });
+        await copyFile(sourceFilePath, targetPath);
+        importedCount += 1;
+      }
+
+      queueSync();
+      await syncService?.syncNow();
+
+      const [files, tree] = await Promise.all([
+        listMarkdownFiles(workspace.directoryPath),
+        readDirectoryTree(workspace.directoryPath),
+      ]);
+
+      return {
+        ...workspace,
+        files,
+        importedCount,
+        skippedCount,
+        source: {
+          cachePath: workspace.directoryPath,
+          kind: "cloud",
+          workspaceId: workspace.workspaceId,
+          workspaceName: workspace.workspaceName,
+        },
+        sourceDirectoryPath,
+        tree,
+      };
+    },
+  );
+
+  ipcMain.handle("sync:now", async () => {
+    return syncService?.syncNow();
   });
 }
 
@@ -1254,6 +1454,7 @@ function registerFileIpc() {
     }
 
     await writeFile(result.filePath, payload.content, "utf-8");
+    queueSync();
     return readMarkdownFile(result.filePath);
   });
 
@@ -1267,6 +1468,7 @@ function registerFileIpc() {
     const content = "";
 
     await writeFile(filePath, content, "utf-8");
+    queueSync();
 
     return readMarkdownFile(filePath);
   });
@@ -1293,6 +1495,7 @@ function registerFileIpc() {
 
       const filePath = await createUniqueDocumentPath(directoryPath, title, extension);
       await writeFile(filePath, payload.content, "utf-8");
+      queueSync();
 
       return readMarkdownFile(filePath);
     },
@@ -1314,6 +1517,7 @@ function registerFileIpc() {
     const targetPath = await createUniqueDocumentPath(dirname(filePath), title, extension);
 
     await copyFile(filePath, targetPath);
+    queueSync();
 
     return readMarkdownFile(targetPath);
   });
@@ -1330,6 +1534,7 @@ function registerFileIpc() {
     }
 
     await rm(filePath, { force: true });
+    queueSync();
 
     return true;
   });
@@ -1354,6 +1559,7 @@ function registerFileIpc() {
       } else {
         await writeFile(assetFilePath, payload.content, "utf-8");
       }
+      queueSync();
 
       return {
         assetFilePath,
@@ -1388,6 +1594,7 @@ function registerFileIpc() {
       );
 
       await copyFile(payload.sourceFilePath, assetFilePath);
+      queueSync();
 
       return {
         assetFilePath,
@@ -1418,6 +1625,7 @@ function registerFileIpc() {
 
       await mkdir(dirname(assetFilePath), { recursive: true });
       await writeFile(assetFilePath, payload.content, "utf-8");
+      queueSync();
 
       return {
         assetFilePath,
@@ -1455,6 +1663,7 @@ function registerFileIpc() {
       );
 
       await rename(currentAssetFilePath, nextAssetFilePath);
+      queueSync();
 
       return {
         assetFilePath: nextAssetFilePath,
@@ -1491,6 +1700,7 @@ function registerFileIpc() {
 
   ipcMain.handle("workspace:write-markdown-file", async (_, payload: { content: string; filePath: string }) => {
     await writeFile(payload.filePath, payload.content, "utf-8");
+    queueSync();
     return readMarkdownFile(payload.filePath);
   });
 
@@ -1742,19 +1952,21 @@ function registerWindowIpc() {
   });
 }
 
-const singleInstanceLock = app.requestSingleInstanceLock();
+const singleInstanceLock = allowMultipleInstances || app.requestSingleInstanceLock();
 
 if (!singleInstanceLock) {
   app.quit();
 } else {
-  if (!isE2E) {
+  if (!isE2E && !allowMultipleInstances) {
     app.on("second-instance", requestInspirationNote);
   }
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     registerLocalPreviewProtocol();
+    await initializeSyncService();
     registerAppStateIpc();
+    registerSyncIpc();
     registerFileIpc();
     registerWindowIpc();
     createMainWindow();

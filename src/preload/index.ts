@@ -1,16 +1,24 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { IpcRendererEvent } from "electron";
 import type { PersistedAppState } from "../shared/appState";
+import type {
+  SyncConfigurationInput,
+  SyncLoginInput,
+  SyncLoginResult,
+  SyncStatusSnapshot,
+} from "../shared/sync";
 
 type WorkspaceFileChangePayload = {
   event: "add" | "change" | "unlink";
   filePath: string;
+  source?: "sync";
   updatedAt?: string;
 };
 
 type WindowStateSnapshot = {
   alwaysOnTop: boolean;
   fullScreen: boolean;
+  maximized: boolean;
 };
 
 contextBridge.exposeInMainWorld("desktop", {
@@ -61,6 +69,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("window:new"),
   getWindowState: () =>
     ipcRenderer.invoke("window:get-state"),
+  getSyncStatus: () =>
+    ipcRenderer.invoke("sync:get-status"),
   onWorkspaceFileChanged: (
     callback: (payload: WorkspaceFileChangePayload) => void,
   ) => {
@@ -105,6 +115,17 @@ contextBridge.exposeInMainWorld("desktop", {
 
     return () => {
       ipcRenderer.removeListener("window:state-changed", listener);
+    };
+  },
+  onSyncStatusChanged: (callback: (status: SyncStatusSnapshot) => void) => {
+    const listener = (_: IpcRendererEvent, status: SyncStatusSnapshot) => {
+      callback(status);
+    };
+
+    ipcRenderer.on("sync:status-changed", listener);
+
+    return () => {
+      ipcRenderer.removeListener("sync:status-changed", listener);
     };
   },
   openWorkspaceDirectory: () =>
@@ -159,6 +180,16 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("window:reset-zoom"),
   setZoomFactor: (factor: number) =>
     ipcRenderer.invoke("window:set-zoom-factor", factor),
+  syncConfigure: (input: SyncConfigurationInput) =>
+    ipcRenderer.invoke("sync:configure", input),
+  syncCreateAccessToken: (input: SyncLoginInput): Promise<SyncLoginResult> =>
+    ipcRenderer.invoke("sync:create-access-token", input),
+  openCloudWorkspace: () =>
+    ipcRenderer.invoke("sync:open-cloud-workspace"),
+  importLocalDirectoryToCloud: (directoryPath?: string) =>
+    ipcRenderer.invoke("sync:import-local-directory-to-cloud", directoryPath),
+  syncNow: () =>
+    ipcRenderer.invoke("sync:now"),
   watchWorkspaceDirectory: (directoryPath: string) =>
     ipcRenderer.invoke("workspace:watch-directory", directoryPath),
   writeMarkdownFile: (payload: { content: string; filePath: string }) =>

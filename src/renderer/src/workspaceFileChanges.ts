@@ -6,6 +6,7 @@ import { normalizeFilePathKey } from "./workspaceDisplay";
 export type WorkspaceFileChangePayload = {
   event: "add" | "change" | "unlink";
   filePath: string;
+  source?: "sync";
   updatedAt?: string;
 };
 
@@ -71,14 +72,20 @@ export function getDiskChangeDecision({
   diskDocument,
   hasLocalChanges,
   isCurrentDocument,
+  source,
 }: {
   changedDocument: MarkdownDocument;
   diskDocument: MarkdownDocument;
   hasLocalChanges: boolean;
   isCurrentDocument: boolean;
+  source?: WorkspaceFileChangePayload["source"];
 }): DiskChangeDecision {
   if (diskDocument.content === changedDocument.content) {
     return "same-content";
+  }
+
+  if (source === "sync") {
+    return "apply-disk";
   }
 
   if (!hasLocalChanges) {

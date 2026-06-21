@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ClipboardPaste,
   Code2,
+  Cloud,
   Copy,
   ExternalLink,
   FilePlus2,
@@ -25,6 +26,7 @@ import {
   Rows3,
   Search,
   Scissors,
+  Settings2,
   Square,
   Table2,
   Trash2,
@@ -93,6 +95,10 @@ import type {
   TyporaFormatCommand,
   TyporaParagraphCommand,
 } from "./editorCommands";
+import {
+  createInitialSyncStatus,
+  type SyncStatusSnapshot,
+} from "../../shared/sync";
 import { useFindMatchStateMaintenance } from "./findMatchState";
 import { useEditorCssVariables } from "./editorCssVariables";
 import { useGlobalAppShortcuts } from "./globalAppShortcuts";
@@ -146,6 +152,7 @@ import {
 import {
   acknowledgeSavedFileContent as acknowledgeFileContent,
   createSavedFileContentByPath,
+  getWritableDirtyDocuments,
   hasUnsavedFileContent,
   isMatchingInternalFileWrite as matchesInternalFileWrite,
   rememberInternalFileWrite as trackInternalFileWrite,
@@ -231,7 +238,11 @@ import {
   type MediaImportAction,
 } from "./mediaImport";
 import { fileToDataUrl } from "./services/imageUpload";
-import { createDocument, renameFromMarkdown } from "./storage";
+import {
+  createDocument,
+  normalizeWorkspaceSnapshot,
+  renameFromMarkdown,
+} from "./storage";
 import type {
   DirectoryTreeItem,
   DocumentLinkReference,
@@ -241,6 +252,7 @@ import type {
   MarkdownDocument,
   SaveState,
   LocalMarkdownFile,
+  WorkspaceSource,
   WorkspaceSnapshot,
 } from "./types";
 import {
@@ -277,7 +289,10 @@ import { useRecentFileAvailability } from "./recentFileAvailability";
 import { useWindowChromeState } from "./windowChromeState";
 import { useWorkspaceDirectoryWatcher } from "./workspaceDirectoryWatcher";
 import { useWorkspaceDirectoryTree } from "./workspaceDirectoryTree";
-import { useWorkspaceAutosave } from "./workspaceAutosave";
+import {
+  useWorkspaceAutosave,
+  writeWorkspaceDirtyDocuments,
+} from "./workspaceAutosave";
 import {
   useActiveDocumentUiReset,
   useInspirationNoteBridge,
@@ -588,6 +603,19 @@ function markWorkspaceDocumentOpened(
   };
 }
 
+function findWorkspaceDocumentByFilePath(
+  documents: MarkdownDocument[],
+  filePath?: string,
+) {
+  const fileKey = normalizeFilePathKey(filePath);
+
+  return fileKey
+    ? documents.find(
+        (document) => normalizeFilePathKey(document.filePath) === fileKey,
+      )
+    : undefined;
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -668,14 +696,56 @@ function createStartupWorkspace(): WorkspaceSnapshot {
   };
 }
 
+function isCloudWorkspaceSource(source?: WorkspaceSource) {
+  return source?.kind === "cloud";
+}
+
+function getWorkspaceDisplayLabel(workspace: WorkspaceSnapshot) {
+  return isCloudWorkspaceSource(workspace.source)
+    ? workspace.source.workspaceName || "云端笔记"
+    : getPathLabel(workspace.workspacePath);
+}
+
+const settingsDirectoryItems = [
+  {
+    description: "字号、密度与阅读预览",
+    icon: BookOpenText,
+    id: "editor",
+    label: "阅读显示",
+  },
+  {
+    description: "服务器、账号与访问令牌",
+    icon: Cloud,
+    id: "sync",
+    label: "云同步",
+  },
+] as const;
+
+type SettingsSectionId = (typeof settingsDirectoryItems)[number]["id"];
+
+type SyncLoginMessageTone = "error" | "info" | "success";
+
 export function App() {
   const [workspace, setWorkspace] = useState(createStartupWorkspace);
   const [mode, setMode] = useState<EditorMode>(defaultAppSettings.editorMode);
   const [topMenu, setTopMenu] = useState<TopMenu>(null);
   const [theme, setTheme] = useState<AppTheme>("github");
   const [settings, setSettings] = useState<AppSettings>(defaultAppSettings);
+  const [syncStatus, setSyncStatus] = useState<SyncStatusSnapshot>(
+    createInitialSyncStatus(),
+  );
+  const [syncEnabledDraft, setSyncEnabledDraft] = useState(false);
+  const [syncServerUrlDraft, setSyncServerUrlDraft] = useState("");
+  const [syncTokenDraft, setSyncTokenDraft] = useState("");
+  const [syncLoginUsernameDraft, setSyncLoginUsernameDraft] = useState("");
+  const [syncLoginPasswordDraft, setSyncLoginPasswordDraft] = useState("");
+  const [syncLoginMessage, setSyncLoginMessage] = useState("");
+  const [syncLoginMessageTone, setSyncLoginMessageTone] =
+    useState<SyncLoginMessageTone>("info");
+  const [isSyncLoginRunning, setIsSyncLoginRunning] = useState(false);
   const [isPersistenceReady, setIsPersistenceReady] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [windowZoomFactor, setWindowZoomFactor] = useState(defaultWindowZoomFactor);
   const [isZoomIndicatorVisible, setIsZoomIndicatorVisible] = useState(false);
@@ -705,6 +775,8 @@ export function App() {
   } = useAppDialog();
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [activeSettingsSection, setActiveSettingsSection] =
+    useState<SettingsSectionId>("editor");
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isDocumentInspectorOpen, setIsDocumentInspectorOpen] = useState(false);
@@ -848,6 +920,37 @@ export function App() {
       isStale = true;
     };
   }, []);
+
+  useEffect(() => {
+    let isStale = false;
+
+    void window.desktop?.getSyncStatus?.().then((status) => {
+      if (!isStale && status) {
+        setSyncStatus(status);
+      }
+    });
+
+    const unsubscribe = window.desktop?.onSyncStatusChanged?.((status) => {
+      setSyncStatus(status);
+    });
+
+    return () => {
+      isStale = true;
+      unsubscribe?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return;
+    }
+
+    setSyncEnabledDraft(syncStatus.configuration.enabled);
+    setSyncServerUrlDraft(syncStatus.configuration.serverUrl);
+    setSyncTokenDraft("");
+    setSyncLoginMessage("");
+    setSyncLoginMessageTone("info");
+  }, [isSettingsOpen]);
 
   useImmersiveModeState({
     immersiveRevealEdge,
@@ -1171,7 +1274,8 @@ export function App() {
           : null,
     [activeDocument, editingDrawingId],
   );
-  const workspaceLabel = getPathLabel(workspace.workspacePath);
+  const isCloudWorkspace = isCloudWorkspaceSource(workspace.source);
+  const workspaceLabel = getWorkspaceDisplayLabel(workspace);
   const recentDocuments = useMemo(
     () =>
       [...workspace.documents]
@@ -1216,12 +1320,14 @@ export function App() {
       });
     };
 
-    pushDirectory(workspace.workspacePath);
+    if (!isCloudWorkspace) {
+      pushDirectory(workspace.workspacePath);
+    }
     recentDirectoryPaths.forEach(pushDirectory);
     recentDocuments.forEach((document) => pushDirectory(getDirectoryPath(document.filePath)));
 
     return entries.slice(0, sidebarRecentDirectoryLimit);
-  }, [recentDirectoryPaths, recentDocuments, workspace.workspacePath]);
+  }, [isCloudWorkspace, recentDirectoryPaths, recentDocuments, workspace.workspacePath]);
   const activeMarkdownOutline = useMemo(
     () =>
       isMarkdownDocument(activeDocument)
@@ -1307,6 +1413,7 @@ export function App() {
     onWindowStateChanged: window.desktop?.onWindowStateChanged,
     setIsAlwaysOnTop,
     setIsFullScreen,
+    setIsMaximized,
     setWindowZoomFactor,
   });
 
@@ -1352,6 +1459,139 @@ export function App() {
   function updateEditorMode(nextMode: EditorMode) {
     setMode(nextMode);
     updateSetting("editorMode", nextMode);
+  }
+
+  async function persistCurrentAppStateSnapshot() {
+    await savePersistedAppState(
+      createPersistedAppState({
+        recentDirectories: recentDirectoryPaths,
+        settings,
+        sidebarWidth,
+        theme,
+        workspace,
+      }),
+    );
+  }
+
+  async function flushWorkspaceBeforeSync() {
+    await persistCurrentAppStateSnapshot();
+
+    const writableDocuments = getWritableDirtyDocuments({
+      documents: workspace.documents,
+      externalConflictPaths: externalConflictPathsRef.current,
+      savedFileContentByPath: savedFileContentByPathRef.current,
+    });
+
+    if (!writableDocuments.length) {
+      return;
+    }
+
+    await writeWorkspaceDirtyDocuments({
+      acknowledgeSavedFileContent,
+      documents: writableDocuments,
+      rememberInternalFileWrite,
+      writeMarkdownFile: window.desktop?.writeMarkdownFile,
+    });
+  }
+
+  function openSettings(section: SettingsSectionId = "editor") {
+    setActiveSettingsSection(section);
+    setIsSettingsOpen(true);
+  }
+
+  async function configureSyncSettings() {
+    const status = await window.desktop?.syncConfigure?.({
+      enabled: syncEnabledDraft,
+      serverUrl: syncServerUrlDraft,
+      token: syncTokenDraft,
+      workspaceId: syncStatus.configuration.workspaceId,
+    });
+
+    if (status) {
+      setSyncStatus(status);
+      setSyncTokenDraft("");
+    }
+
+    if (status?.configuration.enabled) {
+      await openCloudWorkspace();
+    } else if (isCloudWorkspace) {
+      closeCloudWorkspaceView();
+    }
+  }
+
+  async function loginAndConfigureSync() {
+    if (isSyncLoginRunning) {
+      return;
+    }
+
+    if (
+      !syncServerUrlDraft.trim() ||
+      !syncLoginUsernameDraft.trim() ||
+      !syncLoginPasswordDraft
+    ) {
+      setSyncLoginMessageTone("error");
+      setSyncLoginMessage("请填写服务器地址、用户名和密码。");
+      return;
+    }
+
+    setIsSyncLoginRunning(true);
+    setSyncLoginMessageTone("info");
+    setSyncLoginMessage("正在登录并创建同步令牌...");
+
+    try {
+      const result = await window.desktop?.syncCreateAccessToken?.({
+        password: syncLoginPasswordDraft,
+        serverUrl: syncServerUrlDraft,
+        username: syncLoginUsernameDraft,
+      });
+
+      if (!result) {
+        throw new Error("当前环境不支持同步登录。");
+      }
+
+      const status = await window.desktop?.syncConfigure?.({
+        enabled: true,
+        serverUrl: syncServerUrlDraft,
+        token: result.token,
+        workspaceId: result.workspaceId,
+      });
+
+      setSyncEnabledDraft(true);
+      setSyncTokenDraft("");
+      setSyncLoginPasswordDraft("");
+      setSyncLoginMessageTone("success");
+      setSyncLoginMessage(`已为 ${result.user.username} 创建同步访问令牌。`);
+
+      if (status) {
+        setSyncStatus(status);
+      }
+
+      await openCloudWorkspace();
+    } catch (error) {
+      setSyncLoginMessageTone("error");
+      setSyncLoginMessage(
+        error instanceof Error ? error.message : "同步登录失败。",
+      );
+    } finally {
+      setIsSyncLoginRunning(false);
+    }
+  }
+
+  async function syncNow() {
+    try {
+      await flushWorkspaceBeforeSync();
+      const status = await window.desktop?.syncNow?.();
+
+      if (status) {
+        setSyncStatus(status);
+      }
+    } catch {
+      setSyncStatus((current) => ({
+        ...current,
+        message: "同步前保存本地更改失败。",
+        state: "failed",
+      }));
+    }
   }
 
   async function toggleFullScreen() {
@@ -1729,6 +1969,10 @@ export function App() {
     directoryPath: string,
     localFiles: LocalMarkdownFile[],
     tree: DirectoryTreeItem | null,
+    source: WorkspaceSource = {
+      directoryPath,
+      kind: "local",
+    },
   ) {
     const localDocuments = localFiles.map(createDocumentFromLocalFile);
     const fallbackDocument = createDocument("Untitled", "");
@@ -1744,6 +1988,7 @@ export function App() {
       ...current,
       activeDocumentId: "",
       documents: nextDocuments,
+      source,
       workspacePath: directoryPath,
     }));
     applyDirectoryTree(tree);
@@ -1751,7 +1996,9 @@ export function App() {
     setIsActionsOpen(false);
     setTopMenu(null);
     setSaveState("saved");
-    rememberRecentDirectory(directoryPath);
+    if (source.kind === "local") {
+      rememberRecentDirectory(directoryPath);
+    }
   }
 
   async function openWorkspaceDirectoryPath(directoryPath: string) {
@@ -1821,9 +2068,107 @@ export function App() {
     }
   }
 
+  async function openCloudWorkspace() {
+    try {
+      const openedWorkspace = await window.desktop?.openCloudWorkspace?.();
+
+      if (!openedWorkspace) {
+        return;
+      }
+
+      const source =
+        openedWorkspace.source ?? {
+          cachePath: openedWorkspace.directoryPath,
+          kind: "cloud" as const,
+          workspaceId: openedWorkspace.workspaceId,
+          workspaceName: openedWorkspace.workspaceName || "云端笔记",
+        };
+      const remoteWorkspace = openedWorkspace.appState?.workspace
+        ? normalizeWorkspaceSnapshot(openedWorkspace.appState.workspace)
+        : null;
+
+      if (remoteWorkspace?.documents.length) {
+        const nextWorkspace = {
+          ...remoteWorkspace,
+          activeDocumentId: "",
+          source,
+          workspacePath: openedWorkspace.directoryPath,
+        };
+
+        savedFileContentByPathRef.current =
+          createSavedFileContentByPath(nextWorkspace.documents);
+        setWorkspace(nextWorkspace);
+        applyDirectoryTree(openedWorkspace.tree ?? null);
+        setIsHomeOpen(true);
+        setIsActionsOpen(false);
+        setTopMenu(null);
+        setSaveState("saved");
+        setSyncEnabledDraft(true);
+        return;
+      }
+
+      applyWorkspaceDirectory(
+        openedWorkspace.directoryPath,
+        openedWorkspace.files ?? [],
+        openedWorkspace.tree ?? null,
+        source,
+      );
+      setSyncEnabledDraft(true);
+    } catch (error) {
+      setSyncLoginMessageTone("error");
+      setSyncLoginMessage(
+        error instanceof Error ? error.message : "打开云端笔记失败。",
+      );
+      setSaveState("failed");
+    }
+  }
+
+  async function importLocalDirectoryToCloud() {
+    try {
+      const importedWorkspace =
+        await window.desktop?.importLocalDirectoryToCloud?.();
+
+      if (!importedWorkspace) {
+        return;
+      }
+
+      applyWorkspaceDirectory(
+        importedWorkspace.directoryPath,
+        importedWorkspace.files ?? [],
+        importedWorkspace.tree ?? null,
+        importedWorkspace.source ?? {
+          cachePath: importedWorkspace.directoryPath,
+          kind: "cloud",
+          workspaceId: importedWorkspace.workspaceId,
+          workspaceName: importedWorkspace.workspaceName || "云端笔记",
+        },
+      );
+      setSyncEnabledDraft(true);
+      setSyncLoginMessageTone("success");
+      setSyncLoginMessage(
+        `已导入 ${importedWorkspace.importedCount} 个文件，跳过 ${importedWorkspace.skippedCount} 个同名文件。`,
+      );
+    } catch (error) {
+      setSyncLoginMessageTone("error");
+      setSyncLoginMessage(
+        error instanceof Error ? error.message : "导入本地文件夹失败。",
+      );
+    }
+  }
+
+  function closeCloudWorkspaceView() {
+    savedFileContentByPathRef.current = new Map();
+    externalConflictPathsRef.current = new Set();
+    setWorkspace(createStartupWorkspace());
+    applyDirectoryTree(null);
+    setIsHomeOpen(true);
+    setSaveState("saved");
+  }
+
   async function openFileFromTree(filePath: string) {
-    const existingDocument = workspace.documents.find(
-      (document) => document.filePath === filePath,
+    const existingDocument = findWorkspaceDocumentByFilePath(
+      workspace.documents,
+      filePath,
     );
     const shouldShowLoading = getDocumentTypeFromPath(filePath) !== "markdown";
 
@@ -2551,6 +2896,18 @@ export function App() {
         title: "文件不存在",
         tone: "warning",
       });
+      return;
+    }
+
+    const cachedDocument = findWorkspaceDocumentByFilePath(
+      workspace.documents,
+      document.filePath,
+    );
+
+    if (cachedDocument) {
+      setActiveDocument(cachedDocument.id);
+      rememberRecentDirectory(getDirectoryPath(cachedDocument.filePath));
+      setIsHomeOpen(false);
       return;
     }
 
@@ -3498,7 +3855,7 @@ export function App() {
         [payload.filePath]: false,
       }));
 
-      if (isCurrentDocument) {
+      if (isCurrentDocument && payload.source !== "sync") {
         externalConflictPathsRef.current.add(fileKey);
         void showAppAlert(getExternalDeleteAlert(payload.filePath));
       }
@@ -3559,6 +3916,7 @@ export function App() {
       diskDocument,
       hasLocalChanges,
       isCurrentDocument,
+      source: payload.source,
     });
 
     if (diskChangeDecision === "same-content") {
@@ -5216,7 +5574,7 @@ export function App() {
             <MenuItem label="显示 / 隐藏侧边栏" shortcut="Ctrl+Shift+L" onSelect={() => runTopMenuAction(toggleSidebarVisibility)} />
             <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(openWorkspaceSearch)} />
             <MenuItem label="链接总览" onSelect={() => runTopMenuAction(openKnowledgeRelationsPanel)} />
-            <MenuItem label="阅读设置..." onSelect={() => runTopMenuAction(() => setIsSettingsOpen(true))} />
+            <MenuItem label="阅读设置..." onSelect={() => runTopMenuAction(() => openSettings("editor"))} />
             <MenuSubmenu label="编辑模式" testId="menu-editor-mode">
               <MenuItem
                 checked={mode === "typora"}
@@ -5475,6 +5833,31 @@ export function App() {
   const fontSizeAdjustmentLabel = formatEditorFontSizeAdjustment(
     settings.editorFontSizeAdjustment,
   );
+  const syncStatusLabel =
+    syncStatus.state === "synced"
+      ? "已同步"
+      : syncStatus.state === "syncing"
+        ? "同步中"
+        : syncStatus.state === "pending"
+          ? "等待同步"
+          : syncStatus.state === "failed"
+            ? "同步失败"
+            : syncStatus.configuration.enabled
+              ? "已启用"
+              : "未启用";
+  const syncStatusTone =
+    syncStatus.state === "synced"
+      ? "success"
+      : syncStatus.state === "syncing" || syncStatus.state === "pending"
+        ? "info"
+        : syncStatus.state === "failed"
+          ? "error"
+          : syncStatus.configuration.enabled
+            ? "info"
+            : "neutral";
+  const activeSettingsItem =
+    settingsDirectoryItems.find((item) => item.id === activeSettingsSection) ??
+    settingsDirectoryItems[0];
   const windowZoomPercent = Math.round(windowZoomFactor * 100);
   const isDefaultWindowZoom =
     Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
@@ -5577,6 +5960,8 @@ export function App() {
       >
         <AppMenubar
           appLogoUrl={appLogoUrl}
+          isFullScreen={isFullScreen}
+          isMaximized={isMaximized}
           onHideTop={() => hideImmersiveEdge("top")}
           onOpenHome={() => setIsHomeOpen(true)}
           onRevealTop={() => revealImmersiveEdge("top")}
@@ -5657,6 +6042,13 @@ export function App() {
           >
             {sidebarTab === "files" ? (
               <>
+              {isCloudWorkspace ? (
+                <div className="explorer-cloud-marker" title={workspace.workspacePath}>
+                  <Cloud size={15} />
+                  <span>云端文件夹</span>
+                  <strong>{workspaceLabel}</strong>
+                </div>
+              ) : null}
               {directoryTree ? (
                 directoryTree.children?.length ? (
                   fileExplorerView === "tree" ? (
@@ -5839,6 +6231,7 @@ export function App() {
               data-sidebar-actions-trigger
               onClick={() => setIsActionsOpen((current) => !current)}
             >
+              {isCloudWorkspace ? <Cloud size={14} /> : null}
               {workspaceLabel}
             </button>
             <button
@@ -6094,8 +6487,12 @@ export function App() {
             isSidebarHidden={isSidebarHidden}
             missingAssetReferences={missingAssetReferences}
             saveState={saveState}
+            syncStatus={syncStatus}
             wordCount={activeDocumentWordCount}
             onCloseDocument={closeActiveDocument}
+            onConfigureSync={() => openSettings("sync")}
+            onOpenSettings={() => openSettings("editor")}
+            onSyncNow={syncNow}
             onToggleInspector={toggleDocumentInspector}
             onToggleSidebar={toggleSidebarVisibility}
           />
@@ -6774,12 +7171,12 @@ export function App() {
               <div className="settings-header">
                 <div className="settings-title-group">
                   <span className="settings-title-icon" aria-hidden="true">
-                    <BookOpenText size={18} />
+                    <Settings2 size={18} />
                   </span>
                   <div>
-                    <Dialog.Title className="settings-title">阅读设置</Dialog.Title>
+                    <Dialog.Title className="settings-title">设置</Dialog.Title>
                     <p className="settings-subtitle">
-                      调整正文区域的显示大小，实时影响 Markdown、HTML 与编辑器内容。
+                      管理阅读显示和同步连接。设置会保存在本机。
                     </p>
                   </div>
                 </div>
@@ -6791,119 +7188,323 @@ export function App() {
               </div>
 
               <div className="settings-body">
-                <section className="settings-section">
-                  <div className="settings-section-heading">
-                    <div>
-                      <div className="settings-section-title">正文大小</div>
-                      <p>
-                        选择一个阅读密度预设，字体、行高、表格留白和内容宽度会一起调整。
-                      </p>
-                    </div>
-                    <span className="settings-current-badge">
-                      当前：{selectedContentDensity.label} · {fontSizeAdjustmentLabel}
-                    </span>
-                  </div>
+                <aside className="settings-nav" aria-label="设置目录">
+                  {settingsDirectoryItems.map((item) => {
+                    const DirectoryIcon = item.icon;
 
-                  <ToggleGroup.Root
-                    className="settings-density-grid"
-                    type="single"
-                    value={settings.editorContentDensity}
-                    aria-label="正文大小"
-                    onValueChange={(nextDensity) => {
-                      if (nextDensity) {
-                        updateSetting(
-                          "editorContentDensity",
-                          nextDensity as AppSettings["editorContentDensity"],
-                        );
-                      }
-                    }}
-                  >
-                    {editorContentDensityOptions.map((option) => (
-                      <ToggleGroup.Item
-                        className="settings-density-card"
-                        key={option.value}
-                        value={option.value}
-                        aria-label={option.label}
-                      >
-                        <span className="settings-density-title">
-                          <strong>{option.label}</strong>
-                          <span>{option.meta}</span>
-                        </span>
-                        <span className="settings-density-description">
-                          {option.description}
-                        </span>
-                        <span
-                          className={`settings-density-preview settings-density-preview-${option.value}`}
-                          aria-hidden="true"
-                        >
-                          <span />
-                          <span />
-                          <span />
-                        </span>
-                      </ToggleGroup.Item>
-                    ))}
-                  </ToggleGroup.Root>
-
-                  <div className="settings-font-control">
-                    <div className="settings-font-control-header">
-                      <div>
-                        <div className="settings-font-control-title">字号微调</div>
-                        <p>在当前预设基础上拖拽调整，适合按屏幕距离和主题字体再细调。</p>
-                      </div>
-                      <span className="settings-font-value-badge">
-                        {fontSizeAdjustmentLabel}
-                      </span>
-                    </div>
-                    <div className="settings-font-slider-row">
-                      <span>{editorFontSizeAdjustmentRange.min}px</span>
-                      <input
-                        className="settings-font-slider"
-                        type="range"
-                        min={editorFontSizeAdjustmentRange.min}
-                        max={editorFontSizeAdjustmentRange.max}
-                        step={editorFontSizeAdjustmentRange.step}
-                        value={settings.editorFontSizeAdjustment}
-                        aria-label="字号微调"
-                        onChange={(event) => {
-                          updateSetting(
-                            "editorFontSizeAdjustment",
-                            Number(event.currentTarget.value),
-                          );
-                        }}
-                      />
-                      <span>+{editorFontSizeAdjustmentRange.max}px</span>
-                    </div>
-                    <div className="settings-font-control-footer">
-                      <span>预设控制整体密度，微调只改变正文基准字号。</span>
+                    return (
                       <button
-                        className="settings-font-reset"
+                        className={`settings-nav-item ${
+                          activeSettingsSection === item.id
+                            ? "settings-nav-item-active"
+                            : ""
+                        }`}
+                        key={item.id}
                         type="button"
-                        onClick={() =>
-                          updateSetting(
-                            "editorFontSizeAdjustment",
-                            editorFontSizeAdjustmentRange.defaultValue,
-                          )
+                        aria-current={
+                          activeSettingsSection === item.id ? "page" : undefined
                         }
+                        onClick={() => setActiveSettingsSection(item.id)}
                       >
-                        重置到预设
+                        <span className="settings-nav-icon" aria-hidden="true">
+                          <DirectoryIcon size={16} />
+                        </span>
+                        <span className="settings-nav-copy">
+                          <strong>{item.label}</strong>
+                          <span>{item.description}</span>
+                        </span>
                       </button>
-                    </div>
-                  </div>
-                </section>
+                    );
+                  })}
+                </aside>
 
-                <section className="settings-preview-panel" aria-label="显示预览">
-                  <div className="settings-preview-kicker">预览</div>
-                  <h3>项目笔记</h3>
-                  <p>
-                    文本大小会同步影响正文、列表和表格区域。这个设置偏向阅读体验，不改变文档本身内容。
-                  </p>
-                  <div className="settings-preview-table" aria-hidden="true">
-                    <span>类型</span>
-                    <span>状态</span>
-                    <span>Markdown</span>
-                    <span>已同步</span>
+                <div className="settings-content">
+                  <div className="settings-page-heading">
+                    <div>
+                      <div className="settings-page-kicker">偏好设置</div>
+                      <h2>{activeSettingsItem.label}</h2>
+                      <p>{activeSettingsItem.description}</p>
+                    </div>
+                    {activeSettingsSection === "editor" ? (
+                      <span className="settings-status-pill settings-status-pill-neutral">
+                        {selectedContentDensity.label} · {fontSizeAdjustmentLabel}
+                      </span>
+                    ) : (
+                      <span
+                        className={`settings-status-pill settings-status-pill-${syncStatusTone}`}
+                      >
+                        {syncStatusLabel}
+                      </span>
+                    )}
                   </div>
-                </section>
+
+                  {activeSettingsSection === "editor" ? (
+                    <div className="settings-editor-content">
+                      <section className="settings-section settings-panel">
+                        <div className="settings-section-heading">
+                          <div>
+                            <div className="settings-section-title">阅读密度</div>
+                            <p>
+                              选择一个阅读密度预设，字体、行高、表格留白和内容宽度会一起调整。
+                            </p>
+                          </div>
+                        </div>
+
+                        <ToggleGroup.Root
+                          className="settings-density-grid"
+                          type="single"
+                          value={settings.editorContentDensity}
+                          aria-label="正文大小"
+                          onValueChange={(nextDensity) => {
+                            if (nextDensity) {
+                              updateSetting(
+                                "editorContentDensity",
+                                nextDensity as AppSettings["editorContentDensity"],
+                              );
+                            }
+                          }}
+                        >
+                          {editorContentDensityOptions.map((option) => (
+                            <ToggleGroup.Item
+                              className="settings-density-card"
+                              key={option.value}
+                              value={option.value}
+                              aria-label={option.label}
+                            >
+                              <span className="settings-density-title">
+                                <strong>{option.label}</strong>
+                                <span>{option.meta}</span>
+                              </span>
+                              <span className="settings-density-description">
+                                {option.description}
+                              </span>
+                              <span
+                                className={`settings-density-preview settings-density-preview-${option.value}`}
+                                aria-hidden="true"
+                              >
+                                <span />
+                                <span />
+                                <span />
+                              </span>
+                            </ToggleGroup.Item>
+                          ))}
+                        </ToggleGroup.Root>
+
+                        <div className="settings-font-control">
+                          <div className="settings-font-control-header">
+                            <div>
+                              <div className="settings-font-control-title">
+                                字号微调
+                              </div>
+                              <p>
+                                在当前预设基础上拖拽调整，适合按屏幕距离和主题字体再细调。
+                              </p>
+                            </div>
+                            <span className="settings-font-value-badge">
+                              {fontSizeAdjustmentLabel}
+                            </span>
+                          </div>
+                          <div className="settings-font-slider-row">
+                            <span>{editorFontSizeAdjustmentRange.min}px</span>
+                            <input
+                              className="settings-font-slider"
+                              type="range"
+                              min={editorFontSizeAdjustmentRange.min}
+                              max={editorFontSizeAdjustmentRange.max}
+                              step={editorFontSizeAdjustmentRange.step}
+                              value={settings.editorFontSizeAdjustment}
+                              aria-label="字号微调"
+                              onChange={(event) => {
+                                updateSetting(
+                                  "editorFontSizeAdjustment",
+                                  Number(event.currentTarget.value),
+                                );
+                              }}
+                            />
+                            <span>+{editorFontSizeAdjustmentRange.max}px</span>
+                          </div>
+                          <div className="settings-font-control-footer">
+                            <span>预设控制整体密度，微调只改变正文基准字号。</span>
+                            <button
+                              className="settings-font-reset"
+                              type="button"
+                              onClick={() =>
+                                updateSetting(
+                                  "editorFontSizeAdjustment",
+                                  editorFontSizeAdjustmentRange.defaultValue,
+                                )
+                              }
+                            >
+                              重置到预设
+                            </button>
+                          </div>
+                        </div>
+                      </section>
+
+                      <section
+                        className="settings-preview-panel settings-panel"
+                        aria-label="显示预览"
+                      >
+                        <div className="settings-preview-kicker">预览</div>
+                        <h3>项目笔记</h3>
+                        <p>
+                          文本大小会同步影响正文、列表和表格区域。这个设置偏向阅读体验，不改变文档本身内容。
+                        </p>
+                        <div className="settings-preview-table" aria-hidden="true">
+                          <span>类型</span>
+                          <span>状态</span>
+                          <span>Markdown</span>
+                          <span>已同步</span>
+                        </div>
+                      </section>
+                    </div>
+                  ) : null}
+
+                  {activeSettingsSection === "sync" ? (
+                    <section className="settings-section settings-sync-section settings-panel">
+                      <div className="settings-sync-summary" aria-label="同步说明">
+                        <div>
+                          <span>主存储</span>
+                          <strong>本地文件夹</strong>
+                        </div>
+                        <div>
+                          <span>远端</span>
+                          <strong>同步镜像</strong>
+                        </div>
+                        <div>
+                          <span>拉取</span>
+                          <strong>30 秒自动检查</strong>
+                        </div>
+                      </div>
+
+                      <div className="settings-sync-grid">
+                        <label className="settings-sync-toggle">
+                          <input
+                            type="checkbox"
+                            checked={syncEnabledDraft}
+                            onChange={(event) =>
+                              setSyncEnabledDraft(event.currentTarget.checked)
+                            }
+                          />
+                          <span>
+                            <strong>启用云同步</strong>
+                            <small>
+                              自动保存后会排队同步，也可以从底部状态栏手动同步。
+                            </small>
+                          </span>
+                        </label>
+                        <label className="settings-sync-field">
+                          <span>服务器地址</span>
+                          <input
+                            type="url"
+                            placeholder="https://sync.example.com"
+                            value={syncServerUrlDraft}
+                            onChange={(event) =>
+                              setSyncServerUrlDraft(event.currentTarget.value)
+                            }
+                          />
+                        </label>
+                        <div className="settings-sync-login-card">
+                          <div className="settings-sync-login-heading">
+                            <strong>账号登录</strong>
+                            <small>
+                              登录后会创建访问令牌并保存在本机，密码不会保存。
+                            </small>
+                          </div>
+                          <label className="settings-sync-field">
+                            <span>用户名</span>
+                            <input
+                              type="text"
+                              autoComplete="username"
+                              placeholder="admin@example.com"
+                              value={syncLoginUsernameDraft}
+                              onChange={(event) =>
+                                setSyncLoginUsernameDraft(
+                                  event.currentTarget.value,
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="settings-sync-field">
+                            <span>密码</span>
+                            <input
+                              type="password"
+                              autoComplete="current-password"
+                              placeholder="服务器账号密码"
+                              value={syncLoginPasswordDraft}
+                              onChange={(event) =>
+                                setSyncLoginPasswordDraft(
+                                  event.currentTarget.value,
+                                )
+                              }
+                            />
+                          </label>
+                          <div className="settings-sync-login-actions">
+                            <button
+                              className="settings-primary-action settings-sync-save"
+                              type="button"
+                              disabled={isSyncLoginRunning}
+                              onClick={() => void loginAndConfigureSync()}
+                            >
+                              {isSyncLoginRunning ? "登录中..." : "登录并启用同步"}
+                            </button>
+                          </div>
+                          {syncLoginMessage ? (
+                            <div
+                              className={`settings-sync-login-message settings-sync-login-message-${syncLoginMessageTone}`}
+                              role={
+                                syncLoginMessageTone === "error"
+                                  ? "alert"
+                                  : "status"
+                              }
+                            >
+                              {syncLoginMessage}
+                            </div>
+                          ) : null}
+                        </div>
+                        <label className="settings-sync-field settings-sync-token-field">
+                          <span>
+                            访问令牌
+                            {syncStatus.configuration.tokenConfigured
+                              ? "（已保存）"
+                              : ""}
+                          </span>
+                          <input
+                            type="password"
+                            placeholder={
+                              syncStatus.configuration.tokenConfigured
+                                ? "留空则继续使用已保存令牌"
+                                : "输入服务器 token"
+                            }
+                            value={syncTokenDraft}
+                            onChange={(event) =>
+                              setSyncTokenDraft(event.currentTarget.value)
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <div className="settings-sync-footer">
+                        <span>{syncStatus.message || "同步配置只保存在本机。"}</span>
+                        <button
+                          className="settings-primary-action settings-sync-save"
+                          type="button"
+                          disabled={!syncStatus.configuration.tokenConfigured}
+                          onClick={() => void importLocalDirectoryToCloud()}
+                        >
+                          导入本地文件夹
+                        </button>
+                        <button
+                          className="settings-primary-action settings-sync-save"
+                          type="button"
+                          onClick={() => void configureSyncSettings()}
+                        >
+                          保存同步配置
+                        </button>
+                      </div>
+                    </section>
+                  ) : null}
+                </div>
               </div>
             </Dialog.Content>
           </Dialog.Portal>

@@ -1,0 +1,16 @@
+.git
+.idea
+.env
+.env.*
+coverage
+dist
+node_modules
+out
+playwright-report
+release
+test-results
+*.log
+*.tsbuildinfo
+
+Dockerfile*
+!Dockerfile.sync-server

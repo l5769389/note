@@ -6,10 +6,17 @@ import type {
   LocalWorkspaceDirectory,
 } from "./types";
 import type { PersistedAppState } from "../../shared/appState";
+import type {
+  SyncConfigurationInput,
+  SyncLoginInput,
+  SyncLoginResult,
+  SyncStatusSnapshot,
+} from "../../shared/sync";
 
 type WorkspaceFileChangePayload = {
   event: "add" | "change" | "unlink";
   filePath: string;
+  source?: "sync";
   updatedAt?: string;
 };
 
@@ -76,7 +83,19 @@ type DesktopApi = {
   getWindowState: () => Promise<{
     alwaysOnTop: boolean;
     fullScreen: boolean;
+    maximized: boolean;
   }>;
+  getSyncStatus: () => Promise<SyncStatusSnapshot | undefined>;
+  importLocalDirectoryToCloud: (directoryPath?: string) => Promise<
+    | (LocalWorkspaceDirectory & {
+        importedCount: number;
+        skippedCount: number;
+        sourceDirectoryPath: string;
+        workspaceId: string;
+        workspaceName: string;
+      })
+    | null
+  >;
   listMarkdownFiles: (directoryPath: string) => Promise<LocalMarkdownFile[]>;
   newWindow: () => Promise<void>;
   onWorkspaceFileChanged: (
@@ -84,9 +103,24 @@ type DesktopApi = {
   ) => () => void;
   onInspirationNote: (callback: () => void) => () => void;
   onWindowStateChanged: (
-    callback: (state: { alwaysOnTop: boolean; fullScreen: boolean }) => void,
+    callback: (state: {
+      alwaysOnTop: boolean;
+      fullScreen: boolean;
+      maximized: boolean;
+    }) => void,
+  ) => () => void;
+  onSyncStatusChanged: (
+    callback: (status: SyncStatusSnapshot) => void,
   ) => () => void;
   onZoomFactorChanged: (callback: (factor: number) => void) => () => void;
+  openCloudWorkspace: () => Promise<
+    | (LocalWorkspaceDirectory & {
+        appState?: PersistedAppState;
+        workspaceId: string;
+        workspaceName: string;
+      })
+    | null
+  >;
   openPath: (targetPath: string) => Promise<string>;
   openWorkspaceDirectory: () => Promise<LocalWorkspaceDirectory | null>;
   pathExists: (filePath: string) => Promise<boolean>;
@@ -126,6 +160,9 @@ type DesktopApi = {
   windowControl: (action: "close" | "maximize" | "minimize") => Promise<boolean | void>;
   resetZoom: () => Promise<number>;
   setZoomFactor: (factor: number) => Promise<number>;
+  syncConfigure: (input: SyncConfigurationInput) => Promise<SyncStatusSnapshot | undefined>;
+  syncCreateAccessToken: (input: SyncLoginInput) => Promise<SyncLoginResult>;
+  syncNow: () => Promise<SyncStatusSnapshot | undefined>;
   toggleAlwaysOnTop: () => Promise<boolean>;
   toggleFullScreen: () => Promise<boolean>;
   watchWorkspaceDirectory: (directoryPath: string) => Promise<boolean>;

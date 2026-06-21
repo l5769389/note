@@ -49,10 +49,23 @@ export type MarkdownDocument = {
   updatedAt: string;
 };
 
+export type WorkspaceSource =
+  | {
+      directoryPath: string;
+      kind: "local";
+    }
+  | {
+      cachePath: string;
+      kind: "cloud";
+      workspaceId: string;
+      workspaceName: string;
+    };
+
 export type WorkspaceSnapshot = {
   version: 1;
   activeDocumentId: string;
   documents: MarkdownDocument[];
+  source?: WorkspaceSource;
   workspacePath?: string;
   updatedAt: string;
 };
@@ -79,5 +92,6 @@ export type LocalMarkdownFile = {
 export type LocalWorkspaceDirectory = {
   directoryPath: string;
   files: LocalMarkdownFile[];
+  source?: WorkspaceSource;
   tree: DirectoryTreeItem;
 };

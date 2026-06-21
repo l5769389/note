@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+
+FROM node:26-bookworm-slim AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.server.json ./
+COPY server ./server
+COPY src/shared ./src/shared
+
+RUN npm ci --ignore-scripts --omit=optional
+RUN npm run build:sync-server
+
+FROM node:26-bookworm-slim AS runtime
+
+ENV NODE_ENV=production \
+    NOTEDOCK_SYNC_PORT=47831 \
+    NOTEDOCK_SYNC_DATA_DIR=/data
+
+WORKDIR /app
+
+RUN useradd --system --create-home --uid 10001 notedock \
+  && mkdir -p /data \
+  && chown -R notedock:notedock /app /data
+
+COPY --from=build --chown=notedock:notedock /app/out ./out
+COPY --from=build --chown=notedock:notedock /app/package.json ./package.json
+
+USER notedock
+
+EXPOSE 47831
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.NOTEDOCK_SYNC_PORT || 47831) + '/api/v1/sync/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+CMD ["node", "out/server/syncServer.js"]

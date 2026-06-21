@@ -163,6 +163,14 @@ export function DirectoryFileList({
             type="button"
             onClick={() => onOpenFile(file.path)}
             onContextMenu={(event) => onFileContextMenu?.(event, file.path)}
+            onMouseDown={(event) => {
+              if (event.detail > 1) {
+                event.preventDefault();
+              }
+            }}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+            }}
             onKeyDown={(event) => {
               if (!isQuickDocumentLinkShortcut(event)) {
                 return;

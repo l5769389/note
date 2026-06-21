@@ -7,9 +7,14 @@
   "main": "out/main/index.js",
   "scripts": {
     "ensure:electron": "node scripts/ensure-electron.cjs",
+    "dev:local": "powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1",
+    "dev:local:ab": "powershell -ExecutionPolicy Bypass -File scripts/dev-local-ab.ps1",
+    "dev:local:app": "powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -AppOnly",
+    "dev:local:server": "powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -ServerOnly",
     "predev": "npm run ensure:electron",
     "dev": "electron-vite dev",
     "build": "tsc -b && electron-vite build",
+    "build:sync-server": "tsc -p tsconfig.server.json",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis",
     "icons": "powershell -ExecutionPolicy Bypass -File scripts/generate-icons.ps1",
@@ -20,7 +25,12 @@
     "test:all": "npm run build && npm run test:unit && npm run test:e2e && npm run test:coverage",
     "screenshots:feature": "npm run build && node scripts/capture-feature-screenshots.mjs",
     "prepreview": "npm run ensure:electron",
-    "preview": "electron-vite preview"
+    "preview": "electron-vite preview",
+    "sync:server": "npm run build:sync-server && node out/server/syncServer.js",
+    "sync:docker:build": "docker build -f Dockerfile.sync-server -t notedock-sync-server:latest .",
+    "sync:docker:up": "docker compose --env-file deploy/sync-server/.env -f deploy/sync-server/docker-compose.yml up -d --build",
+    "sync:docker:down": "docker compose --env-file deploy/sync-server/.env -f deploy/sync-server/docker-compose.yml down",
+    "sync:docker:logs": "docker compose --env-file deploy/sync-server/.env -f deploy/sync-server/docker-compose.yml logs -f notedock-sync"
   },
   "build": {
     "appId": "com.local.notedock",
