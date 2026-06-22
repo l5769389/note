@@ -79,6 +79,7 @@ const syncRequestTimeoutMs = 30_000;
 const syncScheduleDelayMs = 1_200;
 
 export type SyncServiceOptions = {
+  defaultConfiguration?: SyncConfiguration;
   getAppState: () => Promise<PersistedAppState>;
   markSyncFileWrite?: (filePath: string) => void;
   notifyStatus: (status: SyncStatusSnapshot) => void;
@@ -575,9 +576,13 @@ function getSyncConfigFilePath(userDataPath: string) {
   return join(userDataPath, syncConfigFileName);
 }
 
-async function readSyncConfiguration(userDataPath: string) {
+async function readSyncConfiguration(
+  userDataPath: string,
+  defaultConfiguration: SyncConfiguration,
+) {
   return normalizeSyncConfiguration(
     await readJsonFile(getSyncConfigFilePath(userDataPath)),
+    defaultConfiguration,
   );
 }
 
@@ -593,19 +598,29 @@ async function readResponseBody(response: Response) {
 }
 
 export class SyncService {
-  private configuration = createDefaultSyncConfiguration();
+  private configuration: SyncConfiguration;
   private isRunning = false;
   private pendingRun = false;
   private pollTimer: NodeJS.Timeout | null = null;
   private scheduleTimer: NodeJS.Timeout | null = null;
-  private status = createInitialSyncStatus(this.configuration);
+  private status: SyncStatusSnapshot;
 
-  constructor(private readonly options: SyncServiceOptions) {}
+  constructor(private readonly options: SyncServiceOptions) {
+    this.configuration =
+      this.options.defaultConfiguration ?? createDefaultSyncConfiguration();
+    this.status = createInitialSyncStatus(this.configuration);
+  }
 
   async initialize() {
+    const defaultConfiguration =
+      this.options.defaultConfiguration ?? createDefaultSyncConfiguration();
+
     this.configuration = this.options.skipInitialConfigurationRestore
-      ? createDefaultSyncConfiguration()
-      : await readSyncConfiguration(this.options.userDataPath);
+      ? defaultConfiguration
+      : await readSyncConfiguration(
+          this.options.userDataPath,
+          defaultConfiguration,
+        );
     this.setStatus({
       configuration: getPublicSyncConfiguration(this.configuration),
       state: this.configuration.enabled ? "idle" : "disabled",

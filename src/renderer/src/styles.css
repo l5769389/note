@@ -5557,39 +5557,6 @@ textarea,
   gap: 16px;
 }
 
-.settings-sync-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.settings-sync-summary div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #f8fafc;
-  padding: 10px 12px;
-}
-
-.settings-sync-summary span {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-.settings-sync-summary strong {
-  overflow: hidden;
-  color: #111827;
-  font-size: 13px;
-  font-weight: 850;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .settings-sync-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -5769,10 +5736,6 @@ textarea,
   .settings-page-heading,
   .settings-sync-footer {
     display: grid;
-  }
-
-  .settings-sync-summary {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .settings-sync-grid,
@@ -6810,6 +6773,8 @@ textarea,
 }
 
 .explorer-tree {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   flex: 1;
   overflow-x: hidden;
@@ -6818,31 +6783,127 @@ textarea,
   overscroll-behavior: contain;
 }
 
-.explorer-cloud-marker {
+.explorer-storage-sections {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  min-height: 0;
+  flex: 1 1 auto;
+  gap: 12px;
+  align-content: stretch;
+  overflow: hidden;
+}
+
+.explorer-storage-sections:not(.explorer-storage-sections-single) {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.explorer-storage-sections-single {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.explorer-storage-section {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 10px;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+  contain: layout paint;
+}
+
+.explorer-storage-sections-single .explorer-storage-section {
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.explorer-storage-heading {
+  display: flex;
+  min-width: 0;
   align-items: center;
-  gap: 7px;
-  margin: 0 0 10px;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  background: #f8fbff;
-  padding: 8px 10px;
-  color: #2563eb;
+  gap: 8px;
+  color: #475569;
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 850;
+  letter-spacing: 0;
 }
 
-.explorer-cloud-marker svg {
-  color: #2563eb;
+.explorer-storage-heading span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: #64748b;
 }
 
-.explorer-cloud-marker strong {
+.explorer-storage-heading strong {
   overflow: hidden;
   min-width: 0;
-  color: #344054;
+  color: #111827;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.explorer-storage-heading small {
+  margin-left: auto;
+  color: #8b5cf6;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.explorer-storage-section-cloud .explorer-storage-heading span {
+  color: #4f46e5;
+}
+
+.explorer-storage-section-local .explorer-storage-heading span {
+  color: #d97706;
+}
+
+.explorer-storage-section-drop-target {
+  border-color: #7c3aed;
+  background: rgba(238, 242, 255, 0.9);
+  box-shadow:
+    inset 0 0 0 1px rgba(124, 58, 237, 0.2),
+    0 12px 30px rgba(99, 102, 241, 0.12);
+}
+
+.explorer-storage-tree-scroll,
+.explorer-storage-section .directory-file-list,
+.explorer-storage-empty {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.explorer-storage-tree-scroll {
+  display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 3px;
+}
+
+.explorer-storage-tree-scroll .directory-tree-root,
+.explorer-storage-tree-scroll .directory-tree-branch {
+  min-height: auto;
+  overflow: visible;
+}
+
+.explorer-storage-empty {
+  height: 100%;
+  margin: 0;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.68);
+  padding: 18px 12px;
 }
 
 .explorer-section-row {
@@ -12349,7 +12410,6 @@ body.home-todo-global-dragging * {
 :root[data-theme="night"] .settings-density-description,
 :root[data-theme="night"] .settings-preview-kicker,
 :root[data-theme="night"] .settings-preview-panel p,
-:root[data-theme="night"] .settings-sync-summary span,
 :root[data-theme="night"] .about-subtitle,
 :root[data-theme="night"] .about-body {
   color: #94a3b8;
@@ -12384,7 +12444,6 @@ body.home-todo-global-dragging * {
 :root[data-theme="night"] .settings-font-reset,
 :root[data-theme="night"] .settings-preview-panel,
 :root[data-theme="night"] .settings-preview-table,
-:root[data-theme="night"] .settings-sync-summary div,
 :root[data-theme="night"] .find-field input,
 :root[data-theme="night"] .create-file-input-row,
 :root[data-theme="night"] .create-file-input-row input,
@@ -12480,8 +12539,7 @@ body.home-todo-global-dragging * {
   color: #ddd6fe;
 }
 
-:root[data-theme="night"] .settings-page-heading h2,
-:root[data-theme="night"] .settings-sync-summary strong {
+:root[data-theme="night"] .settings-page-heading h2 {
   color: #e2e8f0;
 }
 
@@ -12551,6 +12609,33 @@ body.home-todo-global-dragging * {
   color: #fca5a5;
 }
 
+:root[data-theme="night"] .explorer-storage-section {
+  border-color: #26344f;
+  background: rgba(17, 28, 51, 0.7);
+}
+
+:root[data-theme="night"] .explorer-storage-heading strong {
+  color: #e2e8f0;
+}
+
+:root[data-theme="night"] .explorer-storage-heading span,
+:root[data-theme="night"] .explorer-storage-heading small {
+  color: #94a3b8;
+}
+
+:root[data-theme="night"] .explorer-storage-section-drop-target {
+  border-color: #8b7cff;
+  background: rgba(30, 41, 59, 0.94);
+  box-shadow:
+    inset 0 0 0 1px rgba(139, 124, 255, 0.28),
+    0 12px 30px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-theme="night"] .explorer-storage-empty {
+  border-color: #334155;
+  background: rgba(15, 23, 42, 0.56);
+}
+
 :root[data-theme="dark"] .settings-dialog {
   border-color: #303746;
   background: #1b1f26;
@@ -12568,8 +12653,7 @@ body.home-todo-global-dragging * {
 :root[data-theme="dark"] .settings-font-control-title,
 :root[data-theme="dark"] .settings-density-title strong,
 :root[data-theme="dark"] .settings-preview-panel h3,
-:root[data-theme="dark"] .settings-preview-table span:nth-child(-n + 2),
-:root[data-theme="dark"] .settings-sync-summary strong {
+:root[data-theme="dark"] .settings-preview-table span:nth-child(-n + 2) {
   color: #f3f4f6;
 }
 
@@ -12583,8 +12667,7 @@ body.home-todo-global-dragging * {
 :root[data-theme="dark"] .settings-density-title span,
 :root[data-theme="dark"] .settings-density-description,
 :root[data-theme="dark"] .settings-preview-kicker,
-:root[data-theme="dark"] .settings-preview-panel p,
-:root[data-theme="dark"] .settings-sync-summary span {
+:root[data-theme="dark"] .settings-preview-panel p {
   color: #9ca3af;
 }
 
@@ -12600,8 +12683,7 @@ body.home-todo-global-dragging * {
 :root[data-theme="dark"] .settings-font-control,
 :root[data-theme="dark"] .settings-font-reset,
 :root[data-theme="dark"] .settings-preview-panel,
-:root[data-theme="dark"] .settings-preview-table,
-:root[data-theme="dark"] .settings-sync-summary div {
+:root[data-theme="dark"] .settings-preview-table {
   border-color: #303746;
   background: #111827;
 }
@@ -12645,6 +12727,33 @@ body.home-todo-global-dragging * {
     inset 3px 0 0 #8b7cff,
     0 0 0 2px rgba(139, 124, 255, 0.14),
     0 10px 24px rgba(0, 0, 0, 0.16);
+}
+
+:root[data-theme="dark"] .explorer-storage-section {
+  border-color: #303746;
+  background: rgba(17, 24, 39, 0.7);
+}
+
+:root[data-theme="dark"] .explorer-storage-heading strong {
+  color: #f3f4f6;
+}
+
+:root[data-theme="dark"] .explorer-storage-heading span,
+:root[data-theme="dark"] .explorer-storage-heading small {
+  color: #9ca3af;
+}
+
+:root[data-theme="dark"] .explorer-storage-section-drop-target {
+  border-color: #8b7cff;
+  background: rgba(31, 41, 55, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(139, 124, 255, 0.24),
+    0 12px 30px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-theme="dark"] .explorer-storage-empty {
+  border-color: #374151;
+  background: rgba(17, 24, 39, 0.52);
 }
 
 :root[data-theme="dark"] .settings-density-preview {

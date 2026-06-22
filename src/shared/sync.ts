@@ -2,6 +2,10 @@ import type { PersistedAppState } from "./appState.js";
 
 export const syncProtocolVersion = 1;
 export const defaultSyncWorkspaceId = "default";
+export const developmentSyncServerUrl = "http://127.0.0.1:47831";
+export const productionSyncServerUrl = "https://sync.notedock.app";
+
+export type SyncRuntimeEnvironment = "development" | "production" | "test";
 
 export type SyncState =
   | "disabled"
@@ -132,6 +136,12 @@ export function normalizeSyncServerUrl(value: unknown) {
   return input.replace(/\/+$/, "");
 }
 
+export function getDefaultSyncServerUrl(environment: SyncRuntimeEnvironment) {
+  return environment === "development" || environment === "test"
+    ? developmentSyncServerUrl
+    : productionSyncServerUrl;
+}
+
 export function getPublicSyncConfiguration(
   configuration: SyncConfiguration,
 ): PublicSyncConfiguration {
@@ -143,10 +153,12 @@ export function getPublicSyncConfiguration(
   };
 }
 
-export function createDefaultSyncConfiguration(): SyncConfiguration {
+export function createDefaultSyncConfiguration(
+  serverUrl = productionSyncServerUrl,
+): SyncConfiguration {
   return {
     enabled: false,
-    serverUrl: "",
+    serverUrl: normalizeSyncServerUrl(serverUrl),
     token: "",
     workspaceId: defaultSyncWorkspaceId,
   };
@@ -154,6 +166,7 @@ export function createDefaultSyncConfiguration(): SyncConfiguration {
 
 export function normalizeSyncConfiguration(
   value: unknown,
+  defaultConfiguration = createDefaultSyncConfiguration(),
 ): SyncConfiguration {
   const record =
     value && typeof value === "object" && !Array.isArray(value)
@@ -161,10 +174,20 @@ export function normalizeSyncConfiguration(
       : {};
 
   return {
-    enabled: Boolean(record.enabled),
-    serverUrl: normalizeSyncServerUrl(record.serverUrl),
-    token: typeof record.token === "string" ? record.token : "",
-    workspaceId: normalizeSyncWorkspaceId(record.workspaceId),
+    enabled:
+      typeof record.enabled === "boolean"
+        ? record.enabled
+        : defaultConfiguration.enabled,
+    serverUrl:
+      normalizeSyncServerUrl(record.serverUrl) ||
+      normalizeSyncServerUrl(defaultConfiguration.serverUrl),
+    token:
+      typeof record.token === "string"
+        ? record.token
+        : defaultConfiguration.token ?? "",
+    workspaceId: normalizeSyncWorkspaceId(
+      record.workspaceId ?? defaultConfiguration.workspaceId,
+    ),
   };
 }
 

@@ -43,6 +43,10 @@ contextBridge.exposeInMainWorld("desktop", {
     fileName: string;
     sourceFilePath: string;
   }) => ipcRenderer.invoke("workspace:copy-asset-from-file", payload),
+  copyEntryToDirectory: (payload: {
+    sourcePath: string;
+    targetDirectoryPath: string;
+  }) => ipcRenderer.invoke("workspace:copy-entry-to-directory", payload),
   createDocumentFile: (payload: {
     content: string;
     directoryPath: string;
@@ -53,6 +57,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("workspace:create-markdown-file", payload),
   deleteDocumentFile: (filePath: string) =>
     ipcRenderer.invoke("workspace:delete-document-file", filePath),
+  deleteWorkspaceEntry: (entryPath: string) =>
+    ipcRenderer.invoke("workspace:delete-workspace-entry", entryPath),
   duplicateDocumentFile: (filePath: string) =>
     ipcRenderer.invoke("workspace:duplicate-document-file", filePath),
   exportHtmlFile: (payload: { filePath?: string; html: string; title: string }) =>

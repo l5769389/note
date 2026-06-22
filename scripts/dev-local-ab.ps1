@@ -1,5 +1,5 @@
 param(
-  [string]$AdminPassword = "notedock-local-admin",
+  [string]$AdminPassword = "123",
   [string]$AdminUsername = "admin",
   [switch]$Help,
   [switch]$NoBuild,
@@ -107,6 +107,7 @@ if (Test-HttpOk $healthUrl) {
 `$env:NOTEDOCK_SYNC_DATA_DIR = $(ConvertTo-PowerShellLiteral $serverDataDir);
 `$env:NOTEDOCK_ADMIN_USERNAME = $(ConvertTo-PowerShellLiteral $AdminUsername);
 `$env:NOTEDOCK_ADMIN_PASSWORD = $(ConvertTo-PowerShellLiteral $AdminPassword);
+`$env:NOTEDOCK_ALLOW_WEAK_SYNC_PASSWORD = '1';
 `$env:NOTEDOCK_SYNC_TOKEN = '';
 Set-Location $(ConvertTo-PowerShellLiteral $repoRoot);
 node out/server/syncServer.js

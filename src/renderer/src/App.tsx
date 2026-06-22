@@ -96,7 +96,9 @@ import type {
   TyporaParagraphCommand,
 } from "./editorCommands";
 import {
+  createDefaultSyncConfiguration,
   createInitialSyncStatus,
+  getDefaultSyncServerUrl,
   type SyncStatusSnapshot,
 } from "../../shared/sync";
 import { useFindMatchStateMaintenance } from "./findMatchState";
@@ -238,17 +240,14 @@ import {
   type MediaImportAction,
 } from "./mediaImport";
 import { fileToDataUrl } from "./services/imageUpload";
-import {
-  createDocument,
-  normalizeWorkspaceSnapshot,
-  renameFromMarkdown,
-} from "./storage";
+import { createDocument, renameFromMarkdown } from "./storage";
 import type {
   DirectoryTreeItem,
   DocumentLinkReference,
   DocumentMetadata,
   DrawingAsset,
   EditorMode,
+  LocalWorkspaceDirectory,
   MarkdownDocument,
   SaveState,
   LocalMarkdownFile,
@@ -714,7 +713,7 @@ const settingsDirectoryItems = [
     label: "阅读显示",
   },
   {
-    description: "服务器、账号与访问令牌",
+    description: "服务器与账号登录",
     icon: Cloud,
     id: "sync",
     label: "云同步",
@@ -724,6 +723,36 @@ const settingsDirectoryItems = [
 type SettingsSectionId = (typeof settingsDirectoryItems)[number]["id"];
 
 type SyncLoginMessageTone = "error" | "info" | "success";
+type SidebarStorageKind = "local" | "cloud";
+
+type SidebarDragPayload = {
+  entryType: DirectoryTreeItem["type"];
+  path: string;
+  source: SidebarStorageKind;
+};
+
+type CloudSidebarWorkspace = {
+  directoryPath: string;
+  documents: MarkdownDocument[];
+  source: Extract<WorkspaceSource, { kind: "cloud" }>;
+  tree: DirectoryTreeItem | null;
+  workspaceId: string;
+  workspaceName: string;
+};
+
+type CloudWorkspaceDirectory = LocalWorkspaceDirectory & {
+  appState?: unknown;
+  workspaceId: string;
+  workspaceName: string;
+};
+
+const defaultSyncServerUrl =
+  import.meta.env.VITE_NOTEDOCK_SYNC_SERVER_URL?.trim() ||
+  getDefaultSyncServerUrl(import.meta.env.DEV ? "development" : "production");
+const defaultSyncConfiguration =
+  createDefaultSyncConfiguration(defaultSyncServerUrl);
+const defaultSyncLoginUsername = "admin";
+const defaultSyncLoginPassword = "123";
 
 export function App() {
   const [workspace, setWorkspace] = useState(createStartupWorkspace);
@@ -732,13 +761,17 @@ export function App() {
   const [theme, setTheme] = useState<AppTheme>("github");
   const [settings, setSettings] = useState<AppSettings>(defaultAppSettings);
   const [syncStatus, setSyncStatus] = useState<SyncStatusSnapshot>(
-    createInitialSyncStatus(),
+    createInitialSyncStatus(defaultSyncConfiguration),
   );
   const [syncEnabledDraft, setSyncEnabledDraft] = useState(false);
-  const [syncServerUrlDraft, setSyncServerUrlDraft] = useState("");
-  const [syncTokenDraft, setSyncTokenDraft] = useState("");
-  const [syncLoginUsernameDraft, setSyncLoginUsernameDraft] = useState("");
-  const [syncLoginPasswordDraft, setSyncLoginPasswordDraft] = useState("");
+  const [syncServerUrlDraft, setSyncServerUrlDraft] =
+    useState(defaultSyncServerUrl);
+  const [syncLoginUsernameDraft, setSyncLoginUsernameDraft] = useState(
+    defaultSyncLoginUsername,
+  );
+  const [syncLoginPasswordDraft, setSyncLoginPasswordDraft] = useState(
+    defaultSyncLoginPassword,
+  );
   const [syncLoginMessage, setSyncLoginMessage] = useState("");
   const [syncLoginMessageTone, setSyncLoginMessageTone] =
     useState<SyncLoginMessageTone>("info");
@@ -809,6 +842,12 @@ export function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [fileExplorerView, setFileExplorerView] =
     useState<FileExplorerView>("tree");
+  const [cloudSidebarWorkspace, setCloudSidebarWorkspace] =
+    useState<CloudSidebarWorkspace | null>(null);
+  const [expandedCloudDirectoryPaths, setExpandedCloudDirectoryPaths] =
+    useState<Set<string>>(() => new Set());
+  const [sidebarDropTarget, setSidebarDropTarget] =
+    useState<SidebarStorageKind | null>(null);
   const { clearDocumentLoading, documentLoadingState, showDocumentLoading } =
     useDocumentLoading();
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
@@ -946,11 +985,30 @@ export function App() {
     }
 
     setSyncEnabledDraft(syncStatus.configuration.enabled);
-    setSyncServerUrlDraft(syncStatus.configuration.serverUrl);
-    setSyncTokenDraft("");
+    setSyncServerUrlDraft(
+      syncStatus.configuration.serverUrl || defaultSyncServerUrl,
+    );
+    setSyncLoginUsernameDraft(defaultSyncLoginUsername);
+    setSyncLoginPasswordDraft(defaultSyncLoginPassword);
     setSyncLoginMessage("");
     setSyncLoginMessageTone("info");
   }, [isSettingsOpen]);
+
+  useEffect(() => {
+    if (
+      !syncStatus.configuration.enabled ||
+      !syncStatus.configuration.tokenConfigured
+    ) {
+      setCloudSidebarWorkspace(null);
+      return;
+    }
+
+    void refreshCloudSidebarWorkspace();
+  }, [
+    syncStatus.configuration.enabled,
+    syncStatus.configuration.tokenConfigured,
+    syncStatus.configuration.workspaceId,
+  ]);
 
   useImmersiveModeState({
     immersiveRevealEdge,
@@ -1503,19 +1561,18 @@ export function App() {
     const status = await window.desktop?.syncConfigure?.({
       enabled: syncEnabledDraft,
       serverUrl: syncServerUrlDraft,
-      token: syncTokenDraft,
       workspaceId: syncStatus.configuration.workspaceId,
     });
 
     if (status) {
       setSyncStatus(status);
-      setSyncTokenDraft("");
     }
 
     if (status?.configuration.enabled) {
-      await openCloudWorkspace();
+      await refreshCloudSidebarWorkspace({ showErrors: true });
     } else if (isCloudWorkspace) {
       closeCloudWorkspaceView();
+      setCloudSidebarWorkspace(null);
     }
   }
 
@@ -1557,16 +1614,15 @@ export function App() {
       });
 
       setSyncEnabledDraft(true);
-      setSyncTokenDraft("");
       setSyncLoginPasswordDraft("");
       setSyncLoginMessageTone("success");
-      setSyncLoginMessage(`已为 ${result.user.username} 创建同步访问令牌。`);
+      setSyncLoginMessage(`已为 ${result.user.username} 登录并启用云同步。`);
 
       if (status) {
         setSyncStatus(status);
       }
 
-      await openCloudWorkspace();
+      await refreshCloudSidebarWorkspace({ showErrors: true });
     } catch (error) {
       setSyncLoginMessageTone("error");
       setSyncLoginMessage(
@@ -2068,81 +2124,96 @@ export function App() {
     }
   }
 
-  async function openCloudWorkspace() {
+  function createCloudSidebarWorkspace(
+    openedWorkspace: CloudWorkspaceDirectory,
+  ): CloudSidebarWorkspace {
+    const source =
+      openedWorkspace.source?.kind === "cloud"
+        ? openedWorkspace.source
+        : {
+            cachePath: openedWorkspace.directoryPath,
+            kind: "cloud" as const,
+            workspaceId: openedWorkspace.workspaceId,
+            workspaceName: openedWorkspace.workspaceName || "云端笔记",
+          };
+
+    return {
+      directoryPath: openedWorkspace.directoryPath,
+      documents: (openedWorkspace.files ?? []).map(createDocumentFromLocalFile),
+      source,
+      tree: openedWorkspace.tree ?? null,
+      workspaceId: openedWorkspace.workspaceId,
+      workspaceName: openedWorkspace.workspaceName || "云端笔记",
+    };
+  }
+
+  function applyCloudSidebarWorkspace(openedWorkspace: CloudWorkspaceDirectory) {
+    const nextCloudWorkspace = createCloudSidebarWorkspace(openedWorkspace);
+
+    setCloudSidebarWorkspace(nextCloudWorkspace);
+    setExpandedCloudDirectoryPaths((current) => {
+      const next = new Set(current);
+
+      if (nextCloudWorkspace.tree?.path) {
+        next.add(nextCloudWorkspace.tree.path);
+      }
+
+      return next;
+    });
+  }
+
+  function isCloudSidebarEntryPath(filePath: string) {
+    const cloudRootPath = cloudSidebarWorkspace?.directoryPath;
+
+    if (!cloudRootPath) {
+      return false;
+    }
+
+    const fileKey = normalizeFilePathKey(filePath);
+    const cloudRootKey = normalizeFilePathKey(cloudRootPath).replace(/\/+$/, "");
+
+    return fileKey === cloudRootKey || fileKey.startsWith(`${cloudRootKey}/`);
+  }
+
+  async function refreshCloudSidebarWorkspace(
+    options: { showErrors?: boolean } = {},
+  ) {
+    if (!syncStatus.configuration.enabled) {
+      setCloudSidebarWorkspace(null);
+      return null;
+    }
+
     try {
       const openedWorkspace = await window.desktop?.openCloudWorkspace?.();
 
       if (!openedWorkspace) {
-        return;
+        return null;
       }
 
-      const source =
-        openedWorkspace.source ?? {
-          cachePath: openedWorkspace.directoryPath,
-          kind: "cloud" as const,
-          workspaceId: openedWorkspace.workspaceId,
-          workspaceName: openedWorkspace.workspaceName || "云端笔记",
-        };
-      const remoteWorkspace = openedWorkspace.appState?.workspace
-        ? normalizeWorkspaceSnapshot(openedWorkspace.appState.workspace)
-        : null;
-
-      if (remoteWorkspace?.documents.length) {
-        const nextWorkspace = {
-          ...remoteWorkspace,
-          activeDocumentId: "",
-          source,
-          workspacePath: openedWorkspace.directoryPath,
-        };
-
-        savedFileContentByPathRef.current =
-          createSavedFileContentByPath(nextWorkspace.documents);
-        setWorkspace(nextWorkspace);
-        applyDirectoryTree(openedWorkspace.tree ?? null);
-        setIsHomeOpen(true);
-        setIsActionsOpen(false);
-        setTopMenu(null);
-        setSaveState("saved");
-        setSyncEnabledDraft(true);
-        return;
-      }
-
-      applyWorkspaceDirectory(
-        openedWorkspace.directoryPath,
-        openedWorkspace.files ?? [],
-        openedWorkspace.tree ?? null,
-        source,
-      );
-      setSyncEnabledDraft(true);
+      applyCloudSidebarWorkspace(openedWorkspace);
+      return openedWorkspace;
     } catch (error) {
-      setSyncLoginMessageTone("error");
-      setSyncLoginMessage(
-        error instanceof Error ? error.message : "打开云端笔记失败。",
-      );
-      setSaveState("failed");
+      if (options.showErrors) {
+        setSyncLoginMessageTone("error");
+        setSyncLoginMessage(
+          error instanceof Error ? error.message : "打开云端笔记失败。",
+        );
+      }
+
+      return null;
     }
   }
 
-  async function importLocalDirectoryToCloud() {
+  async function importLocalDirectoryToCloud(sourcePath?: string) {
     try {
       const importedWorkspace =
-        await window.desktop?.importLocalDirectoryToCloud?.();
+        await window.desktop?.importLocalDirectoryToCloud?.(sourcePath);
 
       if (!importedWorkspace) {
         return;
       }
 
-      applyWorkspaceDirectory(
-        importedWorkspace.directoryPath,
-        importedWorkspace.files ?? [],
-        importedWorkspace.tree ?? null,
-        importedWorkspace.source ?? {
-          cachePath: importedWorkspace.directoryPath,
-          kind: "cloud",
-          workspaceId: importedWorkspace.workspaceId,
-          workspaceName: importedWorkspace.workspaceName || "云端笔记",
-        },
-      );
+      applyCloudSidebarWorkspace(importedWorkspace);
       setSyncEnabledDraft(true);
       setSyncLoginMessageTone("success");
       setSyncLoginMessage(
@@ -2163,6 +2234,143 @@ export function App() {
     applyDirectoryTree(null);
     setIsHomeOpen(true);
     setSaveState("saved");
+  }
+
+  function toggleCloudDirectoryPath(directoryPath: string) {
+    setExpandedCloudDirectoryPaths((current) => {
+      const next = new Set(current);
+
+      if (next.has(directoryPath)) {
+        next.delete(directoryPath);
+      } else {
+        next.add(directoryPath);
+      }
+
+      return next;
+    });
+  }
+
+  function startSidebarEntryDrag(
+    event: ReactDragEvent<HTMLButtonElement>,
+    payload: SidebarDragPayload,
+  ) {
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData(
+      "application/x-notedock-sidebar-entry",
+      JSON.stringify(payload),
+    );
+    event.dataTransfer.setData("text/plain", payload.path);
+  }
+
+  function readSidebarDragPayload(event: ReactDragEvent<HTMLElement>) {
+    const raw = event.dataTransfer.getData("application/x-notedock-sidebar-entry");
+
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      const payload = JSON.parse(raw) as SidebarDragPayload;
+
+      if (
+        (payload.source === "local" || payload.source === "cloud") &&
+        (payload.entryType === "file" || payload.entryType === "directory") &&
+        payload.path
+      ) {
+        return payload;
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  function handleSidebarStorageDragOver(
+    event: ReactDragEvent<HTMLElement>,
+    target: SidebarStorageKind,
+  ) {
+    if (!event.dataTransfer.types.includes("application/x-notedock-sidebar-entry")) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setSidebarDropTarget(target);
+  }
+
+  function handleSidebarStorageDragLeave(event: ReactDragEvent<HTMLElement>) {
+    const nextTarget = event.relatedTarget;
+
+    if (
+      nextTarget instanceof Node &&
+      event.currentTarget.contains(nextTarget)
+    ) {
+      return;
+    }
+
+    setSidebarDropTarget(null);
+  }
+
+  async function dropSidebarEntryToStorage(
+    event: ReactDragEvent<HTMLElement>,
+    target: SidebarStorageKind,
+  ) {
+    const payload = readSidebarDragPayload(event);
+    setSidebarDropTarget(null);
+
+    if (!payload || payload.source === target) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (target === "cloud") {
+      if (
+        !syncStatus.configuration.enabled ||
+        !syncStatus.configuration.tokenConfigured
+      ) {
+        await showAppAlert({
+          confirmLabel: "知道了",
+          description: "需要先在设置中登录并启用云同步，然后才能导入云端文档。",
+          title: "云同步尚未启用",
+          tone: "info",
+        });
+        return;
+      }
+
+      await importLocalDirectoryToCloud(payload.path);
+      return;
+    }
+
+    if (!workspace.workspacePath || isCloudWorkspace) {
+      await showAppAlert({
+        confirmLabel: "知道了",
+        description: "需要先打开一个本地文件夹，才能把云端文档复制到本地。",
+        title: "没有本地文件夹",
+        tone: "info",
+      });
+      return;
+    }
+
+    try {
+      const result = await window.desktop?.copyEntryToDirectory?.({
+        sourcePath: payload.path,
+        targetDirectoryPath: workspace.workspacePath,
+      });
+
+      await loadDirectoryTree(workspace.workspacePath);
+
+      if (result) {
+        setSyncLoginMessageTone("success");
+        setSyncLoginMessage(`已复制 ${result.copiedCount} 个文件到本地文件夹。`);
+      }
+    } catch (error) {
+      setSyncLoginMessageTone("error");
+      setSyncLoginMessage(
+        error instanceof Error ? error.message : "复制云端文档失败。",
+      );
+    }
   }
 
   async function openFileFromTree(filePath: string) {
@@ -2240,13 +2448,24 @@ export function App() {
     }
   }
 
-  async function deleteDocumentFile(filePath: string) {
+  async function deleteWorkspaceEntry(
+    entryPath: string,
+    entryType: DirectoryTreeItem["type"] = "file",
+  ) {
+    const isCloudEntry = isCloudSidebarEntryPath(entryPath);
+    const entryName = getPathLabel(entryPath);
     const confirmed = await showAppConfirm({
       cancelLabel: "取消",
       confirmLabel: "删除",
-      description: "文件会从磁盘中删除，此操作无法撤销。",
-      detail: filePath,
-      title: "删除这个文件？",
+      description: isCloudEntry
+        ? entryType === "directory"
+          ? "文件夹会从云端文档中删除，此操作无法撤销。"
+          : "文件会从云端文档中删除，此操作无法撤销。"
+        : entryType === "directory"
+          ? "文件夹会从磁盘中删除，此操作无法撤销。"
+          : "文件会从磁盘中删除，此操作无法撤销。",
+      detail: isCloudEntry ? entryName : entryPath,
+      title: entryType === "directory" ? "删除这个文件夹？" : "删除这个文件？",
       tone: "danger",
     });
 
@@ -2254,46 +2473,90 @@ export function App() {
       return;
     }
 
-    const fileKey = normalizeFilePathKey(filePath);
+    const entryKey = normalizeFilePathKey(entryPath).replace(/\/+$/, "");
+    const isDeletedPath = (path: string) => {
+      const pathKey = normalizeFilePathKey(path);
+
+      return entryType === "directory"
+        ? pathKey === entryKey || pathKey.startsWith(`${entryKey}/`)
+        : pathKey === entryKey;
+    };
 
     try {
-      internalFileDeletesRef.current.add(fileKey);
-      await window.desktop?.deleteDocumentFile?.(filePath);
-      savedFileContentByPathRef.current.delete(filePath);
-      externalConflictPathsRef.current.delete(fileKey);
+      internalFileDeletesRef.current.add(entryKey);
+      workspace.documents.forEach((document) => {
+        if (document.filePath && isDeletedPath(document.filePath)) {
+          internalFileDeletesRef.current.add(normalizeFilePathKey(document.filePath));
+        }
+      });
+
+      if (window.desktop?.deleteWorkspaceEntry) {
+        await window.desktop.deleteWorkspaceEntry(entryPath);
+      } else if (entryType === "file") {
+        await window.desktop?.deleteDocumentFile?.(entryPath);
+      }
+
+      for (const savedPath of savedFileContentByPathRef.current.keys()) {
+        if (isDeletedPath(savedPath)) {
+          savedFileContentByPathRef.current.delete(savedPath);
+        }
+      }
+
+      for (const conflictKey of externalConflictPathsRef.current) {
+        if (
+          conflictKey === entryKey ||
+          (entryType === "directory" && conflictKey.startsWith(`${entryKey}/`))
+        ) {
+          externalConflictPathsRef.current.delete(conflictKey);
+        }
+      }
+
+      const activeDocumentDeleted = activeDocument?.filePath
+        ? isDeletedPath(activeDocument.filePath)
+        : false;
 
       setWorkspace((current) => {
-        const deletedDocument = current.documents.find(
-          (document) => document.filePath === filePath,
-        );
         const documents = current.documents.filter(
-          (document) => document.filePath !== filePath,
+          (document) =>
+            !document.filePath || !isDeletedPath(document.filePath),
+        );
+        const activeDocumentStillExists = documents.some(
+          (document) => document.id === current.activeDocumentId,
         );
 
         return {
           ...current,
-          activeDocumentId:
-            deletedDocument?.id === current.activeDocumentId
-              ? ""
-              : current.activeDocumentId,
+          activeDocumentId: activeDocumentStillExists ? current.activeDocumentId : "",
           documents,
         };
       });
-      await loadDirectoryTree(getDirectoryPath(filePath));
 
-      if (activeDocument?.filePath === filePath) {
+      if (isCloudEntry) {
+        await refreshCloudSidebarWorkspace();
+      } else {
+        await loadDirectoryTree(getDirectoryPath(entryPath));
+      }
+
+      if (activeDocumentDeleted) {
         setIsHomeOpen(true);
       }
     } catch {
-      internalFileDeletesRef.current.delete(normalizeFilePathKey(filePath));
+      internalFileDeletesRef.current.delete(entryKey);
       void showAppAlert({
         confirmLabel: "知道了",
-        description: "删除文件时发生错误，请确认文件仍然存在且当前目录可写。",
-        detail: filePath,
+        description:
+          entryType === "directory"
+            ? "删除文件夹时发生错误，请确认文件夹仍然存在且当前目录可写。"
+            : "删除文件时发生错误，请确认文件仍然存在且当前目录可写。",
+        detail: isCloudEntry ? entryName : entryPath,
         title: "删除失败",
         tone: "danger",
       });
     }
+  }
+
+  async function deleteDocumentFile(filePath: string) {
+    await deleteWorkspaceEntry(filePath, "file");
   }
 
   async function showWorkspaceInFolder() {
@@ -3783,7 +4046,9 @@ export function App() {
         { type: "separator" },
         {
           danger: true,
-          disabled: !window.desktop?.deleteDocumentFile,
+          disabled:
+            !window.desktop?.deleteWorkspaceEntry &&
+            !window.desktop?.deleteDocumentFile,
           icon: <Trash2 size={15} />,
           label: "删除文件",
           onSelect: () => void deleteDocumentFile(filePath),
@@ -3797,6 +4062,8 @@ export function App() {
     event: ReactMouseEvent<HTMLElement>,
     directoryPath: string,
   ) {
+    const isCloudEntry = isCloudSidebarEntryPath(directoryPath);
+
     openContextMenu(
       event,
       [
@@ -3813,8 +4080,23 @@ export function App() {
         {
           icon: <RefreshCw size={15} />,
           label: "刷新",
-          onSelect: () => void loadDirectoryTree(directoryPath),
+          onSelect: () =>
+            void (isCloudEntry
+              ? refreshCloudSidebarWorkspace({ showErrors: true })
+              : loadDirectoryTree(directoryPath)),
         },
+        ...(isCloudEntry
+          ? [
+              { type: "separator" as const },
+              {
+                danger: true,
+                disabled: !window.desktop?.deleteWorkspaceEntry,
+                icon: <Trash2 size={15} />,
+                label: "删除文件夹",
+                onSelect: () => void deleteWorkspaceEntry(directoryPath, "directory"),
+              },
+            ]
+          : []),
       ],
       246,
     );
@@ -5845,6 +6127,10 @@ export function App() {
             : syncStatus.configuration.enabled
               ? "已启用"
               : "未启用";
+  const isCloudExplorerEnabled =
+    syncStatus.configuration.enabled && syncStatus.configuration.tokenConfigured;
+  const localExplorerTree = isCloudWorkspace ? null : directoryTree;
+  const localExplorerDocuments = isCloudWorkspace ? [] : workspace.documents;
   const syncStatusTone =
     syncStatus.state === "synced"
       ? "success"
@@ -5861,6 +6147,113 @@ export function App() {
   const windowZoomPercent = Math.round(windowZoomFactor * 100);
   const isDefaultWindowZoom =
     Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
+
+  function renderStorageExplorerSection({
+    documents,
+    emptyAction,
+    emptyDescription,
+    emptyIcon,
+    emptyTitle,
+    kind,
+    label,
+    tree,
+    viewMode = fileExplorerView,
+    workspacePath,
+  }: {
+    documents: MarkdownDocument[];
+    emptyAction?: ReactNode;
+    emptyDescription: string;
+    emptyIcon: ReactNode;
+    emptyTitle: string;
+    kind: SidebarStorageKind;
+    label: string;
+    tree: DirectoryTreeItem | null;
+    viewMode?: FileExplorerView;
+    workspacePath?: string;
+  }) {
+    const isDropTarget = sidebarDropTarget === kind;
+
+    return (
+      <section
+        className={[
+          "explorer-storage-section",
+          `explorer-storage-section-${kind}`,
+          isDropTarget ? "explorer-storage-section-drop-target" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        aria-label={label}
+        onDragLeave={handleSidebarStorageDragLeave}
+        onDragOver={(event) => handleSidebarStorageDragOver(event, kind)}
+        onDrop={(event) => void dropSidebarEntryToStorage(event, kind)}
+      >
+        <div className="explorer-storage-heading">
+          <span>{emptyIcon}</span>
+          <strong>{label}</strong>
+        </div>
+        {tree?.children?.length ? (
+          viewMode === "tree" ? (
+            <div className="explorer-storage-tree-scroll">
+              <DirectoryTreeItems
+                activeDirectoryPath={getDirectoryPath(activeDocument?.filePath)}
+                activeFilePath={activeDocument?.filePath}
+                expandedPaths={
+                  kind === "cloud"
+                    ? expandedCloudDirectoryPaths
+                    : expandedDirectoryPaths
+                }
+                items={tree.children ?? []}
+                level={0}
+                onDirectoryContextMenu={openDirectoryContextMenu}
+                onFileContextMenu={openFileContextMenu}
+                onItemDragStart={(event, item) =>
+                  startSidebarEntryDrag(event, {
+                    entryType: item.type,
+                    path: item.path,
+                    source: kind,
+                  })
+                }
+                onQuickLinkFile={relateDocumentFromFile}
+                onOpenFile={(filePath) => {
+                  void openFileFromTree(filePath);
+                }}
+                onToggleDirectory={
+                  kind === "cloud" ? toggleCloudDirectoryPath : toggleDirectoryPath
+                }
+              />
+            </div>
+          ) : (
+            <DirectoryFileList
+              activeFilePath={activeDocument?.filePath}
+              documents={documents}
+              items={tree.children ?? []}
+              workspacePath={workspacePath}
+              onFileContextMenu={openFileContextMenu}
+              onFileDragStart={(event, filePath) =>
+                startSidebarEntryDrag(event, {
+                  entryType: "file",
+                  path: filePath,
+                  source: kind,
+                })
+              }
+              onQuickLinkFile={relateDocumentFromFile}
+              onOpenFile={(filePath) => {
+                void openFileFromTree(filePath);
+              }}
+            />
+          )
+        ) : (
+          <div className="explorer-empty explorer-storage-empty">
+            {emptyIcon}
+            <strong>{emptyTitle}</strong>
+            <span>{emptyDescription}</span>
+            {emptyAction}
+          </div>
+        )}
+      </section>
+    );
+  }
+
   function renderDocumentKnowledgeBar({
     isEditorCloseVisible = true,
     isEditorHeaderVisible = true,
@@ -6041,68 +6434,60 @@ export function App() {
             }
           >
             {sidebarTab === "files" ? (
-              <>
-              {isCloudWorkspace ? (
-                <div className="explorer-cloud-marker" title={workspace.workspacePath}>
-                  <Cloud size={15} />
-                  <span>云端文件夹</span>
-                  <strong>{workspaceLabel}</strong>
-                </div>
-              ) : null}
-              {directoryTree ? (
-                directoryTree.children?.length ? (
-                  fileExplorerView === "tree" ? (
-                    <div className="directory-tree-root">
-                      <DirectoryTreeItems
-                        activeDirectoryPath={getDirectoryPath(activeDocument?.filePath)}
-                        activeFilePath={activeDocument?.filePath}
-                        expandedPaths={expandedDirectoryPaths}
-                        items={directoryTree.children ?? []}
-                        level={0}
-                        onDirectoryContextMenu={openDirectoryContextMenu}
-                        onFileContextMenu={openFileContextMenu}
-                        onQuickLinkFile={relateDocumentFromFile}
-                        onOpenFile={(filePath) => {
-                          void openFileFromTree(filePath);
-                        }}
-                        onToggleDirectory={toggleDirectoryPath}
-                      />
-                    </div>
-                  ) : (
-                    <DirectoryFileList
-                      activeFilePath={activeDocument?.filePath}
-                      documents={workspace.documents}
-                      items={directoryTree.children ?? []}
-                      workspacePath={workspace.workspacePath}
-                      onFileContextMenu={openFileContextMenu}
-                      onQuickLinkFile={relateDocumentFromFile}
-                      onOpenFile={(filePath) => {
-                        void openFileFromTree(filePath);
-                      }}
-                    />
-                  )
-                ) : (
-                  <div className="explorer-empty">
-                    <FolderOpen size={24} />
-                    <strong>{workspaceLabel}</strong>
-                  <span>当前文件夹中没有找到可打开的文档</span>
+              <div
+                className={
+                  isCloudExplorerEnabled
+                    ? "explorer-storage-sections"
+                    : "explorer-storage-sections explorer-storage-sections-single"
+                }
+              >
+                {renderStorageExplorerSection({
+                  documents: localExplorerDocuments,
+                  emptyAction: localExplorerTree ? (
                     <button type="button" onClick={createNewDocument}>
                       新建 Markdown 文件
                     </button>
-                  </div>
-                )
-              ) : (
-                <div className="explorer-empty">
-                  <FolderOpen size={24} />
-                  <strong>选择本地文件夹</strong>
-                  <span>打开目录后，会递归读取并显示其中的 .md、.html、.pdf、.docx、.univer、.excalidraw 文件</span>
-                  <button type="button" onClick={() => void openWorkspaceFolder()}>
-                    打开文件夹
-                  </button>
-                </div>
-              )
-              }
-              </>
+                  ) : (
+                    <button type="button" onClick={() => void openWorkspaceFolder()}>
+                      打开文件夹
+                    </button>
+                  ),
+                  emptyDescription: localExplorerTree
+                    ? "当前文件夹中没有找到可打开的文档"
+                    : "打开目录后，会递归读取并显示其中的 .md、.html、.pdf、.docx、.univer、.excalidraw 文件",
+                  emptyIcon: <FolderOpen size={22} />,
+                  emptyTitle: localExplorerTree ? workspaceLabel : "选择本地文件夹",
+                  kind: "local",
+                  label: "本地文档",
+                  tree: localExplorerTree,
+                  workspacePath: workspace.workspacePath,
+                })}
+                {isCloudExplorerEnabled
+                  ? renderStorageExplorerSection({
+                      documents: cloudSidebarWorkspace?.documents ?? [],
+                      emptyAction: (
+                        <button
+                          type="button"
+                          onClick={() => void refreshCloudSidebarWorkspace({ showErrors: true })}
+                        >
+                          刷新云端
+                        </button>
+                      ),
+                      emptyDescription: cloudSidebarWorkspace
+                        ? "可以把本地文件或文件夹拖到这里导入云端。"
+                        : "正在等待云端工作区，登录后会显示云端文档。",
+                      emptyIcon: <Cloud size={22} />,
+                      emptyTitle: cloudSidebarWorkspace
+                        ? "云端暂无文档"
+                        : "云端文档",
+                      kind: "cloud",
+                      label: "云端文档",
+                      tree: cloudSidebarWorkspace?.tree ?? null,
+                      viewMode: "tree",
+                      workspacePath: cloudSidebarWorkspace?.directoryPath,
+                    })
+                  : null}
+              </div>
             ) : sidebarTab === "search" ? (
               <Suspense fallback={null}>
                 <WorkspaceSearchPanel
@@ -7362,21 +7747,6 @@ export function App() {
 
                   {activeSettingsSection === "sync" ? (
                     <section className="settings-section settings-sync-section settings-panel">
-                      <div className="settings-sync-summary" aria-label="同步说明">
-                        <div>
-                          <span>主存储</span>
-                          <strong>本地文件夹</strong>
-                        </div>
-                        <div>
-                          <span>远端</span>
-                          <strong>同步镜像</strong>
-                        </div>
-                        <div>
-                          <span>拉取</span>
-                          <strong>30 秒自动检查</strong>
-                        </div>
-                      </div>
-
                       <div className="settings-sync-grid">
                         <label className="settings-sync-toggle">
                           <input
@@ -7397,7 +7767,7 @@ export function App() {
                           <span>服务器地址</span>
                           <input
                             type="url"
-                            placeholder="https://sync.example.com"
+                            placeholder={defaultSyncServerUrl}
                             value={syncServerUrlDraft}
                             onChange={(event) =>
                               setSyncServerUrlDraft(event.currentTarget.value)
@@ -7408,7 +7778,7 @@ export function App() {
                           <div className="settings-sync-login-heading">
                             <strong>账号登录</strong>
                             <small>
-                              登录后会创建访问令牌并保存在本机，密码不会保存。
+                              登录状态会保存在本机，密码不会保存。
                             </small>
                           </div>
                           <label className="settings-sync-field">
@@ -7416,7 +7786,7 @@ export function App() {
                             <input
                               type="text"
                               autoComplete="username"
-                              placeholder="admin@example.com"
+                              placeholder={defaultSyncLoginUsername}
                               value={syncLoginUsernameDraft}
                               onChange={(event) =>
                                 setSyncLoginUsernameDraft(
@@ -7430,7 +7800,7 @@ export function App() {
                             <input
                               type="password"
                               autoComplete="current-password"
-                              placeholder="服务器账号密码"
+                              placeholder={defaultSyncLoginPassword}
                               value={syncLoginPasswordDraft}
                               onChange={(event) =>
                                 setSyncLoginPasswordDraft(
@@ -7462,26 +7832,6 @@ export function App() {
                             </div>
                           ) : null}
                         </div>
-                        <label className="settings-sync-field settings-sync-token-field">
-                          <span>
-                            访问令牌
-                            {syncStatus.configuration.tokenConfigured
-                              ? "（已保存）"
-                              : ""}
-                          </span>
-                          <input
-                            type="password"
-                            placeholder={
-                              syncStatus.configuration.tokenConfigured
-                                ? "留空则继续使用已保存令牌"
-                                : "输入服务器 token"
-                            }
-                            value={syncTokenDraft}
-                            onChange={(event) =>
-                              setSyncTokenDraft(event.currentTarget.value)
-                            }
-                          />
-                        </label>
                       </div>
 
                       <div className="settings-sync-footer">

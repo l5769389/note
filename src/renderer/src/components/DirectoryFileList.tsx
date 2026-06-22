@@ -1,5 +1,9 @@
 import { FileText } from "lucide-react";
-import { useMemo, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useMemo,
+  type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import {
   isDrawingDocument,
   isExcelDocument,
@@ -122,6 +126,10 @@ type DirectoryFileListProps = {
     event: ReactMouseEvent<HTMLButtonElement>,
     filePath: string,
   ) => void;
+  onFileDragStart?: (
+    event: ReactDragEvent<HTMLButtonElement>,
+    filePath: string,
+  ) => void;
   onOpenFile: (filePath: string) => void;
   onQuickLinkFile?: (filePath: string) => void;
   workspacePath?: string;
@@ -133,6 +141,7 @@ export function DirectoryFileList({
   emptyLabel = "当前目录中没有文件",
   items,
   onFileContextMenu,
+  onFileDragStart,
   onOpenFile,
   onQuickLinkFile,
   workspacePath,
@@ -161,6 +170,8 @@ export function DirectoryFileList({
             key={file.path}
             title={file.name}
             type="button"
+            draggable={Boolean(onFileDragStart)}
+            onDragStart={(event) => onFileDragStart?.(event, file.path)}
             onClick={() => onOpenFile(file.path)}
             onContextMenu={(event) => onFileContextMenu?.(event, file.path)}
             onMouseDown={(event) => {

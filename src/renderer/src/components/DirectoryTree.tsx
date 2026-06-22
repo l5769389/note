@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen } from "lucide-react";
 import type {
   CSSProperties,
+  DragEvent as ReactDragEvent,
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { isQuickDocumentLinkShortcut } from "../workspaceShortcuts";
@@ -17,6 +18,10 @@ type DirectoryTreeHandlerProps = {
   onFileContextMenu?: (
     event: ReactMouseEvent<HTMLButtonElement>,
     filePath: string,
+  ) => void;
+  onItemDragStart?: (
+    event: ReactDragEvent<HTMLButtonElement>,
+    item: DirectoryTreeItem,
   ) => void;
   onQuickLinkFile?: (filePath: string) => void;
   onOpenFile: (filePath: string) => void;
@@ -36,6 +41,7 @@ function DirectoryTree({
   level = 0,
   onDirectoryContextMenu,
   onFileContextMenu,
+  onItemDragStart,
   onQuickLinkFile,
   onOpenFile,
   onToggleDirectory,
@@ -56,6 +62,8 @@ function DirectoryTree({
         style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
         title={item.name}
         type="button"
+        draggable={Boolean(onItemDragStart)}
+        onDragStart={(event) => onItemDragStart?.(event, item)}
         onClick={() => onToggleDirectory(item.path)}
         onContextMenu={(event) => onDirectoryContextMenu?.(event, item.path)}
       >
@@ -80,6 +88,7 @@ function DirectoryTree({
           level={level + 1}
           onDirectoryContextMenu={onDirectoryContextMenu}
           onFileContextMenu={onFileContextMenu}
+          onItemDragStart={onItemDragStart}
           onQuickLinkFile={onQuickLinkFile}
           onOpenFile={onOpenFile}
           onToggleDirectory={onToggleDirectory}
@@ -102,6 +111,7 @@ export function DirectoryTreeItems({
   level,
   onDirectoryContextMenu,
   onFileContextMenu,
+  onItemDragStart,
   onQuickLinkFile,
   onOpenFile,
   onToggleDirectory,
@@ -119,6 +129,7 @@ export function DirectoryTreeItems({
             level={level}
             onDirectoryContextMenu={onDirectoryContextMenu}
             onFileContextMenu={onFileContextMenu}
+            onItemDragStart={onItemDragStart}
             onQuickLinkFile={onQuickLinkFile}
             onOpenFile={onOpenFile}
             onToggleDirectory={onToggleDirectory}
@@ -134,6 +145,8 @@ export function DirectoryTreeItems({
             style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
             title={child.name}
             type="button"
+            draggable={Boolean(onItemDragStart)}
+            onDragStart={(event) => onItemDragStart?.(event, child)}
             onClick={() => onOpenFile(child.path)}
             onContextMenu={(event) => onFileContextMenu?.(event, child.path)}
             onMouseDown={(event) => {

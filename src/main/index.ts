@@ -16,10 +16,12 @@ import {
   scanWorkspaceSyncFiles,
   SyncService,
 } from "./syncService";
-import type {
-  SyncConfigurationInput,
-  SyncLoginInput,
-  SyncStatusSnapshot,
+import {
+  createDefaultSyncConfiguration,
+  getDefaultSyncServerUrl,
+  type SyncConfigurationInput,
+  type SyncLoginInput,
+  type SyncStatusSnapshot,
 } from "../shared/sync";
 import {
   getClipboardFormatMimeType,
@@ -35,6 +37,9 @@ const skipInitialAppStateRestore =
   process.env.NOTEDOCK_SKIP_INITIAL_APP_STATE_RESTORE === "1";
 const skipInitialSyncConfigurationRestore =
   process.env.NOTEDOCK_SKIP_INITIAL_SYNC_CONFIG_RESTORE === "1";
+const defaultSyncServerUrl =
+  process.env.NOTEDOCK_DEFAULT_SYNC_SERVER_URL?.trim() ||
+  getDefaultSyncServerUrl(devServerUrl ? "development" : "production");
 const appName = "noteDock";
 const appUserModelId = "com.local.notedock";
 const appStateFileName = "notedock-state-v1.json";
@@ -511,6 +516,26 @@ async function createUniqueDocumentPath(
   }
 }
 
+async function createUniqueDirectoryPath(directoryPath: string, name: string) {
+  const safeName =
+    basename(name || "Folder")
+      .trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
+      .replace(/\s+/g, " ") || "Folder";
+  let index = 0;
+
+  while (true) {
+    const suffix = index === 0 ? "" : ` ${index + 1}`;
+    const candidate = join(directoryPath, `${safeName}${suffix}`);
+
+    if (!(await pathExists(candidate))) {
+      return candidate;
+    }
+
+    index += 1;
+  }
+}
+
 async function createUniqueWorkspaceAssetPath(directoryPath: string, fileName: string) {
   const safeFileName = normalizeAssetFileName(fileName);
   const extension = extname(safeFileName);
@@ -630,6 +655,40 @@ function getDocumentFileType(filePath: string): DocumentFileType | null {
 
 function isSupportedDocumentFile(filePath: string) {
   return getDocumentFileType(filePath) !== null;
+}
+
+async function copySupportedWorkspaceDirectory(
+  sourceDirectoryPath: string,
+  targetDirectoryPath: string,
+): Promise<number> {
+  const entries = await readSafeDirectoryEntries(sourceDirectoryPath);
+  let copiedCount = 0;
+
+  await mkdir(targetDirectoryPath, { recursive: true });
+
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || ignoredDirectoryNames.has(entry.name)) {
+      continue;
+    }
+
+    const sourcePath = join(sourceDirectoryPath, entry.name);
+    const targetPath = join(targetDirectoryPath, entry.name);
+
+    if (entry.isDirectory()) {
+      copiedCount += await copySupportedWorkspaceDirectory(sourcePath, targetPath);
+      continue;
+    }
+
+    if (!entry.isFile() || !isSupportedDocumentFile(entry.name)) {
+      continue;
+    }
+
+    await mkdir(dirname(targetPath), { recursive: true });
+    await copyFile(sourcePath, targetPath);
+    copiedCount += 1;
+  }
+
+  return copiedCount;
 }
 
 function closeWorkspaceWatcher(webContentsId: number) {
@@ -1195,6 +1254,7 @@ function sendSyncStatusChanged(status: SyncStatusSnapshot) {
 
 async function initializeSyncService() {
   syncService = new SyncService({
+    defaultConfiguration: createDefaultSyncConfiguration(defaultSyncServerUrl),
     getAppState: readPersistedAppState,
     markSyncFileWrite: rememberSyncFileWrite,
     notifyStatus: sendSyncStatusChanged,
@@ -1246,8 +1306,11 @@ function registerSyncIpc() {
   ipcMain.handle(
     "sync:import-local-directory-to-cloud",
     async (_, inputDirectoryPath?: string) => {
+      const hasExplicitSourcePath = Boolean(
+        inputDirectoryPath && (await pathExists(inputDirectoryPath)),
+      );
       const sourceDirectoryPath =
-        inputDirectoryPath && (await pathExists(inputDirectoryPath))
+        hasExplicitSourcePath && inputDirectoryPath
           ? inputDirectoryPath
           : await pickWorkspaceDirectory();
 
@@ -1255,19 +1318,28 @@ function registerSyncIpc() {
         return null;
       }
 
+      const sourceStats = await stat(sourceDirectoryPath);
+      const sourceRootPath = sourceStats.isFile()
+        ? dirname(sourceDirectoryPath)
+        : hasExplicitSourcePath
+          ? dirname(sourceDirectoryPath)
+        : sourceDirectoryPath;
+
       const workspace = await syncService?.openCloudWorkspace();
 
       if (!workspace) {
         return null;
       }
 
-      const sourceFiles = await scanWorkspaceSyncFiles(sourceDirectoryPath);
+      const sourceFiles = sourceStats.isFile()
+        ? [sourceDirectoryPath]
+        : await scanWorkspaceSyncFiles(sourceDirectoryPath);
       let importedCount = 0;
       let skippedCount = 0;
 
       for (const sourceFilePath of sourceFiles) {
         const relativePath = getWorkspaceRelativeSyncPath(
-          sourceDirectoryPath,
+          sourceRootPath,
           sourceFilePath,
         );
 
@@ -1538,6 +1610,95 @@ function registerFileIpc() {
 
     return true;
   });
+
+  ipcMain.handle("workspace:delete-workspace-entry", async (_, entryPath: string) => {
+    const entryStat = await stat(entryPath);
+
+    if (entryStat.isFile()) {
+      if (!getDocumentFileType(entryPath)) {
+        throw new Error(`Unsupported document file: ${entryPath}`);
+      }
+
+      await rm(entryPath, { force: true });
+      queueSync();
+
+      return true;
+    }
+
+    if (entryStat.isDirectory()) {
+      await rm(entryPath, { force: true, recursive: true });
+      queueSync();
+
+      return true;
+    }
+
+    throw new Error(`Unsupported workspace entry: ${entryPath}`);
+  });
+
+  ipcMain.handle(
+    "workspace:copy-entry-to-directory",
+    async (
+      _,
+      payload: {
+        sourcePath: string;
+        targetDirectoryPath: string;
+      },
+    ) => {
+      const sourceStats = await stat(payload.sourcePath);
+      const targetDirectoryPath = payload.targetDirectoryPath || app.getPath("desktop");
+
+      await mkdir(targetDirectoryPath, { recursive: true });
+
+      if (sourceStats.isFile()) {
+        if (!getDocumentFileType(payload.sourcePath)) {
+          throw new Error(`Unsupported document file: ${payload.sourcePath}`);
+        }
+
+        const extension = extname(payload.sourcePath).toLowerCase();
+        const title = normalizeDocumentName(
+          titleFromFilePath(payload.sourcePath),
+          extension,
+        );
+        const targetPath = await createUniqueDocumentPath(
+          targetDirectoryPath,
+          title,
+          extension,
+        );
+
+        await copyFile(payload.sourcePath, targetPath);
+        queueSync();
+
+        return {
+          copiedCount: 1,
+          targetPath,
+        };
+      }
+
+      if (!sourceStats.isDirectory()) {
+        throw new Error(`Unsupported workspace entry: ${payload.sourcePath}`);
+      }
+
+      const targetPath = await createUniqueDirectoryPath(
+        targetDirectoryPath,
+        basename(payload.sourcePath),
+      );
+      const copiedCount = await copySupportedWorkspaceDirectory(
+        payload.sourcePath,
+        targetPath,
+      );
+
+      if (!copiedCount) {
+        await rm(targetPath, { force: true, recursive: true });
+      }
+
+      queueSync();
+
+      return {
+        copiedCount,
+        targetPath,
+      };
+    },
+  );
 
   ipcMain.handle(
     "workspace:save-asset",

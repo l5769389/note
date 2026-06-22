@@ -150,9 +150,14 @@ function normalizeUsername(value: unknown) {
 
 function normalizePassword(value: unknown) {
   const password = typeof value === "string" ? value : "";
+  const minimumPasswordLength =
+    process.env.NOTEDOCK_ALLOW_WEAK_SYNC_PASSWORD === "1" ? 3 : 8;
 
-  if (password.length < 8) {
-    throw new HttpError(400, "Password must be at least 8 characters.");
+  if (password.length < minimumPasswordLength) {
+    throw new HttpError(
+      400,
+      `Password must be at least ${minimumPasswordLength} characters.`,
+    );
   }
 
   return password;

@@ -1,5 +1,5 @@
 param(
-  [string]$AdminPassword = "notedock-local-admin",
+  [string]$AdminPassword = "123",
   [string]$AdminUsername = "admin",
   [string]$DataDir = "",
   [switch]$AppOnly,
@@ -40,7 +40,7 @@ Usage:
 Options:
   -Port 47831
   -AdminUsername admin
-  -AdminPassword notedock-local-admin
+  -AdminPassword 123
   -DataDir .local/sync-server-data
   -ServerOnly
   -AppOnly
@@ -48,7 +48,7 @@ Options:
 After startup, configure desktop sync with:
   Server URL: http://127.0.0.1:47831
   Username:   admin
-  Password:   notedock-local-admin
+  Password:   123
 
 If you already created a local database, the original admin password is kept.
 Delete .local/sync-server-data to reset the local sync server.
@@ -95,6 +95,7 @@ if (-not $AppOnly) {
 `$env:NOTEDOCK_SYNC_DATA_DIR = $(ConvertTo-PowerShellLiteral $resolvedDataDir);
 `$env:NOTEDOCK_ADMIN_USERNAME = $(ConvertTo-PowerShellLiteral $AdminUsername);
 `$env:NOTEDOCK_ADMIN_PASSWORD = $(ConvertTo-PowerShellLiteral $AdminPassword);
+`$env:NOTEDOCK_ALLOW_WEAK_SYNC_PASSWORD = '1';
 `$env:NOTEDOCK_SYNC_TOKEN = '';
 Set-Location $(ConvertTo-PowerShellLiteral $repoRoot);
 npm run sync:server

@@ -55,6 +55,10 @@ type DesktopApi = {
     fileName: string;
     sourceFilePath: string;
   }) => Promise<{ assetFilePath: string; reference: string }>;
+  copyEntryToDirectory: (payload: {
+    sourcePath: string;
+    targetDirectoryPath: string;
+  }) => Promise<{ copiedCount: number; targetPath: string }>;
   createDocumentFile: (payload: {
     content: string;
     directoryPath: string;
@@ -66,6 +70,7 @@ type DesktopApi = {
     title: string;
   }) => Promise<LocalMarkdownFile>;
   deleteDocumentFile: (filePath: string) => Promise<boolean>;
+  deleteWorkspaceEntry: (entryPath: string) => Promise<boolean>;
   duplicateDocumentFile: (filePath: string) => Promise<LocalMarkdownFile>;
   exportHtmlFile: (payload: {
     filePath?: string;
