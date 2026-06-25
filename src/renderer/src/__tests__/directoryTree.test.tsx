@@ -52,4 +52,26 @@ describe("DirectoryTreeItems", () => {
     expect(html).toContain('title="project"');
     expect(html).not.toContain("note.md");
   });
+
+  it("renders an inline rename input for files without exposing the extension", () => {
+    const html = renderToStaticMarkup(
+      <DirectoryTreeItems
+        activeDirectoryPath="D:/notes/project"
+        activeFilePath="D:/notes/project/note.md"
+        expandedPaths={new Set(["D:/notes/project"])}
+        items={tree}
+        level={0}
+        renameDraft="renamed"
+        renamingEntryPath="D:/notes/project/note.md"
+        onCancelRename={() => {}}
+        onCommitRename={() => {}}
+        onOpenFile={() => {}}
+        onRenameDraftChange={() => {}}
+        onToggleDirectory={() => {}}
+      />,
+    );
+
+    expect(html).toContain('value="renamed"');
+    expect(html).toContain(".md");
+  });
 });

@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { DirectoryFileList } from "../components/DirectoryFileList";
+import {
+  DirectoryFileList,
+  getFileListPreview,
+} from "../components/DirectoryFileList";
 import type { DirectoryTreeItem, MarkdownDocument } from "../types";
 
 function document(overrides: Partial<MarkdownDocument> = {}): MarkdownDocument {
@@ -59,7 +62,30 @@ describe("DirectoryFileList", () => {
     expect(html).toContain('title="manual.pdf"');
     expect(html).toContain("project");
     expect(html).toContain("A useful preview sentence.");
-    expect(html).toContain("PDF ");
+    expect(html).toContain("PDF");
+  });
+
+  it("filters resource addresses from text previews", () => {
+    expect(
+      getFileListPreview(
+        document({
+          content:
+            "---\ntags: [demo]\n---\n\n![Hero](./.assets/hero.gif)\n\n正文摘要保留下来。\n\n```ts\nconst hidden = true\n```",
+        }),
+      ),
+    ).toBe("正文摘要保留下来。");
+  });
+
+  it("does not invent previews for non-text files", () => {
+    expect(
+      getFileListPreview(
+        document({
+          documentType: "pdf",
+          fileExtension: ".pdf",
+          filePath: "D:/notes/project/manual.pdf",
+        }),
+      ),
+    ).toBe("");
   });
 
   it("renders the configured empty state when no files are available", () => {
@@ -73,5 +99,25 @@ describe("DirectoryFileList", () => {
     );
 
     expect(html).toContain("No files");
+  });
+
+  it("renders an inline rename input while keeping the file extension fixed", () => {
+    const html = renderToStaticMarkup(
+      <DirectoryFileList
+        activeFilePath="D:/notes/project/note.md"
+        documents={[document({ filePath: "D:/notes/project/note.md" })]}
+        items={items}
+        renameDraft="renamed-note"
+        renamingEntryPath="D:/notes/project/note.md"
+        workspacePath="D:/notes"
+        onCancelRename={() => {}}
+        onCommitRename={() => {}}
+        onOpenFile={() => {}}
+        onRenameDraftChange={() => {}}
+      />,
+    );
+
+    expect(html).toContain('value="renamed-note"');
+    expect(html).toContain(".md");
   });
 });

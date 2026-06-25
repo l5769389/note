@@ -13,14 +13,18 @@ import {
   Code2,
   Cloud,
   Copy,
+  Download,
   ExternalLink,
   FilePlus2,
   FileText,
   Folder,
   FolderOpen,
+  FolderPlus,
   Italic,
   Link2,
+  ListChecks,
   ListTree,
+  PencilLine,
   Plus,
   RefreshCw,
   Rows3,
@@ -50,8 +54,6 @@ import {
 import {
   defaultAppSettings,
   editorContentDensityOptions,
-  editorFontSizeAdjustmentRange,
-  formatEditorFontSizeAdjustment,
   themeOptions,
   type AppSettings,
   type AppTheme,
@@ -305,6 +307,10 @@ import {
   normalizeFilePathKey,
 } from "./workspaceDisplay";
 import {
+  splitWorkspaceEntryNameForRename,
+  validateWorkspaceRenameBaseName,
+} from "../../shared/workspaceRename";
+import {
   type MenubarMenu,
   type TopMenu,
 } from "./features/app-shell/appShellModel";
@@ -415,6 +421,19 @@ const sidebarRecentDirectoryLimit = 5;
 const immersiveRevealHitSlop = 44;
 const defaultWindowZoomFactor = 1;
 const zoomIndicatorVisibleMs = 1500;
+const storageSplitRatioStorageKey = "notedock.storageSplitRatio.v1";
+const defaultStorageSplitRatio = 0.55;
+const minStorageSectionHeight = 160;
+
+function readStoredStorageSplitRatio() {
+  if (typeof window === "undefined") {
+    return defaultStorageSplitRatio;
+  }
+
+  const value = Number(window.localStorage.getItem(storageSplitRatioStorageKey));
+
+  return Number.isFinite(value) ? clamp(value, 0.25, 0.75) : defaultStorageSplitRatio;
+}
 
 type FindPanelMode = "find" | "replace";
 
@@ -645,6 +664,38 @@ function getFileNameFromPath(filePath: string) {
   return filePath.split(/[\\/]/).pop() || filePath;
 }
 
+function getDocumentTitleFromFilePath(filePath: string) {
+  return splitWorkspaceEntryNameForRename(getFileNameFromPath(filePath), "file")
+    .editableName;
+}
+
+function replaceWorkspaceEntryPath(
+  filePath: string,
+  currentEntryPath: string,
+  nextEntryPath: string,
+) {
+  const normalizedCurrentPath = currentEntryPath
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "");
+  const normalizedFilePath = filePath.replace(/\\/g, "/");
+  const currentKey = normalizedCurrentPath.toLowerCase();
+  const fileKey = normalizedFilePath.toLowerCase();
+
+  if (!currentKey || fileKey === currentKey) {
+    return fileKey === currentKey ? nextEntryPath : filePath;
+  }
+
+  if (!fileKey.startsWith(`${currentKey}/`)) {
+    return filePath;
+  }
+
+  const separator = currentEntryPath.includes("\\") ? "\\" : "/";
+  const suffix = normalizedFilePath
+    .slice(normalizedCurrentPath.length)
+    .replace(/\//g, separator);
+  return nextEntryPath.replace(/[\\/]+$/, "") + suffix;
+}
+
 function readFileInput(fileInput: HTMLInputElement | null) {
   fileInput?.click();
 }
@@ -746,6 +797,53 @@ type CloudWorkspaceDirectory = LocalWorkspaceDirectory & {
   workspaceName: string;
 };
 
+function collectDirectoryEntryMap(
+  item: DirectoryTreeItem | null | undefined,
+  entries = new Map<string, DirectoryTreeItem>(),
+) {
+  if (!item) {
+    return entries;
+  }
+
+  entries.set(normalizeFilePathKey(item.path), item);
+
+  for (const child of item.children ?? []) {
+    collectDirectoryEntryMap(child, entries);
+  }
+
+  return entries;
+}
+
+function isPathInsideDirectoryPath(childPath: string, directoryPath: string) {
+  const childKey = normalizeFilePathKey(childPath).replace(/\/+$/, "");
+  const directoryKey = normalizeFilePathKey(directoryPath).replace(/\/+$/, "");
+
+  return childKey === directoryKey || childKey.startsWith(`${directoryKey}/`);
+}
+
+function getTopLevelWorkspaceEntries(entries: DirectoryTreeItem[]) {
+  const sortedEntries = [...entries].sort(
+    (left, right) => left.path.length - right.path.length,
+  );
+  const selectedDirectories: DirectoryTreeItem[] = [];
+
+  return sortedEntries.filter((entry) => {
+    const isCoveredByDirectory = selectedDirectories.some((directory) =>
+      isPathInsideDirectoryPath(entry.path, directory.path),
+    );
+
+    if (isCoveredByDirectory) {
+      return false;
+    }
+
+    if (entry.type === "directory") {
+      selectedDirectories.push(entry);
+    }
+
+    return true;
+  });
+}
+
 const defaultSyncServerUrl =
   import.meta.env.VITE_NOTEDOCK_SYNC_SERVER_URL?.trim() ||
   getDefaultSyncServerUrl(import.meta.env.DEV ? "development" : "production");
@@ -844,12 +942,39 @@ export function App() {
     useState<FileExplorerView>("tree");
   const [cloudSidebarWorkspace, setCloudSidebarWorkspace] =
     useState<CloudSidebarWorkspace | null>(null);
+  const [isCloudImporting, setIsCloudImporting] = useState(false);
+  const [isCloudDirectoryCreating, setIsCloudDirectoryCreating] = useState(false);
+  const [isCloudMultiSelectEnabled, setIsCloudMultiSelectEnabled] =
+    useState(false);
+  const [selectedCloudEntryPaths, setSelectedCloudEntryPaths] = useState<
+    Set<string>
+  >(() => new Set());
+  const [storageSplitRatio, setStorageSplitRatio] = useState(
+    readStoredStorageSplitRatio,
+  );
+  const [isStorageSplitResizing, setIsStorageSplitResizing] = useState(false);
   const [expandedCloudDirectoryPaths, setExpandedCloudDirectoryPaths] =
     useState<Set<string>>(() => new Set());
   const [sidebarDropTarget, setSidebarDropTarget] =
     useState<SidebarStorageKind | null>(null);
+  const [renamingEntryPath, setRenamingEntryPath] = useState<string | null>(null);
+  const [renamingEntryType, setRenamingEntryType] = useState<
+    DirectoryTreeItem["type"] | null
+  >(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const cloudDirectoryCreateInFlightRef = useRef(false);
+  const renameCommitInFlightRef = useRef(false);
+  const [workspaceToast, setWorkspaceToast] = useState<{
+    id: number;
+    message: string;
+    tone: "error" | "success";
+  } | null>(null);
   const { clearDocumentLoading, documentLoadingState, showDocumentLoading } =
     useDocumentLoading();
+  const cloudSidebarEntryMap = useMemo(
+    () => collectDirectoryEntryMap(cloudSidebarWorkspace?.tree),
+    [cloudSidebarWorkspace?.tree],
+  );
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [inspectorWidth, setInspectorWidth] = useState(defaultInspectorWidth);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -864,6 +989,7 @@ export function App() {
   const [isEditorDraggingMedia, setIsEditorDraggingMedia] = useState(false);
   const [isImmersiveSidebarOpen, setIsImmersiveSidebarOpen] = useState(false);
   const appShellRef = useRef<HTMLElement | null>(null);
+  const storageSectionsRef = useRef<HTMLDivElement | null>(null);
   const uiSelectionScopeRef = useRef<HTMLElement | null>(null);
   const [newFileName, setNewFileName] = useState("Untitled");
   const {
@@ -1000,6 +1126,8 @@ export function App() {
       !syncStatus.configuration.tokenConfigured
     ) {
       setCloudSidebarWorkspace(null);
+      setIsCloudMultiSelectEnabled(false);
+      setSelectedCloudEntryPaths(new Set());
       return;
     }
 
@@ -1475,6 +1603,20 @@ export function App() {
     setWindowZoomFactor,
   });
 
+  useEffect(() => {
+    if (!workspaceToast) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setWorkspaceToast((current) =>
+        current?.id === workspaceToast.id ? null : current,
+      );
+    }, 2600);
+
+    return () => window.clearTimeout(timer);
+  }, [workspaceToast]);
+
   useEffect(
     () => () => {
       if (zoomIndicatorTimerRef.current !== null) {
@@ -1494,6 +1636,27 @@ export function App() {
     theme,
     workspace,
   });
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      storageSplitRatioStorageKey,
+      String(storageSplitRatio),
+    );
+  }, [storageSplitRatio]);
+
+  useEffect(() => {
+    if (saveState !== "saved") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setSaveState("idle");
+    }, 1800);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [saveState]);
 
   useFindMatchStateMaintenance({
     activeDocumentId: activeDocument?.id,
@@ -1593,7 +1756,7 @@ export function App() {
 
     setIsSyncLoginRunning(true);
     setSyncLoginMessageTone("info");
-    setSyncLoginMessage("正在登录并创建同步令牌...");
+    setSyncLoginMessage("正在登录云同步...");
 
     try {
       const result = await window.desktop?.syncCreateAccessToken?.({
@@ -1616,7 +1779,7 @@ export function App() {
       setSyncEnabledDraft(true);
       setSyncLoginPasswordDraft("");
       setSyncLoginMessageTone("success");
-      setSyncLoginMessage(`已为 ${result.user.username} 登录并启用云同步。`);
+      setSyncLoginMessage(`已登录 ${result.user.username}，云同步已启用。`);
 
       if (status) {
         setSyncStatus(status);
@@ -1773,6 +1936,42 @@ export function App() {
     window.addEventListener("pointermove", previewInspectorResize);
     window.addEventListener("pointerup", stopInspectorResize);
     window.addEventListener("pointercancel", stopInspectorResize);
+  }
+
+  function getStorageSplitRatioFromPointer(pointerY: number) {
+    const rect = storageSectionsRef.current?.getBoundingClientRect();
+
+    if (!rect || rect.height <= 0) {
+      return storageSplitRatio;
+    }
+
+    const minRatio = clamp(minStorageSectionHeight / rect.height, 0.18, 0.48);
+    const maxRatio = 1 - minRatio;
+
+    return clamp((pointerY - rect.top) / rect.height, minRatio, maxRatio);
+  }
+
+  function startStorageSplitResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsStorageSplitResizing(true);
+    setStorageSplitRatio(getStorageSplitRatioFromPointer(event.clientY));
+
+    function previewStorageSplitResize(pointerEvent: PointerEvent) {
+      setStorageSplitRatio(getStorageSplitRatioFromPointer(pointerEvent.clientY));
+    }
+
+    function stopStorageSplitResize(pointerEvent: PointerEvent) {
+      setStorageSplitRatio(getStorageSplitRatioFromPointer(pointerEvent.clientY));
+      setIsStorageSplitResizing(false);
+      window.removeEventListener("pointermove", previewStorageSplitResize);
+      window.removeEventListener("pointerup", stopStorageSplitResize);
+      window.removeEventListener("pointercancel", stopStorageSplitResize);
+    }
+
+    window.addEventListener("pointermove", previewStorageSplitResize);
+    window.addEventListener("pointerup", stopStorageSplitResize);
+    window.addEventListener("pointercancel", stopStorageSplitResize);
   }
 
   function rememberRecentDirectory(path?: string) {
@@ -2051,7 +2250,7 @@ export function App() {
     setIsHomeOpen(true);
     setIsActionsOpen(false);
     setTopMenu(null);
-    setSaveState("saved");
+    setSaveState("idle");
     if (source.kind === "local") {
       rememberRecentDirectory(directoryPath);
     }
@@ -2149,8 +2348,20 @@ export function App() {
 
   function applyCloudSidebarWorkspace(openedWorkspace: CloudWorkspaceDirectory) {
     const nextCloudWorkspace = createCloudSidebarWorkspace(openedWorkspace);
+    const nextEntryMap = collectDirectoryEntryMap(nextCloudWorkspace.tree);
 
     setCloudSidebarWorkspace(nextCloudWorkspace);
+    setSelectedCloudEntryPaths((current) => {
+      const next = new Set<string>();
+
+      for (const entryPath of current) {
+        if (nextEntryMap.has(normalizeFilePathKey(entryPath))) {
+          next.add(entryPath);
+        }
+      }
+
+      return next;
+    });
     setExpandedCloudDirectoryPaths((current) => {
       const next = new Set(current);
 
@@ -2175,11 +2386,37 @@ export function App() {
     return fileKey === cloudRootKey || fileKey.startsWith(`${cloudRootKey}/`);
   }
 
+  function toggleCloudMultiSelect() {
+    setIsCloudMultiSelectEnabled((current) => {
+      if (current) {
+        setSelectedCloudEntryPaths(new Set());
+      }
+
+      return !current;
+    });
+  }
+
+  function toggleCloudEntrySelection(item: DirectoryTreeItem) {
+    setSelectedCloudEntryPaths((current) => {
+      const next = new Set(current);
+
+      if (next.has(item.path)) {
+        next.delete(item.path);
+      } else {
+        next.add(item.path);
+      }
+
+      return next;
+    });
+  }
+
   async function refreshCloudSidebarWorkspace(
     options: { showErrors?: boolean } = {},
   ) {
     if (!syncStatus.configuration.enabled) {
       setCloudSidebarWorkspace(null);
+      setIsCloudMultiSelectEnabled(false);
+      setSelectedCloudEntryPaths(new Set());
       return null;
     }
 
@@ -2204,7 +2441,139 @@ export function App() {
     }
   }
 
+  async function refreshCloudSidebarWorkspaceFromCache() {
+    const directoryPath = cloudSidebarWorkspace?.directoryPath;
+
+    if (!directoryPath) {
+      return null;
+    }
+
+    try {
+      const [localFiles, tree] = await Promise.all([
+        window.desktop?.listMarkdownFiles
+          ? window.desktop.listMarkdownFiles(directoryPath)
+          : Promise.resolve([]),
+        window.desktop?.readDirectoryTree
+          ? window.desktop.readDirectoryTree(directoryPath, {
+              includeEmptyDirectories: true,
+            })
+          : Promise.resolve(null),
+      ]);
+
+      const nextWorkspace: CloudWorkspaceDirectory = {
+        directoryPath,
+        files: localFiles,
+        source: cloudSidebarWorkspace.source,
+        tree: tree ?? {
+          children: [],
+          name: getPathLabel(directoryPath),
+          path: directoryPath,
+          type: "directory",
+        },
+        workspaceId: cloudSidebarWorkspace.workspaceId,
+        workspaceName: cloudSidebarWorkspace.workspaceName,
+      };
+
+      applyCloudSidebarWorkspace(nextWorkspace);
+      return nextWorkspace;
+    } catch {
+      return null;
+    }
+  }
+
+  function getCloudTargetDirectoryPath(targetDirectoryPath?: string) {
+    return targetDirectoryPath || cloudSidebarWorkspace?.directoryPath || "";
+  }
+
+  async function createCloudMarkdownDocument(targetDirectoryPath?: string) {
+    const directoryPath = getCloudTargetDirectoryPath(targetDirectoryPath);
+
+    if (!directoryPath || !window.desktop?.createMarkdownFile) {
+      await showAppAlert({
+        confirmLabel: "知道了",
+        description: "需要先启用并打开云端文档区域，才能在云端新建 Markdown 文件。",
+        title: "无法新建云端文件",
+        tone: "warning",
+      });
+      return;
+    }
+
+    try {
+      const localFile = await window.desktop.createMarkdownFile({
+        directoryPath,
+        title: "Untitled",
+      });
+
+      setExpandedCloudDirectoryPaths((current) => {
+        const next = new Set(current);
+        next.add(directoryPath);
+        return next;
+      });
+      await refreshCloudSidebarWorkspaceFromCache();
+      await openFileFromTree(localFile.filePath);
+    } catch (error) {
+      await showAppAlert({
+        confirmLabel: "知道了",
+        description:
+          error instanceof Error ? error.message : "新建云端 Markdown 文件失败。",
+        detail: directoryPath,
+        title: "新建失败",
+        tone: "danger",
+      });
+    }
+  }
+
+  async function createCloudDirectory(targetDirectoryPath?: string) {
+    if (cloudDirectoryCreateInFlightRef.current) {
+      return;
+    }
+
+    const directoryPath = getCloudTargetDirectoryPath(targetDirectoryPath);
+
+    if (!directoryPath || !window.desktop?.createWorkspaceDirectory) {
+      await showAppAlert({
+        confirmLabel: "知道了",
+        description: "需要先启用并打开云端文档区域，才能在云端新建文件夹。",
+        title: "无法新建云端文件夹",
+        tone: "warning",
+      });
+      return;
+    }
+
+    cloudDirectoryCreateInFlightRef.current = true;
+    setIsCloudDirectoryCreating(true);
+
+    try {
+      const result = await window.desktop.createWorkspaceDirectory({
+        directoryPath,
+        name: "新建文件夹",
+      });
+
+      setExpandedCloudDirectoryPaths((current) => {
+        const next = new Set(current);
+        next.add(directoryPath);
+        next.add(result.directoryPath);
+        return next;
+      });
+      await refreshCloudSidebarWorkspaceFromCache();
+    } catch (error) {
+      await showAppAlert({
+        confirmLabel: "知道了",
+        description:
+          error instanceof Error ? error.message : "新建云端文件夹失败。",
+        detail: directoryPath,
+        title: "新建失败",
+        tone: "danger",
+      });
+    } finally {
+      cloudDirectoryCreateInFlightRef.current = false;
+      setIsCloudDirectoryCreating(false);
+    }
+  }
+
   async function importLocalDirectoryToCloud(sourcePath?: string) {
+    setIsCloudImporting(true);
+
     try {
       const importedWorkspace =
         await window.desktop?.importLocalDirectoryToCloud?.(sourcePath);
@@ -2224,6 +2593,8 @@ export function App() {
       setSyncLoginMessage(
         error instanceof Error ? error.message : "导入本地文件夹失败。",
       );
+    } finally {
+      setIsCloudImporting(false);
     }
   }
 
@@ -2233,7 +2604,7 @@ export function App() {
     setWorkspace(createStartupWorkspace());
     applyDirectoryTree(null);
     setIsHomeOpen(true);
-    setSaveState("saved");
+    setSaveState("idle");
   }
 
   function toggleCloudDirectoryPath(directoryPath: string) {
@@ -2357,6 +2728,7 @@ export function App() {
       const result = await window.desktop?.copyEntryToDirectory?.({
         sourcePath: payload.path,
         targetDirectoryPath: workspace.workspacePath,
+        queueSync: false,
       });
 
       await loadDirectoryTree(workspace.workspacePath);
@@ -2370,6 +2742,56 @@ export function App() {
       setSyncLoginMessage(
         error instanceof Error ? error.message : "复制云端文档失败。",
       );
+    }
+  }
+
+  async function exportCloudEntryToLocal(entryPath: string) {
+    if (
+      !window.desktop?.selectWorkspaceDirectory ||
+      !window.desktop?.copyEntryToDirectory
+    ) {
+      await showAppAlert({
+        confirmLabel: "知道了",
+        description: "当前运行环境不支持选择本地目录。",
+        title: "无法导出",
+        tone: "warning",
+      });
+      return;
+    }
+
+    const targetDirectoryPath = await window.desktop.selectWorkspaceDirectory();
+
+    if (!targetDirectoryPath) {
+      return;
+    }
+
+    try {
+      const result = await window.desktop.copyEntryToDirectory({
+        sourcePath: entryPath,
+        targetDirectoryPath,
+        queueSync: false,
+      });
+
+      if (workspace.workspacePath && !isCloudWorkspace) {
+        await loadDirectoryTree(workspace.workspacePath);
+      }
+
+      await showAppAlert({
+        confirmLabel: "完成",
+        description: `已导出 ${result.copiedCount} 个文件。`,
+        detail: result.targetPath,
+        title: "已导出到本地",
+        tone: "info",
+      });
+    } catch (error) {
+      await showAppAlert({
+        confirmLabel: "知道了",
+        description:
+          error instanceof Error ? error.message : "导出云端文档失败。",
+        detail: getPathLabel(entryPath),
+        title: "导出失败",
+        tone: "danger",
+      });
     }
   }
 
@@ -2445,6 +2867,155 @@ export function App() {
         title: "复制失败",
         tone: "danger",
       });
+    }
+  }
+
+  function showWorkspaceToast(
+    message: string,
+    tone: "error" | "success" = "success",
+  ) {
+    setWorkspaceToast({
+      id: Date.now(),
+      message,
+      tone,
+    });
+  }
+
+  function startRenamingEntry(
+    entryPath: string,
+    entryType: DirectoryTreeItem["type"],
+  ) {
+    const { editableName } = splitWorkspaceEntryNameForRename(
+      getPathLabel(entryPath),
+      entryType,
+    );
+
+    setRenamingEntryPath(entryPath);
+    setRenamingEntryType(entryType);
+    setRenameDraft(editableName);
+  }
+
+  function cancelRenamingEntry() {
+    setRenamingEntryPath(null);
+    setRenamingEntryType(null);
+    setRenameDraft("");
+  }
+
+  async function commitRenamingEntry(entryPath = renamingEntryPath ?? "") {
+    if (
+      !entryPath ||
+      !renamingEntryPath ||
+      !renamingEntryType ||
+      entryPath !== renamingEntryPath ||
+      renameCommitInFlightRef.current
+    ) {
+      return;
+    }
+
+    const validationError = validateWorkspaceRenameBaseName(renameDraft);
+
+    if (validationError) {
+      cancelRenamingEntry();
+      showWorkspaceToast(validationError, "error");
+      return;
+    }
+
+    const { editableName } = splitWorkspaceEntryNameForRename(
+      getPathLabel(renamingEntryPath),
+      renamingEntryType,
+    );
+
+    if (renameDraft.trim() === editableName) {
+      cancelRenamingEntry();
+      return;
+    }
+
+    if (!window.desktop?.renameWorkspaceEntry) {
+      cancelRenamingEntry();
+      showWorkspaceToast("当前环境不支持重命名。", "error");
+      return;
+    }
+
+    renameCommitInFlightRef.current = true;
+    const previousEntryPath = renamingEntryPath;
+    const previousEntryType = renamingEntryType;
+    const isCloudEntry = isCloudSidebarEntryPath(previousEntryPath);
+
+    try {
+      const result = await window.desktop.renameWorkspaceEntry({
+        entryPath: previousEntryPath,
+        nextBaseName: renameDraft,
+      });
+      const nextEntryPath = result.entryPath;
+
+      if (nextEntryPath !== previousEntryPath) {
+        setWorkspace((current) => ({
+          ...current,
+          documents: current.documents.map((document) => {
+            if (!document.filePath) {
+              return document;
+            }
+
+            const nextFilePath = replaceWorkspaceEntryPath(
+              document.filePath,
+              previousEntryPath,
+              nextEntryPath,
+            );
+
+            if (nextFilePath === document.filePath) {
+              return document;
+            }
+
+            return {
+              ...document,
+              filePath: nextFilePath,
+              title:
+                previousEntryType === "file"
+                  ? getDocumentTitleFromFilePath(nextFilePath)
+                  : document.title,
+            };
+          }),
+        }));
+
+        for (const [savedPath, content] of [
+          ...savedFileContentByPathRef.current.entries(),
+        ]) {
+          const nextSavedPath = replaceWorkspaceEntryPath(
+            savedPath,
+            previousEntryPath,
+            nextEntryPath,
+          );
+
+          if (nextSavedPath !== savedPath) {
+            savedFileContentByPathRef.current.delete(savedPath);
+            savedFileContentByPathRef.current.set(nextSavedPath, content);
+          }
+        }
+
+        setRecentDirectoryPaths((current) =>
+          current.map((path) =>
+            replaceWorkspaceEntryPath(path, previousEntryPath, nextEntryPath),
+          ),
+        );
+      }
+
+      cancelRenamingEntry();
+
+      if (isCloudEntry) {
+        await refreshCloudSidebarWorkspaceFromCache();
+      } else {
+        await loadDirectoryTree(getDirectoryPath(nextEntryPath));
+      }
+
+      showWorkspaceToast("已重命名");
+    } catch (error) {
+      cancelRenamingEntry();
+      showWorkspaceToast(
+        error instanceof Error ? error.message : "重命名失败，已恢复原名称。",
+        "error",
+      );
+    } finally {
+      renameCommitInFlightRef.current = false;
     }
   }
 
@@ -2532,7 +3103,7 @@ export function App() {
       });
 
       if (isCloudEntry) {
-        await refreshCloudSidebarWorkspace();
+        await refreshCloudSidebarWorkspaceFromCache();
       } else {
         await loadDirectoryTree(getDirectoryPath(entryPath));
       }
@@ -2549,6 +3120,106 @@ export function App() {
             ? "删除文件夹时发生错误，请确认文件夹仍然存在且当前目录可写。"
             : "删除文件时发生错误，请确认文件仍然存在且当前目录可写。",
         detail: isCloudEntry ? entryName : entryPath,
+        title: "删除失败",
+        tone: "danger",
+      });
+    }
+  }
+
+  async function deleteSelectedCloudEntries() {
+    if (!window.desktop?.deleteWorkspaceEntry || selectedCloudEntryPaths.size === 0) {
+      return;
+    }
+
+    const selectedEntries = Array.from(selectedCloudEntryPaths)
+      .map((entryPath) => cloudSidebarEntryMap.get(normalizeFilePathKey(entryPath)))
+      .filter((entry): entry is DirectoryTreeItem => Boolean(entry));
+    const deleteEntries = getTopLevelWorkspaceEntries(selectedEntries);
+
+    if (!deleteEntries.length) {
+      setSelectedCloudEntryPaths(new Set());
+      return;
+    }
+
+    const confirmed = await showAppConfirm({
+      cancelLabel: "取消",
+      confirmLabel: "删除",
+      description: `将从云端文档中删除选中的 ${deleteEntries.length} 项。此操作无法撤销。`,
+      title: "删除选中的云端文档？",
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    const isDeletedPath = (path: string) =>
+      deleteEntries.some((entry) =>
+        entry.type === "directory"
+          ? isPathInsideDirectoryPath(path, entry.path)
+          : normalizeFilePathKey(path) === normalizeFilePathKey(entry.path),
+      );
+
+    try {
+      for (const entry of deleteEntries) {
+        const entryKey = normalizeFilePathKey(entry.path).replace(/\/+$/, "");
+        internalFileDeletesRef.current.add(entryKey);
+      }
+
+      workspace.documents.forEach((document) => {
+        if (document.filePath && isDeletedPath(document.filePath)) {
+          internalFileDeletesRef.current.add(normalizeFilePathKey(document.filePath));
+        }
+      });
+
+      for (const entry of deleteEntries) {
+        await window.desktop.deleteWorkspaceEntry(entry.path);
+      }
+
+      for (const savedPath of savedFileContentByPathRef.current.keys()) {
+        if (isDeletedPath(savedPath)) {
+          savedFileContentByPathRef.current.delete(savedPath);
+        }
+      }
+
+      for (const conflictKey of externalConflictPathsRef.current) {
+        if (deleteEntries.some((entry) => isPathInsideDirectoryPath(conflictKey, entry.path))) {
+          externalConflictPathsRef.current.delete(conflictKey);
+        }
+      }
+
+      const activeDocumentDeleted = activeDocument?.filePath
+        ? isDeletedPath(activeDocument.filePath)
+        : false;
+
+      setWorkspace((current) => {
+        const documents = current.documents.filter(
+          (document) =>
+            !document.filePath || !isDeletedPath(document.filePath),
+        );
+        const activeDocumentStillExists = documents.some(
+          (document) => document.id === current.activeDocumentId,
+        );
+
+        return {
+          ...current,
+          activeDocumentId: activeDocumentStillExists ? current.activeDocumentId : "",
+          documents,
+        };
+      });
+
+      setSelectedCloudEntryPaths(new Set());
+      setIsCloudMultiSelectEnabled(false);
+      await refreshCloudSidebarWorkspaceFromCache();
+
+      if (activeDocumentDeleted) {
+        setIsHomeOpen(true);
+      }
+    } catch (error) {
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description:
+          error instanceof Error ? error.message : "删除云端文档时发生错误。",
         title: "删除失败",
         tone: "danger",
       });
@@ -3979,6 +4650,7 @@ export function App() {
   ) {
     const fileName = getPathLabel(filePath);
     const canUseFileIpc = Boolean(window.desktop);
+    const isCloudEntry = isCloudSidebarEntryPath(filePath);
     const sourceDocument = getDocumentByFilePath(filePath);
     const canUseFileAsLinkSource = Boolean(sourceDocument);
     const canInsertFileAsReference = Boolean(
@@ -3996,6 +4668,12 @@ export function App() {
           icon: <FileText size={15} />,
           label: "打开",
           onSelect: () => void openFileFromTree(filePath),
+        },
+        {
+          disabled: !window.desktop?.renameWorkspaceEntry,
+          icon: <PencilLine size={15} />,
+          label: "重命名",
+          onSelect: () => startRenamingEntry(filePath, "file"),
         },
         {
           disabled: !canInsertFileAsReference,
@@ -4036,6 +4714,27 @@ export function App() {
           label: "复制文件名",
           onSelect: () => void copyTextToClipboard(fileName),
         },
+        ...(isCloudEntry
+          ? [
+              { type: "separator" as const },
+              {
+                icon: <FilePlus2 size={15} />,
+                label: "新建 Markdown 文件",
+                onSelect: () => void createCloudMarkdownDocument(getDirectoryPath(filePath)),
+              },
+              {
+                icon: <FolderPlus size={15} />,
+                label: "新建文件夹",
+                onSelect: () => void createCloudDirectory(getDirectoryPath(filePath)),
+              },
+              { type: "separator" as const },
+              {
+                icon: <Download size={15} />,
+                label: "导出到本地...",
+                onSelect: () => void exportCloudEntryToLocal(filePath),
+              },
+            ]
+          : []),
         { type: "separator" },
         {
           disabled: !canUseFileIpc,
@@ -4073,6 +4772,12 @@ export function App() {
           onSelect: () => void openWorkspaceDirectoryPath(directoryPath),
         },
         {
+          disabled: !window.desktop?.renameWorkspaceEntry,
+          icon: <PencilLine size={15} />,
+          label: "重命名",
+          onSelect: () => startRenamingEntry(directoryPath, "directory"),
+        },
+        {
           icon: <ExternalLink size={15} />,
           label: "在资源管理器中显示",
           onSelect: () => void window.desktop?.showInFolder?.(directoryPath),
@@ -4082,9 +4787,33 @@ export function App() {
           label: "刷新",
           onSelect: () =>
             void (isCloudEntry
-              ? refreshCloudSidebarWorkspace({ showErrors: true })
+              ? refreshCloudSidebarWorkspaceFromCache()
               : loadDirectoryTree(directoryPath)),
         },
+        ...(isCloudEntry
+          ? [
+              { type: "separator" as const },
+              {
+                icon: <FilePlus2 size={15} />,
+                label: "新建 Markdown 文件",
+                onSelect: () => void createCloudMarkdownDocument(directoryPath),
+              },
+              {
+                icon: <FolderPlus size={15} />,
+                label: "新建文件夹",
+                onSelect: () => void createCloudDirectory(directoryPath),
+              },
+            ]
+          : []),
+        ...(isCloudEntry
+          ? [
+              {
+                icon: <Download size={15} />,
+                label: "导出到本地...",
+                onSelect: () => void exportCloudEntryToLocal(directoryPath),
+              },
+            ]
+          : []),
         ...(isCloudEntry
           ? [
               { type: "separator" as const },
@@ -4099,6 +4828,38 @@ export function App() {
           : []),
       ],
       246,
+    );
+  }
+
+  function openCloudStorageContextMenu(
+    event: ReactMouseEvent<HTMLElement>,
+    targetDirectoryPath?: string,
+  ) {
+    const directoryPath = getCloudTargetDirectoryPath(targetDirectoryPath);
+
+    openContextMenu(
+      event,
+      [
+        {
+          disabled: !directoryPath,
+          icon: <FilePlus2 size={15} />,
+          label: "新建 Markdown 文件",
+          onSelect: () => void createCloudMarkdownDocument(directoryPath),
+        },
+        {
+          disabled: !directoryPath,
+          icon: <FolderPlus size={15} />,
+          label: "新建文件夹",
+          onSelect: () => void createCloudDirectory(directoryPath),
+        },
+        { type: "separator" },
+        {
+          icon: <RefreshCw size={15} />,
+          label: "刷新云端",
+          onSelect: () => void refreshCloudSidebarWorkspaceFromCache(),
+        },
+      ],
+      250,
     );
   }
 
@@ -4883,7 +5644,6 @@ export function App() {
       );
       setIsHomeOpen(false);
       setTopMenu(null);
-      setSaveState("saved");
     } catch {
       setSaveState("failed");
     } finally {
@@ -6039,6 +6799,7 @@ export function App() {
                   ? "outline-item outline-item-active"
                   : "outline-item"
               }
+              data-outline-level={entry.level}
               key={entry.id}
               style={
                 {
@@ -6076,7 +6837,13 @@ export function App() {
 
   function renderCurrentDocumentPanel() {
     if (!activeDocument) {
-      return <div className="outline-empty" aria-label="当前文件为空" />;
+      return (
+        <div className="current-document-empty" aria-label="当前文件为空">
+          <FileText size={28} />
+          <strong>没有当前文件</strong>
+          <span>从左侧打开一个文档查看大纲与信息。</span>
+        </div>
+      );
     }
 
     return (
@@ -6112,9 +6879,6 @@ export function App() {
     editorContentDensityOptions.find(
       (option) => option.value === settings.editorContentDensity,
     ) ?? editorContentDensityOptions[1];
-  const fontSizeAdjustmentLabel = formatEditorFontSizeAdjustment(
-    settings.editorFontSizeAdjustment,
-  );
   const syncStatusLabel =
     syncStatus.state === "synced"
       ? "已同步"
@@ -6147,6 +6911,21 @@ export function App() {
   const windowZoomPercent = Math.round(windowZoomFactor * 100);
   const isDefaultWindowZoom =
     Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
+  const isStorageSplitVisible = isCloudExplorerEnabled;
+  const storageSectionsClassName = [
+    "explorer-storage-sections",
+    isStorageSplitVisible
+      ? "explorer-storage-sections-split"
+      : "explorer-storage-sections-single",
+    isStorageSplitResizing ? "explorer-storage-sections-resizing" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const storageSectionsStyle = isStorageSplitVisible
+    ? ({
+        gridTemplateRows: `minmax(${minStorageSectionHeight}px, ${storageSplitRatio}fr) 10px minmax(${minStorageSectionHeight}px, ${1 - storageSplitRatio}fr)`,
+      } as CSSProperties)
+    : undefined;
 
   function renderStorageExplorerSection({
     documents,
@@ -6156,6 +6935,8 @@ export function App() {
     emptyTitle,
     kind,
     label,
+    headingActions,
+    isBusy = false,
     tree,
     viewMode = fileExplorerView,
     workspacePath,
@@ -6167,17 +6948,24 @@ export function App() {
     emptyTitle: string;
     kind: SidebarStorageKind;
     label: string;
+    headingActions?: ReactNode;
+    isBusy?: boolean;
     tree: DirectoryTreeItem | null;
     viewMode?: FileExplorerView;
     workspacePath?: string;
   }) {
     const isDropTarget = sidebarDropTarget === kind;
+    const treeChildren = tree?.children ?? [];
+    const hasStorageItems = treeChildren.length > 0;
+    const isCloudSelectionMode =
+      kind === "cloud" && isCloudMultiSelectEnabled;
 
     return (
       <section
         className={[
           "explorer-storage-section",
           `explorer-storage-section-${kind}`,
+          hasStorageItems ? "" : "explorer-storage-section-empty",
           isDropTarget ? "explorer-storage-section-drop-target" : "",
         ]
           .filter(Boolean)
@@ -6186,12 +6974,37 @@ export function App() {
         onDragLeave={handleSidebarStorageDragLeave}
         onDragOver={(event) => handleSidebarStorageDragOver(event, kind)}
         onDrop={(event) => void dropSidebarEntryToStorage(event, kind)}
+        onContextMenu={(event) => {
+          if (kind !== "cloud" || event.defaultPrevented) {
+            return;
+          }
+
+          const target = event.target as HTMLElement | null;
+
+          if (
+            target?.closest(
+              "button,a,[role='button'],.directory-tree-folder,.directory-tree-file,.directory-file-list-item",
+            )
+          ) {
+            return;
+          }
+
+          openCloudStorageContextMenu(event, workspacePath);
+        }}
       >
         <div className="explorer-storage-heading">
+          <div className="explorer-storage-heading-title">
           <span>{emptyIcon}</span>
           <strong>{label}</strong>
+          {isBusy ? <small>导入中</small> : null}
+          </div>
+          {headingActions ? (
+            <div className="explorer-storage-heading-actions">
+              {headingActions}
+            </div>
+          ) : null}
         </div>
-        {tree?.children?.length ? (
+        {hasStorageItems ? (
           viewMode === "tree" ? (
             <div className="explorer-storage-tree-scroll">
               <DirectoryTreeItems
@@ -6202,7 +7015,8 @@ export function App() {
                     ? expandedCloudDirectoryPaths
                     : expandedDirectoryPaths
                 }
-                items={tree.children ?? []}
+                isSelectionMode={isCloudSelectionMode}
+                items={treeChildren}
                 level={0}
                 onDirectoryContextMenu={openDirectoryContextMenu}
                 onFileContextMenu={openFileContextMenu}
@@ -6213,20 +7027,28 @@ export function App() {
                     source: kind,
                   })
                 }
+                onCancelRename={cancelRenamingEntry}
+                onCommitRename={(entryPath) => void commitRenamingEntry(entryPath)}
                 onQuickLinkFile={relateDocumentFromFile}
+                onRenameDraftChange={setRenameDraft}
+                onToggleEntrySelection={toggleCloudEntrySelection}
                 onOpenFile={(filePath) => {
                   void openFileFromTree(filePath);
                 }}
                 onToggleDirectory={
                   kind === "cloud" ? toggleCloudDirectoryPath : toggleDirectoryPath
                 }
+                renameDraft={renameDraft}
+                renamingEntryPath={renamingEntryPath ?? undefined}
+                selectedEntryPaths={selectedCloudEntryPaths}
               />
             </div>
           ) : (
             <DirectoryFileList
               activeFilePath={activeDocument?.filePath}
               documents={documents}
-              items={tree.children ?? []}
+              isSelectionMode={isCloudSelectionMode}
+              items={treeChildren}
               workspacePath={workspacePath}
               onFileContextMenu={openFileContextMenu}
               onFileDragStart={(event, filePath) =>
@@ -6236,10 +7058,17 @@ export function App() {
                   source: kind,
                 })
               }
+              onCancelRename={cancelRenamingEntry}
+              onCommitRename={(entryPath) => void commitRenamingEntry(entryPath)}
               onQuickLinkFile={relateDocumentFromFile}
+              onRenameDraftChange={setRenameDraft}
+              onToggleEntrySelection={toggleCloudEntrySelection}
               onOpenFile={(filePath) => {
                 void openFileFromTree(filePath);
               }}
+              renameDraft={renameDraft}
+              renamingEntryPath={renamingEntryPath ?? undefined}
+              selectedEntryPaths={selectedCloudEntryPaths}
             />
           )
         ) : (
@@ -6247,7 +7076,7 @@ export function App() {
             {emptyIcon}
             <strong>{emptyTitle}</strong>
             <span>{emptyDescription}</span>
-            {emptyAction}
+            {kind === "cloud" ? null : emptyAction}
           </div>
         )}
       </section>
@@ -6435,11 +7264,9 @@ export function App() {
           >
             {sidebarTab === "files" ? (
               <div
-                className={
-                  isCloudExplorerEnabled
-                    ? "explorer-storage-sections"
-                    : "explorer-storage-sections explorer-storage-sections-single"
-                }
+                ref={storageSectionsRef}
+                className={storageSectionsClassName}
+                style={storageSectionsStyle}
               >
                 {renderStorageExplorerSection({
                   documents: localExplorerDocuments,
@@ -6462,13 +7289,80 @@ export function App() {
                   tree: localExplorerTree,
                   workspacePath: workspace.workspacePath,
                 })}
+                {isStorageSplitVisible ? (
+                  <div
+                    className="explorer-storage-split-resizer"
+                    role="separator"
+                    aria-label="调整本地文档和云端文档显示区域"
+                    aria-orientation="horizontal"
+                    onPointerDown={startStorageSplitResize}
+                  />
+                ) : null}
                 {isCloudExplorerEnabled
                   ? renderStorageExplorerSection({
                       documents: cloudSidebarWorkspace?.documents ?? [],
+                      headingActions: (
+                        <>
+                          <button
+                            className="explorer-storage-heading-button"
+                            type="button"
+                            aria-label="新建云端文件夹"
+                            title="新建云端文件夹"
+                            disabled={isCloudDirectoryCreating}
+                            onClick={() => void createCloudDirectory()}
+                          >
+                            <FolderPlus size={15} />
+                          </button>
+                          <button
+                            className={[
+                              "explorer-storage-heading-button",
+                              isCloudMultiSelectEnabled
+                                ? "explorer-storage-heading-button-active"
+                                : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                            type="button"
+                            aria-label={
+                              isCloudMultiSelectEnabled ? "退出多选" : "多选云端文档"
+                            }
+                            aria-pressed={isCloudMultiSelectEnabled}
+                            title={
+                              isCloudMultiSelectEnabled ? "退出多选" : "多选云端文档"
+                            }
+                            onClick={toggleCloudMultiSelect}
+                          >
+                            <ListChecks size={15} />
+                          </button>
+                          {isCloudMultiSelectEnabled &&
+                          selectedCloudEntryPaths.size > 0 ? (
+                            <button
+                              className="explorer-storage-heading-button explorer-storage-heading-button-danger"
+                              type="button"
+                              aria-label={`删除选中的 ${selectedCloudEntryPaths.size} 项`}
+                              title={`删除选中的 ${selectedCloudEntryPaths.size} 项`}
+                              onClick={() => void deleteSelectedCloudEntries()}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          ) : null}
+                          <button
+                            className="explorer-storage-heading-button"
+                            type="button"
+                            aria-label="刷新云端"
+                            title="刷新云端"
+                            onClick={() =>
+                              void refreshCloudSidebarWorkspaceFromCache()
+                            }
+                          >
+                            <RefreshCw size={15} />
+                          </button>
+                        </>
+                      ),
                       emptyAction: (
                         <button
                           type="button"
-                          onClick={() => void refreshCloudSidebarWorkspace({ showErrors: true })}
+                          onClick={() => void refreshCloudSidebarWorkspaceFromCache()}
                         >
                           刷新云端
                         </button>
@@ -6482,8 +7376,8 @@ export function App() {
                         : "云端文档",
                       kind: "cloud",
                       label: "云端文档",
+                      isBusy: isCloudImporting,
                       tree: cloudSidebarWorkspace?.tree ?? null,
-                      viewMode: "tree",
                       workspacePath: cloudSidebarWorkspace?.directoryPath,
                     })
                   : null}
@@ -7529,6 +8423,15 @@ export function App() {
           </Dialog.Portal>
         </Dialog.Root>
 
+        {workspaceToast ? (
+          <div
+            className={`workspace-toast workspace-toast-${workspaceToast.tone}`}
+            role={workspaceToast.tone === "error" ? "alert" : "status"}
+          >
+            {workspaceToast.message}
+          </div>
+        ) : null}
+
         <AppConfirmationDialog dialog={appDialog} onClose={closeAppDialog} />
 
         <Suspense fallback={null}>
@@ -7552,94 +8455,88 @@ export function App() {
         <Dialog.Root open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
           <Dialog.Portal>
             <Dialog.Overlay className="dialog-overlay" />
-            <Dialog.Content className="settings-dialog">
-              <div className="settings-header">
-                <div className="settings-title-group">
-                  <span className="settings-title-icon" aria-hidden="true">
-                    <Settings2 size={18} />
-                  </span>
-                  <div>
-                    <Dialog.Title className="settings-title">设置</Dialog.Title>
-                    <p className="settings-subtitle">
-                      管理阅读显示和同步连接。设置会保存在本机。
-                    </p>
+            <Dialog.Content className="settings-dialog settings-redesign">
+              <div className="settings-redesign-shell">
+                <aside className="settings-redesign-sidebar">
+                  <div className="settings-redesign-brand">
+                    <span className="settings-redesign-brand-icon" aria-hidden="true">
+                      <Settings2 size={18} />
+                    </span>
+                    <div>
+                      <Dialog.Title className="settings-redesign-title">
+                        设置
+                      </Dialog.Title>
+                      <span className="settings-redesign-app-name">noteDock</span>
+                    </div>
                   </div>
-                </div>
-                <Dialog.Close asChild>
-                  <button className="icon-button" type="button" aria-label="关闭设置">
-                    <X size={16} />
-                  </button>
-                </Dialog.Close>
-              </div>
 
-              <div className="settings-body">
-                <aside className="settings-nav" aria-label="设置目录">
-                  {settingsDirectoryItems.map((item) => {
-                    const DirectoryIcon = item.icon;
+                  <nav className="settings-redesign-nav" aria-label="设置目录">
+                    {settingsDirectoryItems.map((item) => {
+                      const DirectoryIcon = item.icon;
 
-                    return (
-                      <button
-                        className={`settings-nav-item ${
-                          activeSettingsSection === item.id
-                            ? "settings-nav-item-active"
-                            : ""
-                        }`}
-                        key={item.id}
-                        type="button"
-                        aria-current={
-                          activeSettingsSection === item.id ? "page" : undefined
-                        }
-                        onClick={() => setActiveSettingsSection(item.id)}
-                      >
-                        <span className="settings-nav-icon" aria-hidden="true">
+                      return (
+                        <button
+                          className={`settings-redesign-nav-item ${
+                            activeSettingsSection === item.id
+                              ? "settings-redesign-nav-item-active"
+                              : ""
+                          }`}
+                          key={item.id}
+                          type="button"
+                          aria-current={
+                            activeSettingsSection === item.id ? "page" : undefined
+                          }
+                          onClick={() => setActiveSettingsSection(item.id)}
+                        >
                           <DirectoryIcon size={16} />
-                        </span>
-                        <span className="settings-nav-copy">
-                          <strong>{item.label}</strong>
-                          <span>{item.description}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
+                          <span>{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </nav>
                 </aside>
 
-                <div className="settings-content">
-                  <div className="settings-page-heading">
+                <section className="settings-redesign-main">
+                  <div className="settings-redesign-toolbar">
                     <div>
-                      <div className="settings-page-kicker">偏好设置</div>
+                      <div className="settings-redesign-kicker">偏好设置</div>
                       <h2>{activeSettingsItem.label}</h2>
-                      <p>{activeSettingsItem.description}</p>
                     </div>
-                    {activeSettingsSection === "editor" ? (
-                      <span className="settings-status-pill settings-status-pill-neutral">
-                        {selectedContentDensity.label} · {fontSizeAdjustmentLabel}
-                      </span>
-                    ) : (
-                      <span
-                        className={`settings-status-pill settings-status-pill-${syncStatusTone}`}
-                      >
-                        {syncStatusLabel}
-                      </span>
-                    )}
+                    <div className="settings-redesign-toolbar-actions">
+                      {activeSettingsSection === "editor" ? (
+                        <span className="settings-redesign-status">
+                          {selectedContentDensity.label}
+                        </span>
+                      ) : (
+                        <span
+                          className={`settings-redesign-status settings-redesign-status-${syncStatusTone}`}
+                        >
+                          {syncStatusLabel}
+                        </span>
+                      )}
+                      <Dialog.Close asChild>
+                        <button
+                          className="settings-redesign-close"
+                          type="button"
+                          aria-label="关闭设置"
+                        >
+                          <X size={16} />
+                        </button>
+                      </Dialog.Close>
+                    </div>
                   </div>
 
                   {activeSettingsSection === "editor" ? (
-                    <div className="settings-editor-content">
-                      <section className="settings-section settings-panel">
-                        <div className="settings-section-heading">
-                          <div>
-                            <div className="settings-section-title">阅读密度</div>
-                            <p>
-                              选择一个阅读密度预设，字体、行高、表格留白和内容宽度会一起调整。
-                            </p>
-                          </div>
+                    <div className="settings-redesign-reader">
+                      <section className="settings-redesign-card settings-redesign-density-card">
+                        <div className="settings-redesign-card-heading">
+                          <h3>阅读显示</h3>
                         </div>
-
                         <ToggleGroup.Root
-                          className="settings-density-grid"
+                          className="settings-redesign-density"
                           type="single"
                           value={settings.editorContentDensity}
-                          aria-label="正文大小"
+                          aria-label="阅读密度"
                           onValueChange={(nextDensity) => {
                             if (nextDensity) {
                               updateSetting(
@@ -7651,104 +8548,47 @@ export function App() {
                         >
                           {editorContentDensityOptions.map((option) => (
                             <ToggleGroup.Item
-                              className="settings-density-card"
+                              className="settings-redesign-density-item"
                               key={option.value}
                               value={option.value}
                               aria-label={option.label}
                             >
-                              <span className="settings-density-title">
-                                <strong>{option.label}</strong>
-                                <span>{option.meta}</span>
-                              </span>
-                              <span className="settings-density-description">
-                                {option.description}
-                              </span>
-                              <span
-                                className={`settings-density-preview settings-density-preview-${option.value}`}
-                                aria-hidden="true"
-                              >
-                                <span />
-                                <span />
-                                <span />
-                              </span>
+                              {option.label}
                             </ToggleGroup.Item>
                           ))}
                         </ToggleGroup.Root>
-
-                        <div className="settings-font-control">
-                          <div className="settings-font-control-header">
-                            <div>
-                              <div className="settings-font-control-title">
-                                字号微调
-                              </div>
-                              <p>
-                                在当前预设基础上拖拽调整，适合按屏幕距离和主题字体再细调。
-                              </p>
-                            </div>
-                            <span className="settings-font-value-badge">
-                              {fontSizeAdjustmentLabel}
-                            </span>
-                          </div>
-                          <div className="settings-font-slider-row">
-                            <span>{editorFontSizeAdjustmentRange.min}px</span>
-                            <input
-                              className="settings-font-slider"
-                              type="range"
-                              min={editorFontSizeAdjustmentRange.min}
-                              max={editorFontSizeAdjustmentRange.max}
-                              step={editorFontSizeAdjustmentRange.step}
-                              value={settings.editorFontSizeAdjustment}
-                              aria-label="字号微调"
-                              onChange={(event) => {
-                                updateSetting(
-                                  "editorFontSizeAdjustment",
-                                  Number(event.currentTarget.value),
-                                );
-                              }}
-                            />
-                            <span>+{editorFontSizeAdjustmentRange.max}px</span>
-                          </div>
-                          <div className="settings-font-control-footer">
-                            <span>预设控制整体密度，微调只改变正文基准字号。</span>
-                            <button
-                              className="settings-font-reset"
-                              type="button"
-                              onClick={() =>
-                                updateSetting(
-                                  "editorFontSizeAdjustment",
-                                  editorFontSizeAdjustmentRange.defaultValue,
-                                )
-                              }
-                            >
-                              重置到预设
-                            </button>
-                          </div>
-                        </div>
                       </section>
 
                       <section
-                        className="settings-preview-panel settings-panel"
+                        className="settings-redesign-card settings-redesign-preview"
                         aria-label="显示预览"
                       >
-                        <div className="settings-preview-kicker">预览</div>
-                        <h3>项目笔记</h3>
-                        <p>
-                          文本大小会同步影响正文、列表和表格区域。这个设置偏向阅读体验，不改变文档本身内容。
-                        </p>
-                        <div className="settings-preview-table" aria-hidden="true">
-                          <span>类型</span>
-                          <span>状态</span>
-                          <span>Markdown</span>
-                          <span>已同步</span>
+                        <div className="settings-redesign-card-heading">
+                          <h3>预览</h3>
+                        </div>
+                        <div className="settings-redesign-preview-page">
+                          <h4>项目笔记</h4>
+                          <p>正文、列表和表格会跟随当前阅读密度。</p>
+                          <ul>
+                            <li>快速记录 Markdown 笔记</li>
+                            <li>阅读本地与云端文档</li>
+                          </ul>
+                          <div className="settings-redesign-preview-table" aria-hidden="true">
+                            <span>类型</span>
+                            <span>状态</span>
+                            <span>Markdown</span>
+                            <span>已同步</span>
+                          </div>
                         </div>
                       </section>
                     </div>
                   ) : null}
 
                   {activeSettingsSection === "sync" ? (
-                    <section className="settings-section settings-sync-section settings-panel">
-                      <div className="settings-sync-grid">
-                        <label className="settings-sync-toggle">
+                    <section className="settings-redesign-card settings-redesign-sync">
+                      <div className="settings-redesign-sync-head">
+                        <h3>云同步</h3>
+                        <label className="settings-redesign-switch">
                           <input
                             type="checkbox"
                             checked={syncEnabledDraft}
@@ -7756,14 +8596,12 @@ export function App() {
                               setSyncEnabledDraft(event.currentTarget.checked)
                             }
                           />
-                          <span>
-                            <strong>启用云同步</strong>
-                            <small>
-                              自动保存后会排队同步，也可以从底部状态栏手动同步。
-                            </small>
-                          </span>
+                          <span />
                         </label>
-                        <label className="settings-sync-field">
+                      </div>
+
+                      <div className="settings-redesign-form">
+                        <label className="settings-redesign-field">
                           <span>服务器地址</span>
                           <input
                             type="url"
@@ -7774,14 +8612,9 @@ export function App() {
                             }
                           />
                         </label>
-                        <div className="settings-sync-login-card">
-                          <div className="settings-sync-login-heading">
-                            <strong>账号登录</strong>
-                            <small>
-                              登录状态会保存在本机，密码不会保存。
-                            </small>
-                          </div>
-                          <label className="settings-sync-field">
+
+                        <div className="settings-redesign-field-row">
+                          <label className="settings-redesign-field">
                             <span>用户名</span>
                             <input
                               type="text"
@@ -7795,7 +8628,7 @@ export function App() {
                               }
                             />
                           </label>
-                          <label className="settings-sync-field">
+                          <label className="settings-redesign-field">
                             <span>密码</span>
                             <input
                               type="password"
@@ -7809,52 +8642,46 @@ export function App() {
                               }
                             />
                           </label>
-                          <div className="settings-sync-login-actions">
-                            <button
-                              className="settings-primary-action settings-sync-save"
-                              type="button"
-                              disabled={isSyncLoginRunning}
-                              onClick={() => void loginAndConfigureSync()}
-                            >
-                              {isSyncLoginRunning ? "登录中..." : "登录并启用同步"}
-                            </button>
-                          </div>
-                          {syncLoginMessage ? (
-                            <div
-                              className={`settings-sync-login-message settings-sync-login-message-${syncLoginMessageTone}`}
-                              role={
-                                syncLoginMessageTone === "error"
-                                  ? "alert"
-                                  : "status"
-                              }
-                            >
-                              {syncLoginMessage}
-                            </div>
-                          ) : null}
                         </div>
                       </div>
 
-                      <div className="settings-sync-footer">
-                        <span>{syncStatus.message || "同步配置只保存在本机。"}</span>
+                      {syncLoginMessage ? (
+                        <div
+                          className={`settings-redesign-message settings-redesign-message-${syncLoginMessageTone}`}
+                          role={syncLoginMessageTone === "error" ? "alert" : "status"}
+                        >
+                          {syncLoginMessage}
+                        </div>
+                      ) : null}
+
+                      <div className="settings-redesign-actions">
                         <button
-                          className="settings-primary-action settings-sync-save"
+                          className="settings-redesign-primary"
+                          type="button"
+                          disabled={isSyncLoginRunning}
+                          onClick={() => void loginAndConfigureSync()}
+                        >
+                          {isSyncLoginRunning ? "登录中..." : "登录并启用"}
+                        </button>
+                        <button
+                          className="settings-redesign-secondary"
+                          type="button"
+                          onClick={() => void configureSyncSettings()}
+                        >
+                          保存配置
+                        </button>
+                        <button
+                          className="settings-redesign-secondary"
                           type="button"
                           disabled={!syncStatus.configuration.tokenConfigured}
                           onClick={() => void importLocalDirectoryToCloud()}
                         >
-                          导入本地文件夹
-                        </button>
-                        <button
-                          className="settings-primary-action settings-sync-save"
-                          type="button"
-                          onClick={() => void configureSyncSettings()}
-                        >
-                          保存同步配置
+                          导入文件夹
                         </button>
                       </div>
                     </section>
                   ) : null}
-                </div>
+                </section>
               </div>
             </Dialog.Content>
           </Dialog.Portal>

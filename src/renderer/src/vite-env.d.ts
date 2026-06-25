@@ -56,6 +56,7 @@ type DesktopApi = {
     sourceFilePath: string;
   }) => Promise<{ assetFilePath: string; reference: string }>;
   copyEntryToDirectory: (payload: {
+    queueSync?: boolean;
     sourcePath: string;
     targetDirectoryPath: string;
   }) => Promise<{ copiedCount: number; targetPath: string }>;
@@ -65,6 +66,15 @@ type DesktopApi = {
     extension: ".excalidraw" | ".md" | ".univer";
     title: string;
   }) => Promise<LocalMarkdownFile>;
+  createWorkspaceDirectory: (payload: {
+    directoryPath: string;
+    name?: string;
+    queueSync?: boolean;
+  }) => Promise<{ directoryPath: string }>;
+  renameWorkspaceEntry: (payload: {
+    entryPath: string;
+    nextBaseName: string;
+  }) => Promise<{ entryPath: string }>;
   createMarkdownFile: (payload: {
     directoryPath: string;
     title: string;
@@ -130,7 +140,10 @@ type DesktopApi = {
   openWorkspaceDirectory: () => Promise<LocalWorkspaceDirectory | null>;
   pathExists: (filePath: string) => Promise<boolean>;
   platform: string;
-  readDirectoryTree: (directoryPath: string) => Promise<DirectoryTreeItem>;
+  readDirectoryTree: (
+    directoryPath: string,
+    options?: { includeEmptyDirectories?: boolean },
+  ) => Promise<DirectoryTreeItem>;
   readExcelDocument: (filePath: string) => Promise<string>;
   readMarkdownFile: (filePath: string) => Promise<LocalMarkdownFile>;
   readTextAsset: (payload: {

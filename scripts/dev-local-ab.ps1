@@ -86,9 +86,15 @@ if (-not $NoBuild) {
   Write-Section "Building desktop app and sync server"
   Push-Location $repoRoot
   try {
+    $previousRendererSyncUrl = $env:VITE_NOTEDOCK_SYNC_SERVER_URL
+    $previousDefaultSyncUrl = $env:NOTEDOCK_DEFAULT_SYNC_SERVER_URL
+    $env:VITE_NOTEDOCK_SYNC_SERVER_URL = $syncUrl
+    $env:NOTEDOCK_DEFAULT_SYNC_SERVER_URL = $syncUrl
     npm run build
     npm run build:sync-server
   } finally {
+    $env:VITE_NOTEDOCK_SYNC_SERVER_URL = $previousRendererSyncUrl
+    $env:NOTEDOCK_DEFAULT_SYNC_SERVER_URL = $previousDefaultSyncUrl
     Pop-Location
   }
 }
@@ -143,6 +149,7 @@ function Start-Client([string]$Name, [string]$UserDataPath) {
 `$env:NOTEDOCK_TEST_USER_DATA_DIR = $(ConvertTo-PowerShellLiteral $UserDataPath);
 `$env:NOTEDOCK_SKIP_INITIAL_APP_STATE_RESTORE = '1';
 `$env:NOTEDOCK_SKIP_INITIAL_SYNC_CONFIG_RESTORE = '1';
+`$env:NOTEDOCK_DEFAULT_SYNC_SERVER_URL = $(ConvertTo-PowerShellLiteral $syncUrl);
 Set-Location $(ConvertTo-PowerShellLiteral $repoRoot);
 & $(ConvertTo-PowerShellLiteral $electronExe) .
 "@

@@ -28,6 +28,10 @@ import {
   getMediaFileExtensionFromMimeType,
   getMediaMimeTypeForExtension,
 } from "../shared/mediaTypes";
+import {
+  createWorkspaceRenamedEntryName,
+  splitWorkspaceEntryNameForRename,
+} from "../shared/workspaceRename";
 
 const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 const isE2E = process.env.NOTEDOCK_E2E === "1";
@@ -838,6 +842,7 @@ async function readSafeDirectoryEntries(directoryPath: string) {
 async function readDirectoryTree(
   directoryPath: string,
   depth = 0,
+  options: { includeEmptyDirectories?: boolean } = {},
 ): Promise<DirectoryTreeItem | null> {
   const entries = await readSafeDirectoryEntries(directoryPath);
   const children: DirectoryTreeItem[] = [];
@@ -854,9 +859,9 @@ async function readDirectoryTree(
         continue;
       }
 
-      const childTree = await readDirectoryTree(entryPath, depth + 1);
+      const childTree = await readDirectoryTree(entryPath, depth + 1, options);
 
-      if (childTree?.children?.length) {
+      if (childTree && (options.includeEmptyDirectories || childTree.children?.length)) {
         children.push(childTree);
       }
 
@@ -876,7 +881,7 @@ async function readDirectoryTree(
     return a.name.localeCompare(b.name, "zh-Hans-CN");
   });
 
-  if (!children.length && depth > 0) {
+  if (!children.length && depth > 0 && !options.includeEmptyDirectories) {
     return null;
   }
 
@@ -1239,7 +1244,6 @@ function registerAppStateIpc() {
 
   ipcMain.handle("app-state:save", async (_, state: PersistedAppState) => {
     const nextState = await writePersistedAppState(state);
-    queueSync();
     return nextState;
   });
 }
@@ -1287,7 +1291,9 @@ function registerSyncIpc() {
 
     const [files, tree] = await Promise.all([
       listMarkdownFiles(workspace.directoryPath),
-      readDirectoryTree(workspace.directoryPath),
+      readDirectoryTree(workspace.directoryPath, 0, {
+        includeEmptyDirectories: true,
+      }),
     ]);
 
     return {
@@ -1363,11 +1369,12 @@ function registerSyncIpc() {
       }
 
       queueSync();
-      await syncService?.syncNow();
 
       const [files, tree] = await Promise.all([
         listMarkdownFiles(workspace.directoryPath),
-        readDirectoryTree(workspace.directoryPath),
+        readDirectoryTree(workspace.directoryPath, 0, {
+          includeEmptyDirectories: true,
+        }),
       ]);
 
       return {
@@ -1573,6 +1580,112 @@ function registerFileIpc() {
     },
   );
 
+  ipcMain.handle(
+    "workspace:create-directory",
+    async (
+      _,
+      payload: {
+        directoryPath: string;
+        name?: string;
+        queueSync?: boolean;
+      },
+    ) => {
+      const directoryPath = payload.directoryPath || app.getPath("desktop");
+      const targetPath = await createUniqueDirectoryPath(
+        directoryPath,
+        payload.name || "New Folder",
+      );
+
+      await mkdir(directoryPath, { recursive: true });
+      await mkdir(targetPath, { recursive: false });
+
+      if (payload.queueSync !== false) {
+        queueSync();
+      }
+
+      return {
+        directoryPath: targetPath,
+      };
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:rename-entry",
+    async (
+      _,
+      payload: {
+        entryPath: string;
+        nextBaseName: string;
+      },
+    ) => {
+      const entryPath = payload.entryPath;
+      const entryStats = await stat(entryPath);
+      const entryType = entryStats.isDirectory()
+        ? "directory"
+        : entryStats.isFile()
+          ? "file"
+          : null;
+
+      if (!entryType) {
+        throw new Error(`Unsupported workspace entry: ${entryPath}`);
+      }
+
+      const currentName = basename(entryPath);
+      const nextName = createWorkspaceRenamedEntryName({
+        currentName,
+        entryType,
+        nextBaseName: payload.nextBaseName,
+      });
+      const targetPath = join(dirname(entryPath), nextName);
+      const currentKey = resolve(entryPath).toLowerCase();
+      const targetKey = resolve(targetPath).toLowerCase();
+
+      if (targetPath === entryPath) {
+        return {
+          entryPath,
+        };
+      }
+
+      if (targetKey !== currentKey) {
+        try {
+          await access(targetPath);
+          throw new Error("同名文件或文件夹已存在。");
+        } catch (error) {
+          if (error instanceof Error && error.message === "同名文件或文件夹已存在。") {
+            throw error;
+          }
+        }
+      }
+
+      if (entryType === "file") {
+        const { extension } = splitWorkspaceEntryNameForRename(currentName, "file");
+        const targetExtension = extname(targetPath);
+
+        if (extension && targetExtension.toLowerCase() !== extension.toLowerCase()) {
+          throw new Error("不能修改文件扩展名。");
+        }
+      }
+
+      if (targetKey === currentKey) {
+        const temporaryPath = join(
+          dirname(entryPath),
+          `.__notedock-rename-${randomUUID()}${extname(entryPath)}`,
+        );
+
+        await rename(entryPath, temporaryPath);
+        await rename(temporaryPath, targetPath);
+      } else {
+        await rename(entryPath, targetPath);
+      }
+
+      queueSync();
+
+      return {
+        entryPath: targetPath,
+      };
+    },
+  );
+
   ipcMain.handle("workspace:duplicate-document-file", async (_, filePath: string) => {
     if (!getDocumentFileType(filePath)) {
       throw new Error(`Unsupported document file: ${filePath}`);
@@ -1640,12 +1753,14 @@ function registerFileIpc() {
     async (
       _,
       payload: {
+        queueSync?: boolean;
         sourcePath: string;
         targetDirectoryPath: string;
       },
     ) => {
       const sourceStats = await stat(payload.sourcePath);
       const targetDirectoryPath = payload.targetDirectoryPath || app.getPath("desktop");
+      const shouldQueueSync = payload.queueSync !== false;
 
       await mkdir(targetDirectoryPath, { recursive: true });
 
@@ -1666,7 +1781,9 @@ function registerFileIpc() {
         );
 
         await copyFile(payload.sourcePath, targetPath);
-        queueSync();
+        if (shouldQueueSync) {
+          queueSync();
+        }
 
         return {
           copiedCount: 1,
@@ -1691,7 +1808,9 @@ function registerFileIpc() {
         await rm(targetPath, { force: true, recursive: true });
       }
 
-      queueSync();
+      if (shouldQueueSync) {
+        queueSync();
+      }
 
       return {
         copiedCount,
@@ -1893,9 +2012,20 @@ function registerFileIpc() {
     return listMarkdownFiles(directoryPath || app.getPath("desktop"));
   });
 
-  ipcMain.handle("workspace:read-directory-tree", async (_, directoryPath: string) => {
-    return readDirectoryTree(directoryPath || app.getPath("desktop"));
-  });
+  ipcMain.handle(
+    "workspace:read-directory-tree",
+    async (
+      _,
+      directoryPath: string,
+      options?: { includeEmptyDirectories?: boolean },
+    ) => {
+      return readDirectoryTree(
+        directoryPath || app.getPath("desktop"),
+        0,
+        options,
+      );
+    },
+  );
 
   ipcMain.handle("workspace:watch-directory", async (event, directoryPath?: string) => {
     const webContents = event.sender;

@@ -11,6 +11,14 @@ type ExcalidrawApi = {
   getSceneElements: () => readonly unknown[];
   getAppState: () => Record<string, unknown>;
   getFiles: () => Record<string, unknown>;
+  scrollToContent?: (
+    target?: readonly unknown[],
+    options?: {
+      animate?: boolean;
+      duration?: number;
+      fitToContent?: boolean;
+    },
+  ) => void;
   updateLibrary: (options: {
     defaultStatus?: "published" | "unpublished";
     libraryItems: LibraryItemsSource;
@@ -72,6 +80,7 @@ export function DrawingModal({
   const [isExportingDrawing, setIsExportingDrawing] = useState(false);
   const excalidrawApiRef = useRef<ExcalidrawApi | null>(null);
   const libraryLoadedRef = useRef(false);
+  const autoFitAppliedRef = useRef(false);
 
   async function saveDrawing() {
     const api = excalidrawApiRef.current;
@@ -148,15 +157,32 @@ export function DrawingModal({
       <div className="drawing-surface">
         <Excalidraw
           excalidrawAPI={(api) => {
-            excalidrawApiRef.current = api as ExcalidrawApi;
+            const nextApi = api as ExcalidrawApi;
+            excalidrawApiRef.current = nextApi;
             if (!libraryLoadedRef.current) {
               libraryLoadedRef.current = true;
-              void (api as ExcalidrawApi).updateLibrary({
+              void nextApi.updateLibrary({
                 libraryItems: getBundledExcalidrawLibraryItems(),
                 merge: true,
                 prompt: false,
                 openLibraryMenu: false,
                 defaultStatus: "published",
+              });
+            }
+
+            if (!autoFitAppliedRef.current && initialAsset?.sceneJSON) {
+              autoFitAppliedRef.current = true;
+              window.requestAnimationFrame(() => {
+                window.setTimeout(() => {
+                  const elements = nextApi.getSceneElements();
+
+                  if (elements.length) {
+                    nextApi.scrollToContent?.(elements, {
+                      animate: false,
+                      fitToContent: true,
+                    });
+                  }
+                }, 120);
               });
             }
           }}

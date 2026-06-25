@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("desktop", {
     sourceFilePath: string;
   }) => ipcRenderer.invoke("workspace:copy-asset-from-file", payload),
   copyEntryToDirectory: (payload: {
+    queueSync?: boolean;
     sourcePath: string;
     targetDirectoryPath: string;
   }) => ipcRenderer.invoke("workspace:copy-entry-to-directory", payload),
@@ -53,6 +54,15 @@ contextBridge.exposeInMainWorld("desktop", {
     extension: ".excalidraw" | ".md" | ".univer";
     title: string;
   }) => ipcRenderer.invoke("workspace:create-document-file", payload),
+  createWorkspaceDirectory: (payload: {
+    directoryPath: string;
+    name?: string;
+    queueSync?: boolean;
+  }) => ipcRenderer.invoke("workspace:create-directory", payload),
+  renameWorkspaceEntry: (payload: {
+    entryPath: string;
+    nextBaseName: string;
+  }) => ipcRenderer.invoke("workspace:rename-entry", payload),
   createMarkdownFile: (payload: { directoryPath: string; title: string }) =>
     ipcRenderer.invoke("workspace:create-markdown-file", payload),
   deleteDocumentFile: (filePath: string) =>
@@ -140,8 +150,10 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("workspace:open-path", targetPath),
   pathExists: (filePath: string) =>
     ipcRenderer.invoke("workspace:path-exists", filePath),
-  readDirectoryTree: (directoryPath: string) =>
-    ipcRenderer.invoke("workspace:read-directory-tree", directoryPath),
+  readDirectoryTree: (
+    directoryPath: string,
+    options?: { includeEmptyDirectories?: boolean },
+  ) => ipcRenderer.invoke("workspace:read-directory-tree", directoryPath, options),
   readMarkdownFile: (filePath: string) =>
     ipcRenderer.invoke("workspace:read-markdown-file", filePath),
   readTextAsset: (payload: { documentFilePath: string; reference: string }) =>
