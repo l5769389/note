@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, FolderOpen } from "lucide-react";
 import type {
   CSSProperties,
   DragEvent as ReactDragEvent,
@@ -6,6 +6,7 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { splitWorkspaceEntryNameForRename } from "../../../shared/workspaceRename";
+import { DocumentFileIcon } from "./DocumentFileIcon";
 import type { DirectoryTreeItem } from "../types";
 import { isQuickDocumentLinkShortcut } from "../workspaceShortcuts";
 
@@ -20,6 +21,15 @@ type DirectoryTreeHandlerProps = {
     event: ReactMouseEvent<HTMLButtonElement>,
     directoryPath: string,
   ) => void;
+  onDirectoryDragLeave?: (event: ReactDragEvent<HTMLButtonElement>) => void;
+  onDirectoryDragOver?: (
+    event: ReactDragEvent<HTMLButtonElement>,
+    item: DirectoryTreeItem,
+  ) => void;
+  onDirectoryDrop?: (
+    event: ReactDragEvent<HTMLButtonElement>,
+    item: DirectoryTreeItem,
+  ) => void;
   onFileContextMenu?: (
     event: ReactMouseEvent<HTMLButtonElement>,
     filePath: string,
@@ -33,6 +43,7 @@ type DirectoryTreeHandlerProps = {
   onRenameDraftChange?: (value: string) => void;
   onToggleEntrySelection?: (item: DirectoryTreeItem) => void;
   onToggleDirectory: (directoryPath: string) => void;
+  directoryDropTargetPath?: string | null;
   renameDraft?: string;
   renamingEntryPath?: string;
   selectedEntryPaths?: Set<string>;
@@ -101,6 +112,9 @@ function DirectoryTree({
   onCancelRename,
   onCommitRename,
   onDirectoryContextMenu,
+  onDirectoryDragLeave,
+  onDirectoryDragOver,
+  onDirectoryDrop,
   onFileContextMenu,
   onItemDragStart,
   onOpenFile,
@@ -108,6 +122,7 @@ function DirectoryTree({
   onRenameDraftChange,
   onToggleEntrySelection,
   onToggleDirectory,
+  directoryDropTargetPath,
   renameDraft,
   renamingEntryPath,
   selectedEntryPaths,
@@ -117,6 +132,7 @@ function DirectoryTree({
   const hasChildren = Boolean(item.children?.length);
   const isExpanded = expandedPaths.has(item.path);
   const isRenaming = renamingEntryPath === item.path;
+  const isDirectoryDropTarget = directoryDropTargetPath === item.path;
   const renameInputValue =
     isRenaming && renameDraft !== undefined
       ? renameDraft
@@ -155,9 +171,13 @@ function DirectoryTree({
       ) : (
         <button
           className={
-            isCurrentDirectory
-              ? "directory-tree-folder directory-tree-folder-active"
-              : "directory-tree-folder"
+            [
+              "directory-tree-folder",
+              isCurrentDirectory ? "directory-tree-folder-active" : "",
+              isDirectoryDropTarget ? "directory-tree-folder-drop-target" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")
           }
           style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
           title={item.name}
@@ -165,7 +185,10 @@ function DirectoryTree({
           draggable={Boolean(onItemDragStart)}
           onClick={() => onToggleDirectory(item.path)}
           onContextMenu={(event) => onDirectoryContextMenu?.(event, item.path)}
+          onDragLeave={onDirectoryDragLeave}
+          onDragOver={(event) => onDirectoryDragOver?.(event, item)}
           onDragStart={(event) => onItemDragStart?.(event, item)}
+          onDrop={(event) => onDirectoryDrop?.(event, item)}
         >
           {hasChildren ? (
             isExpanded ? (
@@ -192,12 +215,16 @@ function DirectoryTree({
           activeDirectoryPath={activeDirectoryPath}
           activeFilePath={activeFilePath}
           expandedPaths={expandedPaths}
+          directoryDropTargetPath={directoryDropTargetPath}
           isSelectionMode={isSelectionMode}
           items={item.children ?? []}
           level={level + 1}
           onCancelRename={onCancelRename}
           onCommitRename={onCommitRename}
           onDirectoryContextMenu={onDirectoryContextMenu}
+          onDirectoryDragLeave={onDirectoryDragLeave}
+          onDirectoryDragOver={onDirectoryDragOver}
+          onDirectoryDrop={onDirectoryDrop}
           onFileContextMenu={onFileContextMenu}
           onItemDragStart={onItemDragStart}
           onOpenFile={onOpenFile}
@@ -286,7 +313,7 @@ function DirectoryTreeFileRow({
             onToggleEntrySelection={onToggleEntrySelection}
           />
         ) : null}
-        <FileText size={17} />
+        <DocumentFileIcon filePath={child.path} size={17} />
         <RenameInput
           ariaLabel="重命名文件"
           entryPath={child.path}
@@ -342,7 +369,7 @@ function DirectoryTreeFileRow({
           onToggleEntrySelection={onToggleEntrySelection}
         />
       ) : null}
-      <FileText size={17} />
+      <DocumentFileIcon filePath={child.path} size={17} />
       <span>{child.name}</span>
     </button>
   );
@@ -363,6 +390,9 @@ export function DirectoryTreeItems({
   onCancelRename,
   onCommitRename,
   onDirectoryContextMenu,
+  onDirectoryDragLeave,
+  onDirectoryDragOver,
+  onDirectoryDrop,
   onFileContextMenu,
   onItemDragStart,
   onOpenFile,
@@ -370,6 +400,7 @@ export function DirectoryTreeItems({
   onRenameDraftChange,
   onToggleEntrySelection,
   onToggleDirectory,
+  directoryDropTargetPath,
   renameDraft,
   renamingEntryPath,
   selectedEntryPaths,
@@ -381,6 +412,7 @@ export function DirectoryTreeItems({
           <DirectoryTree
             activeDirectoryPath={activeDirectoryPath}
             activeFilePath={activeFilePath}
+            directoryDropTargetPath={directoryDropTargetPath}
             expandedPaths={expandedPaths}
             isSelectionMode={isSelectionMode}
             item={child}
@@ -389,6 +421,9 @@ export function DirectoryTreeItems({
             onCancelRename={onCancelRename}
             onCommitRename={onCommitRename}
             onDirectoryContextMenu={onDirectoryContextMenu}
+            onDirectoryDragLeave={onDirectoryDragLeave}
+            onDirectoryDragOver={onDirectoryDragOver}
+            onDirectoryDrop={onDirectoryDrop}
             onFileContextMenu={onFileContextMenu}
             onItemDragStart={onItemDragStart}
             onOpenFile={onOpenFile}
@@ -404,6 +439,7 @@ export function DirectoryTreeItems({
           <DirectoryTreeFileRow
             activeDirectoryPath={activeDirectoryPath}
             activeFilePath={activeFilePath}
+            directoryDropTargetPath={directoryDropTargetPath}
             child={child}
             expandedPaths={expandedPaths}
             isSelectionMode={isSelectionMode}
@@ -412,6 +448,9 @@ export function DirectoryTreeItems({
             onCancelRename={onCancelRename}
             onCommitRename={onCommitRename}
             onDirectoryContextMenu={onDirectoryContextMenu}
+            onDirectoryDragLeave={onDirectoryDragLeave}
+            onDirectoryDragOver={onDirectoryDragOver}
+            onDirectoryDrop={onDirectoryDrop}
             onFileContextMenu={onFileContextMenu}
             onItemDragStart={onItemDragStart}
             onOpenFile={onOpenFile}

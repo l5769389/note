@@ -1,4 +1,3 @@
-import { FileText } from "lucide-react";
 import {
   useMemo,
   type DragEvent as ReactDragEvent,
@@ -6,6 +5,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { splitWorkspaceEntryNameForRename } from "../../../shared/workspaceRename";
+import { DocumentFileIcon } from "./DocumentFileIcon";
 import {
   getDocumentFileExtension,
   getDocumentTypeFromPath,
@@ -277,7 +277,7 @@ export function DirectoryFileList({
                   onPointerDown={(event) => event.stopPropagation()}
                 />
               ) : null}
-              <FileText size={17} />
+              <DocumentFileIcon filePath={file.path} size={17} />
               <span className="directory-file-list-text">
                 <span className="directory-file-list-meta-row">
                   {file.directoryLabel ? (
@@ -365,7 +365,7 @@ export function DirectoryFileList({
                 onPointerDown={(event) => event.stopPropagation()}
               />
             ) : null}
-            <FileText size={17} />
+            <DocumentFileIcon filePath={file.path} size={17} />
             <span className="directory-file-list-text">
               <span className="directory-file-list-meta-row">
                 {file.directoryLabel ? (

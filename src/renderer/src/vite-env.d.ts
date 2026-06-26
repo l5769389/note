@@ -75,6 +75,11 @@ type DesktopApi = {
     entryPath: string;
     nextBaseName: string;
   }) => Promise<{ entryPath: string }>;
+  moveEntryToDirectory: (payload: {
+    queueSync?: boolean;
+    sourcePath: string;
+    targetDirectoryPath: string;
+  }) => Promise<{ entryPath: string }>;
   createMarkdownFile: (payload: {
     directoryPath: string;
     title: string;

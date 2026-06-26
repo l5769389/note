@@ -957,6 +957,8 @@ export function App() {
     useState<Set<string>>(() => new Set());
   const [sidebarDropTarget, setSidebarDropTarget] =
     useState<SidebarStorageKind | null>(null);
+  const [sidebarDirectoryDropTargetPath, setSidebarDirectoryDropTargetPath] =
+    useState<string | null>(null);
   const [renamingEntryPath, setRenamingEntryPath] = useState<string | null>(null);
   const [renamingEntryType, setRenamingEntryType] = useState<
     DirectoryTreeItem["type"] | null
@@ -2511,6 +2513,7 @@ export function App() {
       });
       await refreshCloudSidebarWorkspaceFromCache();
       await openFileFromTree(localFile.filePath);
+      startRenamingEntry(localFile.filePath, "file");
     } catch (error) {
       await showAppAlert({
         confirmLabel: "知道了",
@@ -2556,6 +2559,7 @@ export function App() {
         return next;
       });
       await refreshCloudSidebarWorkspaceFromCache();
+      startRenamingEntry(result.directoryPath, "directory");
     } catch (error) {
       await showAppAlert({
         confirmLabel: "知道了",
@@ -2625,7 +2629,7 @@ export function App() {
     event: ReactDragEvent<HTMLButtonElement>,
     payload: SidebarDragPayload,
   ) {
-    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.effectAllowed = "copyMove";
     event.dataTransfer.setData(
       "application/x-notedock-sidebar-entry",
       JSON.stringify(payload),
@@ -2657,6 +2661,61 @@ export function App() {
     return null;
   }
 
+  function canDropSidebarEntryOnDirectory(
+    payload: SidebarDragPayload | null,
+    targetDirectoryPath: string,
+  ) {
+    if (!payload || !targetDirectoryPath) {
+      return false;
+    }
+
+    if (normalizeFilePathKey(payload.path) === normalizeFilePathKey(targetDirectoryPath)) {
+      return false;
+    }
+
+    if (
+      payload.entryType === "directory" &&
+      isPathInsideDirectoryPath(targetDirectoryPath, payload.path)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function handleSidebarDirectoryDragOver(
+    event: ReactDragEvent<HTMLButtonElement>,
+    targetDirectory: DirectoryTreeItem,
+    target: SidebarStorageKind,
+  ) {
+    const payload = readSidebarDragPayload(event);
+
+    if (!canDropSidebarEntryOnDirectory(payload, targetDirectory.path)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = payload?.source === target ? "move" : "copy";
+    setSidebarDropTarget(null);
+    setSidebarDirectoryDropTargetPath(targetDirectory.path);
+  }
+
+  function handleSidebarDirectoryDragLeave(
+    event: ReactDragEvent<HTMLButtonElement>,
+  ) {
+    const nextTarget = event.relatedTarget;
+
+    if (
+      nextTarget instanceof Node &&
+      event.currentTarget.contains(nextTarget)
+    ) {
+      return;
+    }
+
+    setSidebarDirectoryDropTargetPath(null);
+  }
+
   function handleSidebarStorageDragOver(
     event: ReactDragEvent<HTMLElement>,
     target: SidebarStorageKind,
@@ -2667,6 +2726,7 @@ export function App() {
 
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
+    setSidebarDirectoryDropTargetPath(null);
     setSidebarDropTarget(target);
   }
 
@@ -2681,6 +2741,81 @@ export function App() {
     }
 
     setSidebarDropTarget(null);
+    setSidebarDirectoryDropTargetPath(null);
+  }
+
+  async function dropSidebarEntryToDirectory(
+    event: ReactDragEvent<HTMLButtonElement>,
+    targetDirectoryPath: string,
+    target: SidebarStorageKind,
+  ) {
+    const payload = readSidebarDragPayload(event);
+    setSidebarDropTarget(null);
+    setSidebarDirectoryDropTargetPath(null);
+
+    if (!canDropSidebarEntryOnDirectory(payload, targetDirectoryPath)) {
+      return;
+    }
+
+    if (!payload) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    try {
+      if (payload.source === target) {
+        if (!window.desktop?.moveEntryToDirectory) {
+          throw new Error("当前环境不支持移动文件。");
+        }
+
+        const result = await window.desktop.moveEntryToDirectory({
+          queueSync: target === "cloud",
+          sourcePath: payload.path,
+          targetDirectoryPath,
+        });
+
+        updateWorkspaceEntryPathReferences(
+          payload.path,
+          result.entryPath,
+          payload.entryType,
+        );
+      } else {
+        if (!window.desktop?.copyEntryToDirectory) {
+          throw new Error("当前环境不支持复制文件。");
+        }
+
+        await window.desktop.copyEntryToDirectory({
+          queueSync: target === "cloud",
+          sourcePath: payload.path,
+          targetDirectoryPath,
+        });
+      }
+
+      if (target === "cloud" || payload.source === "cloud") {
+        setExpandedCloudDirectoryPaths((current) => {
+          const next = new Set(current);
+          next.add(targetDirectoryPath);
+          return next;
+        });
+        await refreshCloudSidebarWorkspaceFromCache();
+      }
+
+      if (target === "local" || payload.source === "local") {
+        setExpandedDirectoryPaths((current) => {
+          const next = new Set(current);
+          next.add(targetDirectoryPath);
+          return next;
+        });
+        await loadDirectoryTree(workspace.workspacePath || getDirectoryPath(targetDirectoryPath));
+      }
+    } catch (error) {
+      showWorkspaceToast(
+        error instanceof Error ? error.message : "移动文件失败。",
+        "error",
+      );
+    }
   }
 
   async function dropSidebarEntryToStorage(
@@ -2689,6 +2824,7 @@ export function App() {
   ) {
     const payload = readSidebarDragPayload(event);
     setSidebarDropTarget(null);
+    setSidebarDirectoryDropTargetPath(null);
 
     if (!payload || payload.source === target) {
       return;
@@ -2899,6 +3035,65 @@ export function App() {
     setRenamingEntryPath(null);
     setRenamingEntryType(null);
     setRenameDraft("");
+  }
+
+  function updateWorkspaceEntryPathReferences(
+    previousEntryPath: string,
+    nextEntryPath: string,
+    entryType: DirectoryTreeItem["type"],
+  ) {
+    if (nextEntryPath === previousEntryPath) {
+      return;
+    }
+
+    setWorkspace((current) => ({
+      ...current,
+      documents: current.documents.map((document) => {
+        if (!document.filePath) {
+          return document;
+        }
+
+        const nextFilePath = replaceWorkspaceEntryPath(
+          document.filePath,
+          previousEntryPath,
+          nextEntryPath,
+        );
+
+        if (nextFilePath === document.filePath) {
+          return document;
+        }
+
+        return {
+          ...document,
+          filePath: nextFilePath,
+          title:
+            entryType === "file"
+              ? getDocumentTitleFromFilePath(nextFilePath)
+              : document.title,
+        };
+      }),
+    }));
+
+    for (const [savedPath, content] of [
+      ...savedFileContentByPathRef.current.entries(),
+    ]) {
+      const nextSavedPath = replaceWorkspaceEntryPath(
+        savedPath,
+        previousEntryPath,
+        nextEntryPath,
+      );
+
+      if (nextSavedPath !== savedPath) {
+        savedFileContentByPathRef.current.delete(savedPath);
+        savedFileContentByPathRef.current.set(nextSavedPath, content);
+      }
+    }
+
+    setRecentDirectoryPaths((current) =>
+      current.map((path) =>
+        replaceWorkspaceEntryPath(path, previousEntryPath, nextEntryPath),
+      ),
+    );
   }
 
   async function commitRenamingEntry(entryPath = renamingEntryPath ?? "") {
@@ -7010,6 +7205,7 @@ export function App() {
               <DirectoryTreeItems
                 activeDirectoryPath={getDirectoryPath(activeDocument?.filePath)}
                 activeFilePath={activeDocument?.filePath}
+                directoryDropTargetPath={sidebarDirectoryDropTargetPath}
                 expandedPaths={
                   kind === "cloud"
                     ? expandedCloudDirectoryPaths
@@ -7019,6 +7215,13 @@ export function App() {
                 items={treeChildren}
                 level={0}
                 onDirectoryContextMenu={openDirectoryContextMenu}
+                onDirectoryDragLeave={handleSidebarDirectoryDragLeave}
+                onDirectoryDragOver={(event, item) =>
+                  handleSidebarDirectoryDragOver(event, item, kind)
+                }
+                onDirectoryDrop={(event, item) =>
+                  void dropSidebarEntryToDirectory(event, item.path, kind)
+                }
                 onFileContextMenu={openFileContextMenu}
                 onItemDragStart={(event, item) =>
                   startSidebarEntryDrag(event, {

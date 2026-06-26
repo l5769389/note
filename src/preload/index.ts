@@ -63,6 +63,11 @@ contextBridge.exposeInMainWorld("desktop", {
     entryPath: string;
     nextBaseName: string;
   }) => ipcRenderer.invoke("workspace:rename-entry", payload),
+  moveEntryToDirectory: (payload: {
+    queueSync?: boolean;
+    sourcePath: string;
+    targetDirectoryPath: string;
+  }) => ipcRenderer.invoke("workspace:move-entry-to-directory", payload),
   createMarkdownFile: (payload: { directoryPath: string; title: string }) =>
     ipcRenderer.invoke("workspace:create-markdown-file", payload),
   deleteDocumentFile: (filePath: string) =>

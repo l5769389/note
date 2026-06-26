@@ -7642,7 +7642,7 @@ textarea,
 .explorer-storage-section-drop-target {
   background: rgba(238, 242, 255, 0.72);
   box-shadow:
-    inset 0 0 0 1px rgba(124, 58, 237, 0.22),
+    inset 4px 0 0 rgba(99, 102, 241, 0.56),
     0 12px 30px rgba(99, 102, 241, 0.12);
 }
 
@@ -7753,6 +7753,48 @@ textarea,
 
 .explorer-tree .directory-tree-file svg {
   color: #6b7280;
+}
+
+.explorer-tree .directory-tree-folder-drop-target {
+  background: #eef2ff;
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.2);
+  color: #4f46e5;
+}
+
+.explorer-tree .directory-tree-folder-drop-target svg {
+  color: #4f46e5;
+}
+
+.explorer-tree .directory-tree-file .document-file-icon-markdown,
+.directory-file-list-item .document-file-icon-markdown {
+  color: #6b7280;
+}
+
+.explorer-tree .directory-tree-file .document-file-icon-html,
+.directory-file-list-item .document-file-icon-html {
+  color: #0f766e;
+}
+
+.explorer-tree .directory-tree-file .document-file-icon-sheet,
+.explorer-tree .directory-tree-file .document-file-icon-excel,
+.directory-file-list-item .document-file-icon-sheet,
+.directory-file-list-item .document-file-icon-excel {
+  color: #047857;
+}
+
+.explorer-tree .directory-tree-file .document-file-icon-pdf,
+.directory-file-list-item .document-file-icon-pdf {
+  color: #dc2626;
+}
+
+.explorer-tree .directory-tree-file .document-file-icon-word,
+.directory-file-list-item .document-file-icon-word {
+  color: #2563eb;
+}
+
+.explorer-tree .directory-tree-file .document-file-icon-drawing,
+.directory-file-list-item .document-file-icon-drawing {
+  color: #7c3aed;
 }
 
 .explorer-tree .directory-tree-folder span:not(.directory-tree-caret-placeholder),
@@ -13586,7 +13628,7 @@ body.home-todo-global-dragging * {
 :root[data-theme="night"] .explorer-storage-section-drop-target {
   background: rgba(30, 41, 59, 0.94);
   box-shadow:
-    inset 0 0 0 1px rgba(139, 124, 255, 0.28),
+    inset 4px 0 0 rgba(139, 124, 255, 0.62),
     0 12px 30px rgba(0, 0, 0, 0.18);
 }
 
@@ -13710,7 +13752,7 @@ body.home-todo-global-dragging * {
 :root[data-theme="dark"] .explorer-storage-section-drop-target {
   background: rgba(31, 41, 55, 0.92);
   box-shadow:
-    inset 0 0 0 1px rgba(139, 124, 255, 0.24),
+    inset 4px 0 0 rgba(139, 124, 255, 0.58),
     0 12px 30px rgba(0, 0, 0, 0.18);
 }
 

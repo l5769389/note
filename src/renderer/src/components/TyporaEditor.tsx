@@ -3896,6 +3896,84 @@ function MilkdownRuntime({
     setSlashCommandMenu({ visible: false });
   }
 
+  function findSlashCommandMatchIndex(query: string) {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return 0;
+    }
+
+    return slashCommandItems.findIndex((item) => {
+      const searchableText = `${item.title} ${item.description} ${item.command}`.toLowerCase();
+      return searchableText.includes(normalizedQuery);
+    });
+  }
+
+  function getSlashCommandQuery(
+    view: EditorView,
+    menu: Extract<SlashCommandMenuState, { visible: true }>,
+  ) {
+    const { selection } = view.state;
+
+    if (!(selection instanceof TextSelection) || !selection.empty) {
+      return null;
+    }
+
+    const cursor = selection.from;
+    const slashFrom = Math.max(0, Math.min(menu.triggerFrom, view.state.doc.content.size));
+
+    if (cursor < slashFrom + 1) {
+      return null;
+    }
+
+    const triggerText = view.state.doc.textBetween(slashFrom, cursor, "\n", "\n");
+
+    if (!triggerText.startsWith("/") || triggerText.includes("\n")) {
+      return null;
+    }
+
+    return {
+      cursor,
+      query: triggerText.slice(1),
+    };
+  }
+
+  function updateSlashCommandMenuFromView(view: EditorView) {
+    setSlashCommandMenu((current) => {
+      if (!current.visible) {
+        return current;
+      }
+
+      const queryInfo = getSlashCommandQuery(view, current);
+
+      if (!queryInfo) {
+        return { visible: false };
+      }
+
+      const { cursor, query } = queryInfo;
+
+      if (query !== query.trim()) {
+        return { visible: false };
+      }
+
+      const matchedIndex = findSlashCommandMatchIndex(query);
+
+      if (matchedIndex < 0) {
+        return { visible: false };
+      }
+
+      if (current.selectedIndex === matchedIndex && current.triggerTo === cursor) {
+        return current;
+      }
+
+      return {
+        ...current,
+        selectedIndex: matchedIndex,
+        triggerTo: cursor,
+      };
+    });
+  }
+
   function positionSlashCommandMenu(
     view: EditorView,
     triggerFrom: number,
@@ -3950,7 +4028,7 @@ function MilkdownRuntime({
     const from = Math.max(0, Math.min(menu.triggerFrom, maxPosition));
     const to = Math.max(from, Math.min(menu.triggerTo, maxPosition));
 
-    if (from === to || view.state.doc.textBetween(from, to) !== "/") {
+    if (from === to || !view.state.doc.textBetween(from, to).startsWith("/")) {
       return;
     }
 
@@ -4013,6 +4091,21 @@ function MilkdownRuntime({
         }
 
         return;
+      }
+
+      if (
+        event.key.length === 1 &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        const editor = get();
+
+        requestAnimationFrame(() => {
+          editor?.action((ctx) =>
+            updateSlashCommandMenuFromView(ctx.get(editorViewCtx)),
+          );
+        });
       }
     }
 
@@ -4154,8 +4247,12 @@ function MilkdownRuntime({
       };
     }
 
-    const from = Math.max(0, selection.from - 1);
-    const to = Math.min(view.state.doc.content.size, selection.to + 1);
+    if (selection.empty) {
+      return null;
+    }
+
+    const from = Math.max(0, selection.from);
+    const to = Math.min(view.state.doc.content.size, selection.to);
     let nearbyImage: { node: ProseMirrorNode; pos: number } | null = null;
 
     view.state.doc.nodesBetween(from, to, (node, pos) => {
@@ -5126,6 +5223,7 @@ function MilkdownRuntime({
           .selectionUpdated((selectionCtx) => {
             requestAnimationFrame(() => {
               const view = selectionCtx.get(editorViewCtx);
+              updateSlashCommandMenuFromView(view);
               updateImageToolbarFromView(view);
               updateTableToolbarFromView(view);
             });

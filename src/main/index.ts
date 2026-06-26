@@ -3,7 +3,7 @@ import type { IpcMainInvokeEvent, OpenDialogOptions, SaveDialogOptions } from "e
 import chokidar, { type FSWatcher } from "chokidar";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1679,6 +1679,89 @@ function registerFileIpc() {
       }
 
       queueSync();
+
+      return {
+        entryPath: targetPath,
+      };
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:move-entry-to-directory",
+    async (
+      _,
+      payload: {
+        queueSync?: boolean;
+        sourcePath: string;
+        targetDirectoryPath: string;
+      },
+    ) => {
+      const sourcePath = payload.sourcePath;
+      const targetDirectoryPath = payload.targetDirectoryPath || app.getPath("desktop");
+      const sourceStats = await stat(sourcePath);
+      const sourceResolved = resolve(sourcePath);
+      const targetDirectoryResolved = resolve(targetDirectoryPath);
+      const sourceKey = sourceResolved.toLowerCase();
+      const targetDirectoryKey = targetDirectoryResolved.toLowerCase();
+
+      if (!sourceStats.isFile() && !sourceStats.isDirectory()) {
+        throw new Error(`Unsupported workspace entry: ${sourcePath}`);
+      }
+
+      if (sourceStats.isFile() && !getDocumentFileType(sourcePath)) {
+        throw new Error(`Unsupported document file: ${sourcePath}`);
+      }
+
+      if (sourceStats.isDirectory()) {
+        const sourceWithSeparator = sourceKey.endsWith("\\")
+          ? sourceKey
+          : `${sourceKey}\\`;
+
+        if (
+          targetDirectoryKey === sourceKey ||
+          targetDirectoryKey.startsWith(sourceWithSeparator)
+        ) {
+          throw new Error("不能把文件夹移动到它自身或子文件夹中。");
+        }
+      }
+
+      await mkdir(targetDirectoryPath, { recursive: true });
+
+      if (resolve(dirname(sourcePath)).toLowerCase() === targetDirectoryKey) {
+        return {
+          entryPath: sourcePath,
+        };
+      }
+
+      const targetPath = sourceStats.isFile()
+        ? await createUniqueDocumentPath(
+            targetDirectoryPath,
+            normalizeDocumentName(titleFromFilePath(sourcePath), extname(sourcePath)),
+            extname(sourcePath).toLowerCase(),
+          )
+        : await createUniqueDirectoryPath(targetDirectoryPath, basename(sourcePath));
+
+      try {
+        await rename(sourcePath, targetPath);
+      } catch (error) {
+        if (
+          !(
+            error &&
+            typeof error === "object" &&
+            "code" in error &&
+            (error as { code?: string }).code === "EXDEV"
+          )
+        ) {
+          throw error;
+        }
+
+        await cp(sourcePath, targetPath, { recursive: sourceStats.isDirectory() });
+        await rm(sourcePath, { force: true, recursive: sourceStats.isDirectory() });
+      }
+
+      if (payload.queueSync !== false) {
+        queueSync();
+      }
 
       return {
         entryPath: targetPath,
