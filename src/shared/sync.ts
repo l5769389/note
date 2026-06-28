@@ -2,8 +2,8 @@ import type { PersistedAppState } from "./appState.js";
 
 export const syncProtocolVersion = 1;
 export const defaultSyncWorkspaceId = "default";
-export const developmentSyncServerUrl = "http://127.0.0.1:47831";
-export const productionSyncServerUrl = "https://sync.notedock.app";
+export const developmentSyncServerUrl = "https://sync.zhaolin.online";
+export const productionSyncServerUrl = "https://sync.zhaolin.online";
 
 export type SyncRuntimeEnvironment = "development" | "production" | "test";
 
@@ -133,7 +133,21 @@ export function normalizeSyncWorkspaceId(value: unknown) {
 export function normalizeSyncServerUrl(value: unknown) {
   const input = typeof value === "string" ? value.trim() : "";
 
-  return input.replace(/\/+$/, "");
+  if (!input) {
+    return "";
+  }
+
+  const trimmedInput = input.replace(/\/+$/, "");
+
+  if (/^https?:\/\//i.test(trimmedInput)) {
+    return trimmedInput;
+  }
+
+  if (/^(localhost|127\.0\.0\.1|\[::1\])(?::|$)/i.test(trimmedInput)) {
+    return `http://${trimmedInput}`;
+  }
+
+  return `https://${trimmedInput}`;
 }
 
 export function getDefaultSyncServerUrl(environment: SyncRuntimeEnvironment) {
@@ -197,7 +211,7 @@ export function mergeSyncConfiguration(
 ): SyncConfiguration {
   const nextServerUrl = normalizeSyncServerUrl(input.serverUrl);
   const nextToken =
-    input.token !== undefined && input.token.trim()
+    input.token !== undefined
       ? input.token.trim()
       : current.token;
 

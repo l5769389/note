@@ -74,9 +74,51 @@ const cloudWorkspaceDirectoryName = "notedock-cloud-workspaces";
 const cloudWorkspaceFilesDirectoryName = "files";
 const syncConfigFileName = "notedock-sync-config-v1.json";
 const syncIndexDirectoryName = "notedock-sync-index-v1";
-const syncPollIntervalMs = 30_000;
 const syncRequestTimeoutMs = 30_000;
 const syncScheduleDelayMs = 1_200;
+
+function getErrorCode(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return "";
+  }
+
+  const record = error as { cause?: unknown; code?: unknown };
+  const code = typeof record.code === "string" ? record.code : "";
+
+  if (code) {
+    return code;
+  }
+
+  const cause = record.cause;
+
+  return cause && typeof cause === "object" && typeof (cause as { code?: unknown }).code === "string"
+    ? String((cause as { code: string }).code)
+    : "";
+}
+
+function createSyncNetworkError(error: unknown, serverUrl: string) {
+  const code = getErrorCode(error);
+
+  if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") {
+    return new Error(
+      `同步服务器证书未受信任：${serverUrl}。如果这是自签 HTTPS 测试环境，请通过 dev-local.ps1 的 -AllowSelfSignedCloudCert 启动桌面端，或把服务器证书安装到系统受信任根证书。`,
+    );
+  }
+
+  if (code === "CERT_HAS_EXPIRED" || code === "ERR_TLS_CERT_ALTNAME_INVALID") {
+    return new Error(`同步服务器证书无效：${serverUrl}（${code}）。`);
+  }
+
+  if (error instanceof Error && error.name === "AbortError") {
+    return new Error(`同步服务器请求超时：${serverUrl}。`);
+  }
+
+  if (error instanceof TypeError && error.message === "fetch failed") {
+    return new Error(`无法连接同步服务器：${serverUrl}。请检查服务器地址、网络和证书配置。`);
+  }
+
+  return error;
+}
 
 export type SyncServiceOptions = {
   defaultConfiguration?: SyncConfiguration;
@@ -93,6 +135,11 @@ export type SyncFileActionPlan = {
   deleteRemote: string[];
   pull: string[];
   push: string[];
+};
+
+type SyncChangeCheck = {
+  hasChanges: boolean;
+  message?: string;
 };
 
 type SyncLoginResponse = {
@@ -398,6 +445,15 @@ export function planSyncFileActions({
   return plan;
 }
 
+export function hasSyncFileActions(plan: SyncFileActionPlan) {
+  return (
+    plan.deleteLocal.length > 0 ||
+    plan.deleteRemote.length > 0 ||
+    plan.pull.length > 0 ||
+    plan.push.length > 0
+  );
+}
+
 export function shouldBlockInitialWorkspaceMerge({
   index,
   localFiles,
@@ -601,7 +657,6 @@ export class SyncService {
   private configuration: SyncConfiguration;
   private isRunning = false;
   private pendingRun = false;
-  private pollTimer: NodeJS.Timeout | null = null;
   private scheduleTimer: NodeJS.Timeout | null = null;
   private status: SyncStatusSnapshot;
 
@@ -628,9 +683,6 @@ export class SyncService {
       workspaceName: this.configuration.enabled ? "云端笔记" : undefined,
     });
 
-    if (this.configuration.enabled) {
-      this.startAutoSync();
-    }
   }
 
   getStatus() {
@@ -651,7 +703,7 @@ export class SyncService {
     });
 
     if (this.configuration.enabled) {
-      this.startAutoSync();
+      this.stopAutoSync();
     } else {
       this.stopAutoSync();
     }
@@ -721,7 +773,6 @@ export class SyncService {
         enabled: true,
       };
       await writeSyncConfiguration(this.options.userDataPath, this.configuration);
-      this.startAutoSync();
     }
 
     const directoryPath = this.getCloudWorkspacePath();
@@ -752,29 +803,10 @@ export class SyncService {
       clearTimeout(this.scheduleTimer);
     }
 
-    this.setStatus({
-      ...this.status,
-      configuration: getPublicSyncConfiguration(this.configuration),
-      state: this.isRunning ? "syncing" : "pending",
-      workspaceKind: "cloud",
-      workspaceName: "云端笔记",
-    });
     this.scheduleTimer = setTimeout(() => {
       this.scheduleTimer = null;
-      void this.syncNow();
+      void this.syncNowIfChanged();
     }, delayMs);
-  }
-
-  private startAutoSync() {
-    this.scheduleSync();
-
-    if (this.pollTimer) {
-      return;
-    }
-
-    this.pollTimer = setInterval(() => {
-      this.scheduleSync();
-    }, syncPollIntervalMs);
   }
 
   private stopAutoSync() {
@@ -782,11 +814,95 @@ export class SyncService {
       clearTimeout(this.scheduleTimer);
       this.scheduleTimer = null;
     }
+  }
 
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
+  private async syncNowIfChanged() {
+    let changeCheck: SyncChangeCheck;
+
+    try {
+      changeCheck = await this.hasPendingSyncChanges();
+    } catch (error) {
+      this.setStatus({
+        ...this.status,
+        configuration: getPublicSyncConfiguration(this.configuration),
+        message: error instanceof Error ? error.message : "同步检查失败。",
+        state: "failed",
+        workspaceKind: "cloud",
+        workspaceName: "云端笔记",
+      });
+      return this.status;
     }
+
+    if (!changeCheck.hasChanges) {
+      return this.status;
+    }
+
+    this.setStatus({
+      ...this.status,
+      configuration: getPublicSyncConfiguration(this.configuration),
+      message: changeCheck.message ?? "检测到本地变更，正在准备同步。",
+      state: this.isRunning ? "syncing" : "pending",
+      workspaceKind: "cloud",
+      workspaceName: "云端笔记",
+    });
+
+    return this.syncNow();
+  }
+
+  private async hasPendingSyncChanges(): Promise<SyncChangeCheck> {
+    if (!this.configuration.enabled) {
+      return { hasChanges: false };
+    }
+
+    this.ensureCloudSyncConfigured();
+
+    const workspaceId = this.configuration.workspaceId;
+    const workspacePath = this.getCloudWorkspacePath();
+
+    if (!workspacePath || !(await exists(workspacePath))) {
+      return { hasChanges: false };
+    }
+
+    const index = await readSyncIndex(this.options.userDataPath, workspaceId);
+    const [localFiles, remoteManifest] = await Promise.all([
+      createWorkspaceManifest(workspacePath),
+      this.fetchManifest(),
+    ]);
+    const plan = planSyncFileActions({
+      index,
+      localFiles,
+      remoteManifest,
+    });
+
+    if (hasSyncFileActions(plan)) {
+      return {
+        hasChanges: true,
+        message: "检测到文件变更，正在准备同步。",
+      };
+    }
+
+    const appState = await this.options.getAppState();
+    const isCloudAppState = isCloudWorkspaceState(
+      appState,
+      workspaceId,
+      workspacePath,
+    );
+
+    if (!isCloudAppState) {
+      return { hasChanges: false };
+    }
+
+    const relativeAppState = createRelativeSyncAppState(appState, workspacePath);
+    const localHash = sha256(stableJson(relativeAppState));
+
+    if (index.appStateSha256 !== localHash) {
+      return {
+        hasChanges: true,
+        message: "检测到应用状态变更，正在准备同步。",
+      };
+    }
+
+    return { hasChanges: false };
   }
 
   async syncNow(options: { activateCloudWorkspace?: boolean } = {}) {
@@ -1072,7 +1188,8 @@ export class SyncService {
   ) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), syncRequestTimeoutMs);
-    const url = `${normalizeSyncServerUrl(this.configuration.serverUrl)}${path}`;
+    const serverUrl = normalizeSyncServerUrl(this.configuration.serverUrl);
+    const url = `${serverUrl}${path}`;
 
     try {
       const response = await fetch(url, {
@@ -1094,6 +1211,8 @@ export class SyncService {
       }
 
       return response;
+    } catch (error) {
+      throw createSyncNetworkError(error, serverUrl);
     } finally {
       clearTimeout(timeout);
     }
@@ -1106,9 +1225,10 @@ export class SyncService {
   ): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), syncRequestTimeoutMs);
+    const normalizedServerUrl = normalizeSyncServerUrl(serverUrl);
 
     try {
-      const response = await fetch(`${normalizeSyncServerUrl(serverUrl)}${path}`, {
+      const response = await fetch(`${normalizedServerUrl}${path}`, {
         ...init,
         signal: controller.signal,
       });
@@ -1120,6 +1240,8 @@ export class SyncService {
       }
 
       return (await response.json()) as T;
+    } catch (error) {
+      throw createSyncNetworkError(error, normalizedServerUrl);
     } finally {
       clearTimeout(timeout);
     }

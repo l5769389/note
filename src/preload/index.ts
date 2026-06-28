@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld("desktop", {
   readClipboardImage: () => ipcRenderer.invoke("clipboard:read-image"),
   readClipboardMediaFiles: () => ipcRenderer.invoke("clipboard:read-media-files"),
   readClipboardText: () => ipcRenderer.invoke("clipboard:read-text"),
+  writeRichHtmlToClipboard: (payload: { html?: string; text?: string }) =>
+    ipcRenderer.invoke("clipboard:write-rich-html", payload),
   writeImageFileToClipboard: (filePath: string) =>
     ipcRenderer.invoke("clipboard:write-image-file", filePath),
   checkAssetReferences: (payload: {
@@ -82,6 +84,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("export:pdf", payload),
   getDefaultWorkspaceDirectory: () =>
     ipcRenderer.invoke("workspace:get-default-directory"),
+  getAppVersion: () =>
+    ipcRenderer.invoke("app:get-version"),
   getZoomFactor: () =>
     ipcRenderer.invoke("window:get-zoom-factor"),
   listMarkdownFiles: (directoryPath: string) =>
@@ -161,6 +165,8 @@ contextBridge.exposeInMainWorld("desktop", {
   ) => ipcRenderer.invoke("workspace:read-directory-tree", directoryPath, options),
   readMarkdownFile: (filePath: string) =>
     ipcRenderer.invoke("workspace:read-markdown-file", filePath),
+  readAssetAsDataUrl: (payload: { documentFilePath: string; reference: string }) =>
+    ipcRenderer.invoke("workspace:read-asset-data-url", payload),
   readTextAsset: (payload: { documentFilePath: string; reference: string }) =>
     ipcRenderer.invoke("workspace:read-text-asset", payload),
   readWordDocument: (filePath: string) =>

@@ -420,10 +420,20 @@ export class SyncServerStore {
           role: "admin",
           username,
         });
-      } else if (existing.role !== "admin") {
-        this.database
-          .prepare("UPDATE users SET role = 'admin', updated_at = ? WHERE id = ?")
-          .run(now(), existing.id);
+      } else {
+        const timestamp = now();
+
+        if (!verifyPasswordHash(password, existing.password_hash)) {
+          this.database
+            .prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+            .run(createPasswordHash(password), timestamp, existing.id);
+        }
+
+        if (existing.role !== "admin") {
+          this.database
+            .prepare("UPDATE users SET role = 'admin', updated_at = ? WHERE id = ?")
+            .run(timestamp, existing.id);
+        }
       }
       return;
     }

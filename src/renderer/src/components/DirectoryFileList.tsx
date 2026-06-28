@@ -18,6 +18,7 @@ import {
   getDirectoryDisplayPath,
   normalizeFilePathKey,
 } from "../workspaceDisplay";
+import { isWorkspaceEntrySelected } from "../workspaceSelection";
 import { isQuickDocumentLinkShortcut } from "../workspaceShortcuts";
 
 type DirectoryFileListItem = {
@@ -182,6 +183,7 @@ type DirectoryFileListProps = {
     event: ReactDragEvent<HTMLButtonElement>,
     filePath: string,
   ) => void;
+  onFileDragEnd?: () => void;
   onCancelRename?: (entryPath: string) => void;
   onCommitRename?: (entryPath: string) => void;
   onOpenFile: (filePath: string) => void;
@@ -201,6 +203,7 @@ export function DirectoryFileList({
   items,
   isSelectionMode = false,
   onFileContextMenu,
+  onFileDragEnd,
   onFileDragStart,
   onCancelRename,
   onCommitRename,
@@ -269,7 +272,9 @@ export function DirectoryFileList({
               {isSelectionMode ? (
                 <input
                   aria-label={`选择 ${file.name}`}
-                  checked={selectedEntryPaths?.has(file.path) ?? false}
+                  checked={
+                    isWorkspaceEntrySelected(selectedEntryPaths, selectionItem)
+                  }
                   className="directory-entry-checkbox"
                   type="checkbox"
                   onChange={() => onToggleEntrySelection?.(selectionItem)}
@@ -330,6 +335,7 @@ export function DirectoryFileList({
             title={file.name}
             type="button"
             draggable={Boolean(onFileDragStart)}
+            onDragEnd={onFileDragEnd}
             onDragStart={(event) => onFileDragStart?.(event, file.path)}
             onClick={() => onOpenFile(file.path)}
             onContextMenu={(event) => onFileContextMenu?.(event, file.path)}
@@ -356,7 +362,7 @@ export function DirectoryFileList({
             {isSelectionMode ? (
               <input
                 aria-label={`选择 ${file.name}`}
-                checked={selectedEntryPaths?.has(file.path) ?? false}
+                checked={isWorkspaceEntrySelected(selectedEntryPaths, selectionItem)}
                 className="directory-entry-checkbox"
                 type="checkbox"
                 onChange={() => onToggleEntrySelection?.(selectionItem)}

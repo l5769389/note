@@ -155,6 +155,10 @@ import {
   isDocumentReferenceNode,
   serializeDocumentReferenceToken,
 } from "../documentReferenceNode";
+import {
+  collectClipboardImageTokens,
+  writeMarkdownRichClipboard,
+} from "../richClipboard";
 
 export type {
   ImageAlignment,
@@ -297,6 +301,17 @@ const rawHtmlImagePattern = /^\s*<img\b[\s\S]*\/?>\s*$/i;
 const videoControlsSafeZone = 44;
 const fallbackVideoAspectRatio = 16 / 9;
 const clickedHeadingUserScrollThreshold = 1;
+
+function isWholeEditorSelection(selection: globalThis.Selection, root: HTMLElement) {
+  const selectionText = selection.toString().trim();
+  const rootText = root.innerText.trim();
+
+  if (!selectionText || !rootText) {
+    return false;
+  }
+
+  return selectionText.length >= rootText.length * 0.85;
+}
 
 function getRawHtmlImageSource(node: ProseMirrorNode) {
   if (node.type.name !== "html") {
@@ -6289,6 +6304,39 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
       };
     }, []);
 
+    function handleCopyCapture(event: ClipboardEvent<HTMLElement>) {
+      const root = rootRef.current;
+      const selection = window.getSelection();
+
+      if (
+        !root ||
+        !selection ||
+        selection.isCollapsed ||
+        !selection.anchorNode ||
+        !selection.focusNode ||
+        !root.contains(selection.anchorNode) ||
+        !root.contains(selection.focusNode) ||
+        !filePath
+      ) {
+        return;
+      }
+
+      const markdown = isWholeEditorSelection(selection, root)
+        ? markdownRef.current
+        : selection.toString();
+      const imageTokens = collectClipboardImageTokens(markdown);
+
+      if (!imageTokens.length) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.clipboardData.setData("text/plain", markdown);
+
+      void writeMarkdownRichClipboard(markdown, filePath);
+    }
+
     useImperativeHandle(
       ref,
       () => ({
@@ -6361,6 +6409,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
         aria-label="Milkdown markdown editor"
         autoCapitalize="off"
         autoCorrect="off"
+        onCopyCapture={handleCopyCapture}
         onContextMenu={(event) => {
           controllerRef.current?.prepareContextMenuTarget(
             event.clientX,

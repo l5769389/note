@@ -46,10 +46,12 @@ export function DocumentLoadingIndicator({
 }
 
 export function AboutDialog({
+  appVersion,
   logoUrl,
   onOpenChange,
   open,
 }: {
+  appVersion: string;
   logoUrl: string;
   onOpenChange: (open: boolean) => void;
   open: boolean;
@@ -88,7 +90,7 @@ export function AboutDialog({
               应用基于 Electron、React 与 Milkdown 构建，优先使用本地文件和本机存储，让笔记工作流保持简单、可控。
             </p>
             <div className="about-meta">
-              <span>版本 0.1.0</span>
+              <span>版本 {appVersion}</span>
               <span>Electron + Milkdown</span>
             </div>
           </div>

@@ -24,6 +24,7 @@ import {
   Link2,
   ListChecks,
   ListTree,
+  LogOut,
   PencilLine,
   Plus,
   RefreshCw,
@@ -100,12 +101,18 @@ import type {
 import {
   createDefaultSyncConfiguration,
   createInitialSyncStatus,
-  getDefaultSyncServerUrl,
   type SyncStatusSnapshot,
 } from "../../shared/sync";
 import { useFindMatchStateMaintenance } from "./findMatchState";
-import { useEditorCssVariables } from "./editorCssVariables";
+import {
+  getEditorCssVariables,
+  useEditorCssVariables,
+} from "./editorCssVariables";
 import { useGlobalAppShortcuts } from "./globalAppShortcuts";
+import {
+  collectClipboardImageTokens,
+  writeMarkdownRichClipboard,
+} from "./richClipboard";
 import {
   getImmersiveModeFromWindowFullScreen,
   useImmersiveModeState,
@@ -306,6 +313,7 @@ import {
   getPathLabel,
   normalizeFilePathKey,
 } from "./workspaceDisplay";
+import { toggleWorkspaceEntrySelection } from "./workspaceSelection";
 import {
   splitWorkspaceEntryNameForRename,
   validateWorkspaceRenameBaseName,
@@ -758,10 +766,10 @@ function getWorkspaceDisplayLabel(workspace: WorkspaceSnapshot) {
 
 const settingsDirectoryItems = [
   {
-    description: "字号、密度与阅读预览",
+    description: "字号、行距与阅读预览",
     icon: BookOpenText,
     id: "editor",
-    label: "阅读显示",
+    label: "字体大小",
   },
   {
     description: "服务器与账号登录",
@@ -846,11 +854,25 @@ function getTopLevelWorkspaceEntries(entries: DirectoryTreeItem[]) {
 
 const defaultSyncServerUrl =
   import.meta.env.VITE_NOTEDOCK_SYNC_SERVER_URL?.trim() ||
-  getDefaultSyncServerUrl(import.meta.env.DEV ? "development" : "production");
+  "https://sync.zhaolin.online";
 const defaultSyncConfiguration =
   createDefaultSyncConfiguration(defaultSyncServerUrl);
 const defaultSyncLoginUsername = "admin";
 const defaultSyncLoginPassword = "123";
+
+function normalizeSyncServerUrlInput(serverUrl: string): string {
+  const trimmedServerUrl = serverUrl.trim();
+
+  if (!trimmedServerUrl) {
+    return defaultSyncServerUrl;
+  }
+
+  if (/^https?:\/\//i.test(trimmedServerUrl)) {
+    return trimmedServerUrl.replace(/\/+$/, "");
+  }
+
+  return `https://${trimmedServerUrl.replace(/\/+$/, "")}`;
+}
 
 export function App() {
   const [workspace, setWorkspace] = useState(createStartupWorkspace);
@@ -858,6 +880,10 @@ export function App() {
   const [topMenu, setTopMenu] = useState<TopMenu>(null);
   const [theme, setTheme] = useState<AppTheme>("github");
   const [settings, setSettings] = useState<AppSettings>(defaultAppSettings);
+  const settingsPreviewStyle = useMemo(
+    () => getEditorCssVariables(settings) as CSSProperties,
+    [settings],
+  );
   const [syncStatus, setSyncStatus] = useState<SyncStatusSnapshot>(
     createInitialSyncStatus(defaultSyncConfiguration),
   );
@@ -905,6 +931,7 @@ export function App() {
     showAppConfirm,
   } = useAppDialog();
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState("1.0.1");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeSettingsSection, setActiveSettingsSection] =
     useState<SettingsSectionId>("editor");
@@ -959,11 +986,19 @@ export function App() {
     useState<SidebarStorageKind | null>(null);
   const [sidebarDirectoryDropTargetPath, setSidebarDirectoryDropTargetPath] =
     useState<string | null>(null);
+  const [sidebarDirectoryDragPreview, setSidebarDirectoryDragPreview] =
+    useState<{
+      entryType: DirectoryTreeItem["type"];
+      name: string;
+      path: string;
+    } | null>(null);
   const [renamingEntryPath, setRenamingEntryPath] = useState<string | null>(null);
   const [renamingEntryType, setRenamingEntryType] = useState<
     DirectoryTreeItem["type"] | null
   >(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [pendingOpenAfterRenameEntryPath, setPendingOpenAfterRenameEntryPath] =
+    useState<string | null>(null);
   const cloudDirectoryCreateInFlightRef = useRef(false);
   const renameCommitInFlightRef = useRef(false);
   const [workspaceToast, setWorkspaceToast] = useState<{
@@ -977,6 +1012,7 @@ export function App() {
     () => collectDirectoryEntryMap(cloudSidebarWorkspace?.tree),
     [cloudSidebarWorkspace?.tree],
   );
+  const activeSidebarDragPayloadRef = useRef<SidebarDragPayload | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [inspectorWidth, setInspectorWidth] = useState(defaultInspectorWidth);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -1033,6 +1069,24 @@ export function App() {
   const internalFileWritesRef = useRef(
     new Map<string, InternalFileWriteSnapshot>(),
   );
+
+  useEffect(() => {
+    let isStale = false;
+
+    window.desktop?.getAppVersion?.()
+      .then((version) => {
+        if (!isStale && version) {
+          setAppVersion(version);
+        }
+      })
+      .catch(() => {
+        // The packaged app version is cosmetic in the renderer.
+      });
+
+    return () => {
+      isStale = true;
+    };
+  }, []);
 
   useEffect(() => {
     const handleSelectionChange = () => {
@@ -1114,7 +1168,9 @@ export function App() {
 
     setSyncEnabledDraft(syncStatus.configuration.enabled);
     setSyncServerUrlDraft(
-      syncStatus.configuration.serverUrl || defaultSyncServerUrl,
+      normalizeSyncServerUrlInput(
+        syncStatus.configuration.serverUrl || defaultSyncServerUrl,
+      ),
     );
     setSyncLoginUsernameDraft(defaultSyncLoginUsername);
     setSyncLoginPasswordDraft(defaultSyncLoginPassword);
@@ -1722,32 +1778,15 @@ export function App() {
     setIsSettingsOpen(true);
   }
 
-  async function configureSyncSettings() {
-    const status = await window.desktop?.syncConfigure?.({
-      enabled: syncEnabledDraft,
-      serverUrl: syncServerUrlDraft,
-      workspaceId: syncStatus.configuration.workspaceId,
-    });
-
-    if (status) {
-      setSyncStatus(status);
-    }
-
-    if (status?.configuration.enabled) {
-      await refreshCloudSidebarWorkspace({ showErrors: true });
-    } else if (isCloudWorkspace) {
-      closeCloudWorkspaceView();
-      setCloudSidebarWorkspace(null);
-    }
-  }
-
   async function loginAndConfigureSync() {
     if (isSyncLoginRunning) {
       return;
     }
 
+    const normalizedServerUrl = normalizeSyncServerUrlInput(syncServerUrlDraft);
+
     if (
-      !syncServerUrlDraft.trim() ||
+      !normalizedServerUrl ||
       !syncLoginUsernameDraft.trim() ||
       !syncLoginPasswordDraft
     ) {
@@ -1757,13 +1796,14 @@ export function App() {
     }
 
     setIsSyncLoginRunning(true);
+    setSyncServerUrlDraft(normalizedServerUrl);
     setSyncLoginMessageTone("info");
     setSyncLoginMessage("正在登录云同步...");
 
     try {
       const result = await window.desktop?.syncCreateAccessToken?.({
         password: syncLoginPasswordDraft,
-        serverUrl: syncServerUrlDraft,
+        serverUrl: normalizedServerUrl,
         username: syncLoginUsernameDraft,
       });
 
@@ -1773,7 +1813,7 @@ export function App() {
 
       const status = await window.desktop?.syncConfigure?.({
         enabled: true,
-        serverUrl: syncServerUrlDraft,
+        serverUrl: normalizedServerUrl,
         token: result.token,
         workspaceId: result.workspaceId,
       });
@@ -1813,6 +1853,64 @@ export function App() {
         state: "failed",
       }));
     }
+  }
+
+  async function refreshCurrentLocalWorkspace() {
+    if (!workspace.workspacePath || isCloudWorkspace) {
+      return;
+    }
+
+    await Promise.all([
+      loadDirectoryTree(workspace.workspacePath),
+      refreshWorkspaceSearchDocuments(),
+    ]);
+  }
+
+  async function logoutSync() {
+    const status = await window.desktop?.syncConfigure?.({
+      enabled: false,
+      serverUrl: syncServerUrlDraft || syncStatus.configuration.serverUrl,
+      token: "",
+      workspaceId: syncStatus.configuration.workspaceId,
+    });
+
+    setSyncEnabledDraft(false);
+    setSyncLoginPasswordDraft(defaultSyncLoginPassword);
+    setSyncLoginMessageTone("info");
+    setSyncLoginMessage("已退出云同步账号。");
+    setCloudSidebarWorkspace(null);
+    setIsCloudMultiSelectEnabled(false);
+    setSelectedCloudEntryPaths(new Set());
+
+    if (status) {
+      setSyncStatus(status);
+    }
+  }
+
+  function openSyncStatusMenu(event: ReactMouseEvent<HTMLButtonElement>) {
+    openContextMenu(
+      event,
+      [
+        {
+          icon: <RefreshCw size={15} />,
+          label: "立即同步",
+          onSelect: () => void syncNow(),
+        },
+        {
+          icon: <Settings2 size={15} />,
+          label: "云同步设置",
+          onSelect: () => openSettings("sync"),
+        },
+        { type: "separator" },
+        {
+          danger: true,
+          icon: <LogOut size={15} />,
+          label: "退出登录",
+          onSelect: () => void logoutSync(),
+        },
+      ],
+      220,
+    );
   }
 
   async function toggleFullScreen() {
@@ -2092,10 +2190,42 @@ export function App() {
   }
 
   function createNewDocument() {
-    setNewFileName(`Untitled ${workspace.documents.length + 1}`);
-    setIsCreateFileOpen(true);
+    void createLocalMarkdownDocument();
+  }
+
+  async function createLocalMarkdownDocument(targetDirectoryPath?: string) {
     setIsActionsOpen(false);
     setTopMenu(null);
+
+    const directoryPath =
+      targetDirectoryPath ||
+      workspace.workspacePath ||
+      (await window.desktop?.getDefaultWorkspaceDirectory?.()) ||
+      "";
+
+    if (!directoryPath || !window.desktop?.createMarkdownFile) {
+      setNewFileName(`Untitled ${workspace.documents.length + 1}`);
+      setIsCreateFileOpen(true);
+      return;
+    }
+
+    try {
+      const localFile = await window.desktop.createMarkdownFile({
+        directoryPath,
+        title: "Untitled",
+      });
+
+      setPendingOpenAfterRenameEntryPath(localFile.filePath);
+      setExpandedDirectoryPaths((current) => {
+        const next = new Set(current);
+        next.add(directoryPath);
+        return next;
+      });
+      await loadDirectoryTree(workspace.workspacePath || directoryPath);
+      startRenamingEntry(localFile.filePath, "file");
+    } catch {
+      setSaveState("failed");
+    }
   }
 
   async function confirmCreateNewDocument() {
@@ -2400,15 +2530,7 @@ export function App() {
 
   function toggleCloudEntrySelection(item: DirectoryTreeItem) {
     setSelectedCloudEntryPaths((current) => {
-      const next = new Set(current);
-
-      if (next.has(item.path)) {
-        next.delete(item.path);
-      } else {
-        next.add(item.path);
-      }
-
-      return next;
+      return toggleWorkspaceEntrySelection(current, item, cloudSidebarEntryMap);
     });
   }
 
@@ -2511,8 +2633,8 @@ export function App() {
         next.add(directoryPath);
         return next;
       });
+      setPendingOpenAfterRenameEntryPath(localFile.filePath);
       await refreshCloudSidebarWorkspaceFromCache();
-      await openFileFromTree(localFile.filePath);
       startRenamingEntry(localFile.filePath, "file");
     } catch (error) {
       await showAppAlert({
@@ -2602,15 +2724,6 @@ export function App() {
     }
   }
 
-  function closeCloudWorkspaceView() {
-    savedFileContentByPathRef.current = new Map();
-    externalConflictPathsRef.current = new Set();
-    setWorkspace(createStartupWorkspace());
-    applyDirectoryTree(null);
-    setIsHomeOpen(true);
-    setSaveState("idle");
-  }
-
   function toggleCloudDirectoryPath(directoryPath: string) {
     setExpandedCloudDirectoryPaths((current) => {
       const next = new Set(current);
@@ -2629,6 +2742,7 @@ export function App() {
     event: ReactDragEvent<HTMLButtonElement>,
     payload: SidebarDragPayload,
   ) {
+    activeSidebarDragPayloadRef.current = payload;
     event.dataTransfer.effectAllowed = "copyMove";
     event.dataTransfer.setData(
       "application/x-notedock-sidebar-entry",
@@ -2637,7 +2751,40 @@ export function App() {
     event.dataTransfer.setData("text/plain", payload.path);
   }
 
+  function clearSidebarDragState() {
+    activeSidebarDragPayloadRef.current = null;
+    setSidebarDropTarget(null);
+    setSidebarDirectoryDropTargetPath(null);
+    setSidebarDirectoryDragPreview(null);
+  }
+
+  function expandSidebarDirectoryForDropPreview(
+    directoryPath: string,
+    target: SidebarStorageKind,
+  ) {
+    const expandPath = (current: Set<string>) => {
+      if (current.has(directoryPath)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.add(directoryPath);
+      return next;
+    };
+
+    if (target === "cloud") {
+      setExpandedCloudDirectoryPaths(expandPath);
+      return;
+    }
+
+    setExpandedDirectoryPaths(expandPath);
+  }
+
   function readSidebarDragPayload(event: ReactDragEvent<HTMLElement>) {
+    if (activeSidebarDragPayloadRef.current) {
+      return activeSidebarDragPayloadRef.current;
+    }
+
     const raw = event.dataTransfer.getData("application/x-notedock-sidebar-entry");
 
     if (!raw) {
@@ -2664,8 +2811,18 @@ export function App() {
   function canDropSidebarEntryOnDirectory(
     payload: SidebarDragPayload | null,
     targetDirectoryPath: string,
+    target?: SidebarStorageKind,
   ) {
     if (!payload || !targetDirectoryPath) {
+      return false;
+    }
+
+    if (
+      target &&
+      payload.source === target &&
+      normalizeFilePathKey(getDirectoryPath(payload.path)) ===
+        normalizeFilePathKey(targetDirectoryPath)
+    ) {
       return false;
     }
 
@@ -2683,14 +2840,67 @@ export function App() {
     return true;
   }
 
+  function getSidebarStorageRootPath(target: SidebarStorageKind) {
+    return target === "cloud"
+      ? cloudSidebarWorkspace?.directoryPath || ""
+      : workspace.workspacePath || "";
+  }
+
+  function canDropSidebarEntryOnStorageRoot(
+    payload: SidebarDragPayload | null,
+    target: SidebarStorageKind,
+    targetRootDirectoryPath: string,
+  ) {
+    if (!payload) {
+      return false;
+    }
+
+    if (payload.source !== target) {
+      return true;
+    }
+
+    if (!targetRootDirectoryPath) {
+      return false;
+    }
+
+    if (
+      normalizeFilePathKey(getDirectoryPath(payload.path)) ===
+      normalizeFilePathKey(targetRootDirectoryPath)
+    ) {
+      return false;
+    }
+
+    if (
+      payload.entryType === "directory" &&
+      isPathInsideDirectoryPath(targetRootDirectoryPath, payload.path)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function createSidebarDragPreview(payload: SidebarDragPayload | null) {
+    return payload
+      ? {
+          entryType: payload.entryType,
+          name: getFileNameFromPath(payload.path),
+          path: payload.path,
+        }
+      : null;
+  }
+
   function handleSidebarDirectoryDragOver(
-    event: ReactDragEvent<HTMLButtonElement>,
+    event: ReactDragEvent<HTMLElement>,
     targetDirectory: DirectoryTreeItem,
     target: SidebarStorageKind,
   ) {
     const payload = readSidebarDragPayload(event);
 
-    if (!canDropSidebarEntryOnDirectory(payload, targetDirectory.path)) {
+    if (!canDropSidebarEntryOnDirectory(payload, targetDirectory.path, target)) {
+      setSidebarDropTarget(null);
+      setSidebarDirectoryDropTargetPath(null);
+      setSidebarDirectoryDragPreview(null);
       return;
     }
 
@@ -2699,21 +2909,8 @@ export function App() {
     event.dataTransfer.dropEffect = payload?.source === target ? "move" : "copy";
     setSidebarDropTarget(null);
     setSidebarDirectoryDropTargetPath(targetDirectory.path);
-  }
-
-  function handleSidebarDirectoryDragLeave(
-    event: ReactDragEvent<HTMLButtonElement>,
-  ) {
-    const nextTarget = event.relatedTarget;
-
-    if (
-      nextTarget instanceof Node &&
-      event.currentTarget.contains(nextTarget)
-    ) {
-      return;
-    }
-
-    setSidebarDirectoryDropTargetPath(null);
+    expandSidebarDirectoryForDropPreview(targetDirectory.path, target);
+    setSidebarDirectoryDragPreview(createSidebarDragPreview(payload));
   }
 
   function handleSidebarStorageDragOver(
@@ -2724,9 +2921,28 @@ export function App() {
       return;
     }
 
+    const payload = readSidebarDragPayload(event);
+    const targetRootDirectoryPath = getSidebarStorageRootPath(target);
+
+    if (
+      !canDropSidebarEntryOnStorageRoot(
+        payload,
+        target,
+        targetRootDirectoryPath,
+      )
+    ) {
+      if (sidebarDropTarget === target) {
+        setSidebarDropTarget(null);
+      }
+      setSidebarDirectoryDropTargetPath(null);
+      setSidebarDirectoryDragPreview(null);
+      return;
+    }
+
     event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
+    event.dataTransfer.dropEffect = payload?.source === target ? "move" : "copy";
     setSidebarDirectoryDropTargetPath(null);
+    setSidebarDirectoryDragPreview(createSidebarDragPreview(payload));
     setSidebarDropTarget(target);
   }
 
@@ -2740,20 +2956,18 @@ export function App() {
       return;
     }
 
-    setSidebarDropTarget(null);
-    setSidebarDirectoryDropTargetPath(null);
+    clearSidebarDragState();
   }
 
   async function dropSidebarEntryToDirectory(
-    event: ReactDragEvent<HTMLButtonElement>,
+    event: ReactDragEvent<HTMLElement>,
     targetDirectoryPath: string,
     target: SidebarStorageKind,
   ) {
     const payload = readSidebarDragPayload(event);
-    setSidebarDropTarget(null);
-    setSidebarDirectoryDropTargetPath(null);
+    clearSidebarDragState();
 
-    if (!canDropSidebarEntryOnDirectory(payload, targetDirectoryPath)) {
+    if (!canDropSidebarEntryOnDirectory(payload, targetDirectoryPath, target)) {
       return;
     }
 
@@ -2823,14 +3037,60 @@ export function App() {
     target: SidebarStorageKind,
   ) {
     const payload = readSidebarDragPayload(event);
-    setSidebarDropTarget(null);
-    setSidebarDirectoryDropTargetPath(null);
+    const targetRootDirectoryPath = getSidebarStorageRootPath(target);
+    clearSidebarDragState();
 
-    if (!payload || payload.source === target) {
+    if (
+      !canDropSidebarEntryOnStorageRoot(
+        payload,
+        target,
+        targetRootDirectoryPath,
+      )
+    ) {
+      return;
+    }
+
+    if (!payload) {
       return;
     }
 
     event.preventDefault();
+
+    if (payload.source === target) {
+      if (!targetRootDirectoryPath) {
+        return;
+      }
+
+      try {
+        if (!window.desktop?.moveEntryToDirectory) {
+          throw new Error("当前环境不支持移动文件。");
+        }
+
+        const result = await window.desktop.moveEntryToDirectory({
+          queueSync: target === "cloud",
+          sourcePath: payload.path,
+          targetDirectoryPath: targetRootDirectoryPath,
+        });
+
+        updateWorkspaceEntryPathReferences(
+          payload.path,
+          result.entryPath,
+          payload.entryType,
+        );
+
+        if (target === "cloud") {
+          await refreshCloudSidebarWorkspaceFromCache();
+        } else {
+          await loadDirectoryTree(targetRootDirectoryPath);
+        }
+      } catch (error) {
+        showWorkspaceToast(
+          error instanceof Error ? error.message : "移动文件失败。",
+          "error",
+        );
+      }
+      return;
+    }
 
     if (target === "cloud") {
       if (
@@ -3035,6 +3295,7 @@ export function App() {
     setRenamingEntryPath(null);
     setRenamingEntryType(null);
     setRenameDraft("");
+    setPendingOpenAfterRenameEntryPath(null);
   }
 
   function updateWorkspaceEntryPathReferences(
@@ -3119,9 +3380,18 @@ export function App() {
       getPathLabel(renamingEntryPath),
       renamingEntryType,
     );
+    const shouldOpenAfterRename =
+      renamingEntryType === "file" &&
+      Boolean(pendingOpenAfterRenameEntryPath) &&
+      normalizeFilePathKey(pendingOpenAfterRenameEntryPath ?? "") ===
+        normalizeFilePathKey(renamingEntryPath);
 
     if (renameDraft.trim() === editableName) {
+      const filePathToOpen = shouldOpenAfterRename ? renamingEntryPath : null;
       cancelRenamingEntry();
+      if (filePathToOpen) {
+        await openFileFromTree(filePathToOpen);
+      }
       return;
     }
 
@@ -3200,6 +3470,10 @@ export function App() {
         await refreshCloudSidebarWorkspaceFromCache();
       } else {
         await loadDirectoryTree(getDirectoryPath(nextEntryPath));
+      }
+
+      if (shouldOpenAfterRename) {
+        await openFileFromTree(nextEntryPath);
       }
 
       showWorkspaceToast("已重命名");
@@ -4962,11 +5236,6 @@ export function App() {
       event,
       [
         {
-          icon: <FolderOpen size={15} />,
-          label: "打开文件夹",
-          onSelect: () => void openWorkspaceDirectoryPath(directoryPath),
-        },
-        {
           disabled: !window.desktop?.renameWorkspaceEntry,
           icon: <PencilLine size={15} />,
           label: "重命名",
@@ -4983,7 +5252,7 @@ export function App() {
           onSelect: () =>
             void (isCloudEntry
               ? refreshCloudSidebarWorkspaceFromCache()
-              : loadDirectoryTree(directoryPath)),
+              : refreshCurrentLocalWorkspace()),
         },
         ...(isCloudEntry
           ? [
@@ -6420,6 +6689,39 @@ export function App() {
     setBackupMessage("未能读取剪贴板中的媒体内容");
   }
 
+  function handleSourceCopy(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!activeDocument?.filePath || !isMarkdownDocument(activeDocument)) {
+      return;
+    }
+
+    const textarea = event.currentTarget;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+
+    if (selectionStart === selectionEnd) {
+      return;
+    }
+
+    const selectedMarkdown = textarea.value.slice(selectionStart, selectionEnd);
+    const selectedTextLength = selectedMarkdown.trim().length;
+    const documentTextLength = activeDocument.content.trim().length;
+    const markdown =
+      documentTextLength > 0 && selectedTextLength >= documentTextLength * 0.85
+        ? activeDocument.content
+        : selectedMarkdown;
+    const imageTokens = collectClipboardImageTokens(markdown);
+
+    if (!imageTokens.length) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.clipboardData.setData("text/plain", markdown);
+
+    void writeMarkdownRichClipboard(markdown, activeDocument.filePath);
+  }
+
   async function saveNow() {
     try {
       await savePersistedAppState(
@@ -7070,39 +7372,10 @@ export function App() {
     );
   }
 
-  const selectedContentDensity =
-    editorContentDensityOptions.find(
-      (option) => option.value === settings.editorContentDensity,
-    ) ?? editorContentDensityOptions[1];
-  const syncStatusLabel =
-    syncStatus.state === "synced"
-      ? "已同步"
-      : syncStatus.state === "syncing"
-        ? "同步中"
-        : syncStatus.state === "pending"
-          ? "等待同步"
-          : syncStatus.state === "failed"
-            ? "同步失败"
-            : syncStatus.configuration.enabled
-              ? "已启用"
-              : "未启用";
   const isCloudExplorerEnabled =
     syncStatus.configuration.enabled && syncStatus.configuration.tokenConfigured;
   const localExplorerTree = isCloudWorkspace ? null : directoryTree;
   const localExplorerDocuments = isCloudWorkspace ? [] : workspace.documents;
-  const syncStatusTone =
-    syncStatus.state === "synced"
-      ? "success"
-      : syncStatus.state === "syncing" || syncStatus.state === "pending"
-        ? "info"
-        : syncStatus.state === "failed"
-          ? "error"
-          : syncStatus.configuration.enabled
-            ? "info"
-            : "neutral";
-  const activeSettingsItem =
-    settingsDirectoryItems.find((item) => item.id === activeSettingsSection) ??
-    settingsDirectoryItems[0];
   const windowZoomPercent = Math.round(windowZoomFactor * 100);
   const isDefaultWindowZoom =
     Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
@@ -7202,9 +7475,33 @@ export function App() {
         {hasStorageItems ? (
           viewMode === "tree" ? (
             <div className="explorer-storage-tree-scroll">
+              {isDropTarget && sidebarDirectoryDragPreview ? (
+                <div
+                  className={[
+                    "directory-tree-file",
+                    "directory-tree-drop-preview",
+                    "directory-tree-root-drop-preview",
+                    sidebarDirectoryDragPreview.entryType === "directory"
+                      ? "directory-tree-drop-preview-directory"
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  style={{ "--tree-depth": "0px" } as CSSProperties}
+                >
+                  <span className="directory-tree-caret-placeholder" />
+                  {sidebarDirectoryDragPreview.entryType === "directory" ? (
+                    <Folder size={17} />
+                  ) : (
+                    <FileText size={17} />
+                  )}
+                  <span>{sidebarDirectoryDragPreview.name}</span>
+                </div>
+              ) : null}
               <DirectoryTreeItems
                 activeDirectoryPath={getDirectoryPath(activeDocument?.filePath)}
                 activeFilePath={activeDocument?.filePath}
+                directoryDragPreview={sidebarDirectoryDragPreview}
                 directoryDropTargetPath={sidebarDirectoryDropTargetPath}
                 expandedPaths={
                   kind === "cloud"
@@ -7215,7 +7512,6 @@ export function App() {
                 items={treeChildren}
                 level={0}
                 onDirectoryContextMenu={openDirectoryContextMenu}
-                onDirectoryDragLeave={handleSidebarDirectoryDragLeave}
                 onDirectoryDragOver={(event, item) =>
                   handleSidebarDirectoryDragOver(event, item, kind)
                 }
@@ -7223,6 +7519,7 @@ export function App() {
                   void dropSidebarEntryToDirectory(event, item.path, kind)
                 }
                 onFileContextMenu={openFileContextMenu}
+                onItemDragEnd={clearSidebarDragState}
                 onItemDragStart={(event, item) =>
                   startSidebarEntryDrag(event, {
                     entryType: item.type,
@@ -7254,6 +7551,7 @@ export function App() {
               items={treeChildren}
               workspacePath={workspacePath}
               onFileContextMenu={openFileContextMenu}
+              onFileDragEnd={clearSidebarDragState}
               onFileDragStart={(event, filePath) =>
                 startSidebarEntryDrag(event, {
                   entryType: "file",
@@ -7919,6 +8217,7 @@ export function App() {
                       value={activeDocument.content}
                       onChange={(event) => updateMarkdown(event.target.value)}
                       onContextMenu={openEditorContextMenu}
+                      onCopyCapture={handleSourceCopy}
                       onPaste={handlePaste}
                     />
                   )}
@@ -7974,6 +8273,7 @@ export function App() {
             onCloseDocument={closeActiveDocument}
             onConfigureSync={() => openSettings("sync")}
             onOpenSettings={() => openSettings("editor")}
+            onOpenSyncMenu={openSyncStatusMenu}
             onSyncNow={syncNow}
             onToggleInspector={toggleDocumentInspector}
             onToggleSidebar={toggleSidebarVisibility}
@@ -8650,6 +8950,7 @@ export function App() {
         </Suspense>
 
         <AboutDialog
+          appVersion={appVersion}
           logoUrl={appLogoUrl}
           open={isAboutOpen}
           onOpenChange={setIsAboutOpen}
@@ -8669,8 +8970,17 @@ export function App() {
                       <Dialog.Title className="settings-redesign-title">
                         设置
                       </Dialog.Title>
-                      <span className="settings-redesign-app-name">noteDock</span>
+                      <span className="settings-redesign-app-name">v{appVersion}</span>
                     </div>
+                    <Dialog.Close asChild>
+                      <button
+                        className="settings-redesign-close"
+                        type="button"
+                        aria-label="关闭设置"
+                      >
+                        <X size={16} />
+                      </button>
+                    </Dialog.Close>
                   </div>
 
                   <nav className="settings-redesign-nav" aria-label="设置目录">
@@ -8700,40 +9010,12 @@ export function App() {
                 </aside>
 
                 <section className="settings-redesign-main">
-                  <div className="settings-redesign-toolbar">
-                    <div>
-                      <div className="settings-redesign-kicker">偏好设置</div>
-                      <h2>{activeSettingsItem.label}</h2>
-                    </div>
-                    <div className="settings-redesign-toolbar-actions">
-                      {activeSettingsSection === "editor" ? (
-                        <span className="settings-redesign-status">
-                          {selectedContentDensity.label}
-                        </span>
-                      ) : (
-                        <span
-                          className={`settings-redesign-status settings-redesign-status-${syncStatusTone}`}
-                        >
-                          {syncStatusLabel}
-                        </span>
-                      )}
-                      <Dialog.Close asChild>
-                        <button
-                          className="settings-redesign-close"
-                          type="button"
-                          aria-label="关闭设置"
-                        >
-                          <X size={16} />
-                        </button>
-                      </Dialog.Close>
-                    </div>
-                  </div>
-
                   {activeSettingsSection === "editor" ? (
-                    <div className="settings-redesign-reader">
-                      <section className="settings-redesign-card settings-redesign-density-card">
+                    <section className="settings-redesign-card settings-redesign-reader">
+                      <div className="settings-redesign-density-card">
                         <div className="settings-redesign-card-heading">
-                          <h3>阅读显示</h3>
+                          <h3>字体大小</h3>
+                          <p>选择编辑器正文、列表和预览的整体阅读密度。</p>
                         </div>
                         <ToggleGroup.Root
                           className="settings-redesign-density"
@@ -8760,14 +9042,16 @@ export function App() {
                             </ToggleGroup.Item>
                           ))}
                         </ToggleGroup.Root>
-                      </section>
+                      </div>
 
-                      <section
-                        className="settings-redesign-card settings-redesign-preview"
+                      <div
+                        className="settings-redesign-preview"
+                        style={settingsPreviewStyle}
                         aria-label="显示预览"
                       >
                         <div className="settings-redesign-card-heading">
-                          <h3>预览</h3>
+                          <h3>效果预览</h3>
+                          <p>右侧内容会跟随当前选择实时调整。</p>
                         </div>
                         <div className="settings-redesign-preview-page">
                           <h4>项目笔记</h4>
@@ -8776,21 +9060,21 @@ export function App() {
                             <li>快速记录 Markdown 笔记</li>
                             <li>阅读本地与云端文档</li>
                           </ul>
-                          <div className="settings-redesign-preview-table" aria-hidden="true">
-                            <span>类型</span>
-                            <span>状态</span>
-                            <span>Markdown</span>
-                            <span>已同步</span>
-                          </div>
+                          <blockquote>合适的字号和行距可以减少长时间阅读的疲劳。</blockquote>
                         </div>
-                      </section>
-                    </div>
+                      </div>
+                    </section>
                   ) : null}
 
                   {activeSettingsSection === "sync" ? (
                     <section className="settings-redesign-card settings-redesign-sync">
                       <div className="settings-redesign-sync-head">
-                        <h3>云同步</h3>
+                        <div>
+                          <h3>云同步</h3>
+                          {syncStatus.configuration.tokenConfigured ? (
+                            <p>已登录 {syncLoginUsernameDraft || defaultSyncLoginUsername}</p>
+                          ) : null}
+                        </div>
                         <label className="settings-redesign-switch">
                           <input
                             type="checkbox"
@@ -8858,28 +9142,26 @@ export function App() {
                       ) : null}
 
                       <div className="settings-redesign-actions">
+                        {syncStatus.configuration.tokenConfigured ? (
+                          <button
+                            className="settings-redesign-text-button"
+                            type="button"
+                            onClick={() => void logoutSync()}
+                          >
+                            退出登录
+                          </button>
+                        ) : null}
                         <button
                           className="settings-redesign-primary"
                           type="button"
                           disabled={isSyncLoginRunning}
                           onClick={() => void loginAndConfigureSync()}
                         >
-                          {isSyncLoginRunning ? "登录中..." : "登录并启用"}
-                        </button>
-                        <button
-                          className="settings-redesign-secondary"
-                          type="button"
-                          onClick={() => void configureSyncSettings()}
-                        >
-                          保存配置
-                        </button>
-                        <button
-                          className="settings-redesign-secondary"
-                          type="button"
-                          disabled={!syncStatus.configuration.tokenConfigured}
-                          onClick={() => void importLocalDirectoryToCloud()}
-                        >
-                          导入文件夹
+                          {isSyncLoginRunning
+                            ? "登录中..."
+                            : syncStatus.configuration.tokenConfigured
+                              ? "重新登录并启用"
+                              : "登录并启用"}
                         </button>
                       </div>
                     </section>

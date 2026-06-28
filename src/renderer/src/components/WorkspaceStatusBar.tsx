@@ -11,7 +11,7 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import {
   isDrawingDocument,
   isExcelDocument,
@@ -57,6 +57,7 @@ type WorkspaceStatusBarProps = {
   onCloseDocument?: () => void;
   onConfigureSync?: () => void;
   onOpenSettings?: () => void;
+  onOpenSyncMenu?: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onSyncNow?: () => void;
   onToggleInspector?: () => void;
   onToggleSidebar: () => void;
@@ -146,6 +147,7 @@ export function WorkspaceStatusBar({
   onCloseDocument,
   onConfigureSync,
   onOpenSettings,
+  onOpenSyncMenu,
   onSyncNow,
   onToggleInspector,
   onToggleSidebar,
@@ -156,14 +158,21 @@ export function WorkspaceStatusBar({
   const canUseSyncStatus =
     syncState === "disabled"
       ? Boolean(onConfigureSync ?? onOpenSettings)
-      : Boolean(onSyncNow) && syncState !== "pending" && syncState !== "syncing";
+      : Boolean(onOpenSyncMenu ?? onSyncNow) &&
+        syncState !== "pending" &&
+        syncState !== "syncing";
   const inspectorTitle = isInspectorOpen ? "隐藏右侧栏" : "显示右侧栏";
   const shouldShowDocumentStatus = Boolean(activeDocument);
   const shouldShowAutoSaveStatus = shouldShowDocumentStatus && status !== null;
 
-  function handleSyncStatusClick() {
+  function handleSyncStatusClick(event: ReactMouseEvent<HTMLButtonElement>) {
     if (syncState === "disabled") {
       (onConfigureSync ?? onOpenSettings)?.();
+      return;
+    }
+
+    if (onOpenSyncMenu) {
+      onOpenSyncMenu(event);
       return;
     }
 

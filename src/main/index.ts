@@ -41,6 +41,8 @@ const skipInitialAppStateRestore =
   process.env.NOTEDOCK_SKIP_INITIAL_APP_STATE_RESTORE === "1";
 const skipInitialSyncConfigurationRestore =
   process.env.NOTEDOCK_SKIP_INITIAL_SYNC_CONFIG_RESTORE === "1";
+const allowSelfSignedSyncCertificate =
+  process.env.NOTEDOCK_ALLOW_SELF_SIGNED_SYNC_CERT === "1";
 const defaultSyncServerUrl =
   process.env.NOTEDOCK_DEFAULT_SYNC_SERVER_URL?.trim() ||
   getDefaultSyncServerUrl(devServerUrl ? "development" : "production");
@@ -56,6 +58,20 @@ type WindowZoomCommand = "reset" | "zoomIn" | "zoomOut";
 if (testUserDataDirectory) {
   app.setPath("userData", testUserDataDirectory);
 }
+
+if (allowSelfSignedSyncCertificate) {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+}
+
+app.on("certificate-error", (event, _webContents, _url, _error, _certificate, callback) => {
+  if (!allowSelfSignedSyncCertificate) {
+    callback(false);
+    return;
+  }
+
+  event.preventDefault();
+  callback(true);
+});
 
 type WindowKeyboardInput = {
   alt?: boolean;
@@ -211,6 +227,11 @@ type ClipboardMediaData = {
   dataUrl: string;
   fileName: string;
   mimeType: string;
+};
+
+type ClipboardRichHtmlPayload = {
+  html?: string;
+  text?: string;
 };
 
 type ReadWorkspaceAssetPayload = {
@@ -619,6 +640,205 @@ function resolveWorkspaceReference(documentFilePath: string, reference: string) 
   return assetFilePath;
 }
 
+const markdownAssetReferencePattern =
+  /!\[([^\]]*)]\(\s*(<[^>]+>|[^\s)]+)(?:\s+"([^"]*)")?\s*\)/g;
+const htmlAssetReferencePattern =
+  /(<(?:img|source|video|audio)\b[^>]*?\s(?:src|poster)\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+
+function isTextDocumentWithWorkspaceAssets(filePath: string) {
+  const documentFileType = getDocumentFileType(filePath);
+
+  return documentFileType === "markdown" || documentFileType === "html";
+}
+
+function getWorkspaceAssetReferenceKey(reference: string) {
+  try {
+    const cleanReference = normalizeWorkspaceReference(reference);
+    const referenceSegments = cleanReference.split("/").filter(Boolean);
+
+    if (
+      !cleanReference ||
+      isAbsolute(cleanReference) ||
+      localSchemePattern.test(cleanReference) ||
+      !referenceSegments.includes(workspaceAssetsDirectoryName) ||
+      referenceSegments.some((segment) => segment === "." || segment === "..")
+    ) {
+      return null;
+    }
+
+    return cleanReference;
+  } catch {
+    return null;
+  }
+}
+
+function collectWorkspaceAssetReferences(content: string) {
+  const references = new Set<string>();
+
+  for (const match of content.matchAll(markdownAssetReferencePattern)) {
+    const source = match[2];
+    const key = source ? getWorkspaceAssetReferenceKey(source) : null;
+
+    if (key) {
+      references.add(key);
+    }
+  }
+
+  for (const match of content.matchAll(htmlAssetReferencePattern)) {
+    const source = match[2] ?? match[3] ?? match[4];
+    const key = source ? getWorkspaceAssetReferenceKey(source) : null;
+
+    if (key) {
+      references.add(key);
+    }
+  }
+
+  return Array.from(references);
+}
+
+async function copyReferencedWorkspaceAsset(
+  previousDocumentFilePath: string,
+  nextDocumentFilePath: string,
+  reference: string,
+  copiedReferences: Map<string, string>,
+) {
+  const sourceAssetFilePath = resolveWorkspaceReference(
+    previousDocumentFilePath,
+    reference,
+  );
+  const sourceAssetKey = resolve(sourceAssetFilePath).toLowerCase();
+  const existingReference = copiedReferences.get(sourceAssetKey);
+
+  if (existingReference) {
+    return existingReference;
+  }
+
+  const sourceAssetStats = await stat(sourceAssetFilePath);
+
+  if (!sourceAssetStats.isFile()) {
+    throw new Error("Workspace asset reference is not a file.");
+  }
+
+  const targetAssetDirectoryPath =
+    getWorkspaceAssetDirectory(nextDocumentFilePath);
+  await mkdir(targetAssetDirectoryPath, { recursive: true });
+
+  const targetAssetFilePath = await createUniqueWorkspaceAssetPath(
+    targetAssetDirectoryPath,
+    basename(sourceAssetFilePath),
+  );
+
+  await copyFile(sourceAssetFilePath, targetAssetFilePath);
+
+  const nextReference = getWorkspaceAssetReference(
+    nextDocumentFilePath,
+    targetAssetFilePath,
+  );
+  copiedReferences.set(sourceAssetKey, nextReference);
+  return nextReference;
+}
+
+function replaceWorkspaceAssetReferences(
+  content: string,
+  replacements: Map<string, string>,
+) {
+  let nextContent = content.replace(
+    markdownAssetReferencePattern,
+    (match, _alt, rawSource: string) => {
+      const key = getWorkspaceAssetReferenceKey(rawSource);
+      const nextReference = key ? replacements.get(key) : null;
+
+      if (!nextReference) {
+        return match;
+      }
+
+      const trimmedSource = rawSource.trim();
+      const nextSource =
+        trimmedSource.startsWith("<") && trimmedSource.endsWith(">")
+          ? `<${nextReference}>`
+          : nextReference;
+
+      return match.replace(rawSource, nextSource);
+    },
+  );
+
+  nextContent = nextContent.replace(
+    htmlAssetReferencePattern,
+    (
+      match,
+      prefix: string,
+      doubleQuotedSource: string | undefined,
+      singleQuotedSource: string | undefined,
+      unquotedSource: string | undefined,
+    ) => {
+      const source = doubleQuotedSource ?? singleQuotedSource ?? unquotedSource;
+      const key = source ? getWorkspaceAssetReferenceKey(source) : null;
+      const nextReference = key ? replacements.get(key) : null;
+
+      if (!source || !nextReference) {
+        return match;
+      }
+
+      if (doubleQuotedSource !== undefined) {
+        return `${prefix}"${nextReference}"`;
+      }
+
+      if (singleQuotedSource !== undefined) {
+        return `${prefix}'${nextReference}'`;
+      }
+
+      return `${prefix}${nextReference}`;
+    },
+  );
+
+  return nextContent;
+}
+
+async function copyWorkspaceAssetReferencesForDocumentMove(
+  previousDocumentFilePath: string,
+  nextDocumentFilePath: string,
+) {
+  if (!isTextDocumentWithWorkspaceAssets(nextDocumentFilePath)) {
+    return;
+  }
+
+  const content = await readFile(nextDocumentFilePath, "utf-8");
+  const references = collectWorkspaceAssetReferences(content);
+
+  if (!references.length) {
+    return;
+  }
+
+  const replacements = new Map<string, string>();
+  const copiedReferences = new Map<string, string>();
+
+  for (const reference of references) {
+    try {
+      replacements.set(
+        reference,
+        await copyReferencedWorkspaceAsset(
+          previousDocumentFilePath,
+          nextDocumentFilePath,
+          reference,
+          copiedReferences,
+        ),
+      );
+    } catch {
+      // Keep broken or missing asset references unchanged.
+    }
+  }
+
+  if (!replacements.size) {
+    return;
+  }
+
+  const nextContent = replaceWorkspaceAssetReferences(content, replacements);
+
+  if (nextContent !== content) {
+    await writeFile(nextDocumentFilePath, nextContent, "utf-8");
+  }
+}
+
 function titleFromFilePath(filePath: string) {
   return basename(filePath, extname(filePath));
 }
@@ -671,12 +891,17 @@ async function copySupportedWorkspaceDirectory(
   await mkdir(targetDirectoryPath, { recursive: true });
 
   for (const entry of entries) {
-    if (entry.name.startsWith(".") || ignoredDirectoryNames.has(entry.name)) {
+    const sourcePath = join(sourceDirectoryPath, entry.name);
+    const targetPath = join(targetDirectoryPath, entry.name);
+
+    if (entry.isDirectory() && entry.name === workspaceAssetsDirectoryName) {
+      await cp(sourcePath, targetPath, { recursive: true });
       continue;
     }
 
-    const sourcePath = join(sourceDirectoryPath, entry.name);
-    const targetPath = join(targetDirectoryPath, entry.name);
+    if (entry.name.startsWith(".") || ignoredDirectoryNames.has(entry.name)) {
+      continue;
+    }
 
     if (entry.isDirectory()) {
       copiedCount += await copySupportedWorkspaceDirectory(sourcePath, targetPath);
@@ -1244,6 +1469,7 @@ function registerAppStateIpc() {
 
   ipcMain.handle("app-state:save", async (_, state: PersistedAppState) => {
     const nextState = await writePersistedAppState(state);
+    queueSync();
     return nextState;
   });
 }
@@ -1452,6 +1678,21 @@ function registerFileIpc() {
   });
 
   ipcMain.handle("clipboard:read-text", () => clipboard.readText());
+
+  ipcMain.handle(
+    "clipboard:write-rich-html",
+    async (_, payload: ClipboardRichHtmlPayload) => {
+      const html = typeof payload?.html === "string" ? payload.html : "";
+      const text = typeof payload?.text === "string" ? payload.text : "";
+
+      if (!html && !text) {
+        return false;
+      }
+
+      clipboard.write({ html, text });
+      return true;
+    },
+  );
 
   ipcMain.handle("clipboard:write-image-file", async (_, filePath: string) => {
     if (typeof filePath !== "string" || !filePath.trim()) {
@@ -1759,6 +2000,10 @@ function registerFileIpc() {
         await rm(sourcePath, { force: true, recursive: sourceStats.isDirectory() });
       }
 
+      if (sourceStats.isFile()) {
+        await copyWorkspaceAssetReferencesForDocumentMove(sourcePath, targetPath);
+      }
+
       if (payload.queueSync !== false) {
         queueSync();
       }
@@ -1864,6 +2109,10 @@ function registerFileIpc() {
         );
 
         await copyFile(payload.sourcePath, targetPath);
+        await copyWorkspaceAssetReferencesForDocumentMove(
+          payload.sourcePath,
+          targetPath,
+        );
         if (shouldQueueSync) {
           queueSync();
         }
@@ -1975,6 +2224,26 @@ function registerFileIpc() {
       );
 
       return readFile(assetFilePath, "utf-8");
+    },
+  );
+
+  ipcMain.handle(
+    "workspace:read-asset-data-url",
+    async (_, payload: ReadWorkspaceAssetPayload) => {
+      const assetFilePath = resolveWorkspaceReference(
+        payload.documentFilePath,
+        payload.reference,
+      );
+      const mimeType =
+        getMediaMimeTypeForExtension(extname(assetFilePath)) ||
+        "application/octet-stream";
+      const buffer = await readFile(assetFilePath);
+
+      return {
+        dataUrl: bufferToDataUrl(buffer, mimeType),
+        fileName: basename(assetFilePath),
+        mimeType,
+      };
     },
   );
 
@@ -2238,6 +2507,8 @@ function registerFileIpc() {
 }
 
 function registerWindowIpc() {
+  ipcMain.handle("app:get-version", () => app.getVersion());
+
   ipcMain.handle("window:new", () => {
     createMainWindow();
   });

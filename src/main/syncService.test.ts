@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { PersistedAppState } from "../shared/appState";
+import { mergeSyncConfiguration } from "../shared/sync";
 import {
   createAbsoluteSyncAppState,
   createRelativeSyncAppState,
   createWorkspaceManifest,
   getCloudWorkspaceFilesPath,
   getWorkspaceRelativeSyncPath,
+  hasSyncFileActions,
   normalizeSyncRelativePath,
   planSyncFileActions,
   shouldBlockInitialWorkspaceMerge,
@@ -122,6 +124,18 @@ describe("sync planning", () => {
 
     expect(plan.push).toEqual(["A.md"]);
     expect(plan.pull).toEqual([]);
+    expect(hasSyncFileActions(plan)).toBe(true);
+  });
+
+  it("detects an empty sync file plan", () => {
+    expect(
+      hasSyncFileActions({
+        deleteLocal: [],
+        deleteRemote: [],
+        pull: [],
+        push: [],
+      }),
+    ).toBe(false);
   });
 
   it("pulls remote files that are not known locally", () => {
@@ -186,6 +200,27 @@ describe("sync planning", () => {
         ]),
       }),
     ).toBe(false);
+  });
+});
+
+describe("sync configuration", () => {
+  it("clears the stored token when an empty token is provided", () => {
+    expect(
+      mergeSyncConfiguration(
+        {
+          enabled: true,
+          serverUrl: "https://sync.example.com",
+          token: "existing-token",
+          workspaceId: "default",
+        },
+        {
+          enabled: false,
+          serverUrl: "https://sync.example.com",
+          token: "",
+          workspaceId: "default",
+        },
+      ).token,
+    ).toBe("");
   });
 });
 

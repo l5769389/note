@@ -1,6 +1,10 @@
 param(
   [string]$AdminPassword = "123",
   [string]$AdminUsername = "admin",
+  [switch]$AllowSelfSignedCloudCert,
+  [string]$CloudPassword = "",
+  [string]$CloudServerUrl = "https://sync.zhaolin.online",
+  [string]$CloudUsername = "admin",
   [string]$DataDir = "",
   [switch]$AppOnly,
   [switch]$Help,
@@ -41,6 +45,10 @@ Options:
   -Port 47831
   -AdminUsername admin
   -AdminPassword 123
+  -CloudServerUrl https://sync.zhaolin.online
+  -CloudUsername admin
+  -CloudPassword <cloud-password>
+  -AllowSelfSignedCloudCert
   -DataDir .local/sync-server-data
   -ServerOnly
   -AppOnly
@@ -49,6 +57,11 @@ After startup, configure desktop sync with:
   Server URL: http://127.0.0.1:47831
   Username:   admin
   Password:   123
+
+Cloud sync test settings:
+  Server URL: https://sync.zhaolin.online
+  Username:   admin
+  Password:   pass with -CloudPassword
 
 If you already created a local database, the original admin password is kept.
 Delete .local/sync-server-data to reset the local sync server.
@@ -83,6 +96,13 @@ Write-Host "Sync URL:    $syncUrl"
 Write-Host "Admin user:  $AdminUsername"
 Write-Host "Admin pass:  $AdminPassword"
 Write-Host "Data dir:    $resolvedDataDir"
+Write-Host "Cloud URL:   $CloudServerUrl"
+Write-Host "Cloud user:  $CloudUsername"
+if ($CloudPassword) {
+  Write-Host "Cloud pass:  $CloudPassword"
+} else {
+  Write-Host "Cloud pass:  <pass with -CloudPassword>"
+}
 
 if (-not $AppOnly) {
   if (Test-HttpOk $healthUrl) {
@@ -127,8 +147,13 @@ npm run sync:server
 
 if (-not $ServerOnly) {
   Write-Section "Starting desktop app"
+  $selfSignedCertCommand = ""
+  if ($AllowSelfSignedCloudCert) {
+    $selfSignedCertCommand = "`$env:NODE_TLS_REJECT_UNAUTHORIZED = '0';`r`n`$env:NOTEDOCK_ALLOW_SELF_SIGNED_SYNC_CERT = '1';`r`n"
+  }
   $appCommand = @"
 `$Host.UI.RawUI.WindowTitle = 'noteDock desktop dev';
+$selfSignedCertCommand
 Set-Location $(ConvertTo-PowerShellLiteral $repoRoot);
 npm run dev
 "@
@@ -145,5 +170,18 @@ Write-Section "Local sync settings"
 Write-Host "Server URL: $syncUrl"
 Write-Host "Username:   $AdminUsername"
 Write-Host "Password:   $AdminPassword"
+Write-Section "Cloud sync settings"
+Write-Host "Server URL: $CloudServerUrl"
+Write-Host "Username:   $CloudUsername"
+if ($CloudPassword) {
+  Write-Host "Password:   $CloudPassword"
+} else {
+  Write-Host "Password:   <pass with -CloudPassword>"
+}
+if ($AllowSelfSignedCloudCert) {
+  Write-Host "TLS:        self-signed certificate allowed for this dev app session" -ForegroundColor Yellow
+} else {
+  Write-Host "TLS:        normal certificate validation"
+}
 Write-Host ""
 Write-Host "Use Settings -> Cloud Sync -> account login, then click login and enable sync."

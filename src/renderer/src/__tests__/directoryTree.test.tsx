@@ -74,4 +74,51 @@ describe("DirectoryTreeItems", () => {
     expect(html).toContain('value="renamed"');
     expect(html).toContain(".md");
   });
+
+  it("renders a live drop preview inside the target folder", () => {
+    const html = renderToStaticMarkup(
+      <DirectoryTreeItems
+        activeDirectoryPath="D:/notes/project"
+        activeFilePath="D:/notes/project/note.md"
+        directoryDragPreview={{
+          entryType: "file",
+          name: "draft.md",
+          path: "D:/notes/draft.md",
+        }}
+        directoryDropTargetPath="D:/notes/project"
+        expandedPaths={new Set(["D:/notes/project"])}
+        items={tree}
+        level={0}
+        onOpenFile={() => {}}
+        onToggleDirectory={() => {}}
+      />,
+    );
+
+    expect(html).toContain("directory-tree-drop-preview");
+    expect(html).toContain("directory-tree-file");
+    expect(html).toContain("draft.md");
+    expect(html.indexOf("draft.md")).toBeLessThan(html.indexOf("note.md"));
+  });
+
+  it("does not render the drop preview while the target folder is collapsed", () => {
+    const html = renderToStaticMarkup(
+      <DirectoryTreeItems
+        activeDirectoryPath="D:/notes/project"
+        activeFilePath="D:/notes/project/note.md"
+        directoryDragPreview={{
+          entryType: "file",
+          name: "draft.md",
+          path: "D:/notes/draft.md",
+        }}
+        directoryDropTargetPath="D:/notes/project"
+        expandedPaths={new Set()}
+        items={tree}
+        level={0}
+        onOpenFile={() => {}}
+        onToggleDirectory={() => {}}
+      />,
+    );
+
+    expect(html).not.toContain("directory-tree-drop-preview");
+  });
 });

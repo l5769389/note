@@ -8,11 +8,14 @@ import type {
 import { splitWorkspaceEntryNameForRename } from "../../../shared/workspaceRename";
 import { DocumentFileIcon } from "./DocumentFileIcon";
 import type { DirectoryTreeItem } from "../types";
+import { isWorkspaceEntrySelected } from "../workspaceSelection";
 import { isQuickDocumentLinkShortcut } from "../workspaceShortcuts";
 
 type DirectoryTreeHandlerProps = {
   activeDirectoryPath?: string;
   activeFilePath?: string;
+  directoryDragPreview?: DirectoryDragPreview | null;
+  directoryDropTargetPath?: string | null;
   expandedPaths: Set<string>;
   isSelectionMode?: boolean;
   onCancelRename?: (entryPath: string) => void;
@@ -21,13 +24,12 @@ type DirectoryTreeHandlerProps = {
     event: ReactMouseEvent<HTMLButtonElement>,
     directoryPath: string,
   ) => void;
-  onDirectoryDragLeave?: (event: ReactDragEvent<HTMLButtonElement>) => void;
   onDirectoryDragOver?: (
-    event: ReactDragEvent<HTMLButtonElement>,
+    event: ReactDragEvent<HTMLElement>,
     item: DirectoryTreeItem,
   ) => void;
   onDirectoryDrop?: (
-    event: ReactDragEvent<HTMLButtonElement>,
+    event: ReactDragEvent<HTMLElement>,
     item: DirectoryTreeItem,
   ) => void;
   onFileContextMenu?: (
@@ -38,15 +40,21 @@ type DirectoryTreeHandlerProps = {
     event: ReactDragEvent<HTMLButtonElement>,
     item: DirectoryTreeItem,
   ) => void;
+  onItemDragEnd?: () => void;
   onOpenFile: (filePath: string) => void;
   onQuickLinkFile?: (filePath: string) => void;
   onRenameDraftChange?: (value: string) => void;
   onToggleEntrySelection?: (item: DirectoryTreeItem) => void;
   onToggleDirectory: (directoryPath: string) => void;
-  directoryDropTargetPath?: string | null;
   renameDraft?: string;
   renamingEntryPath?: string;
   selectedEntryPaths?: Set<string>;
+};
+
+export type DirectoryDragPreview = {
+  entryType: DirectoryTreeItem["type"];
+  name: string;
+  path: string;
 };
 
 type DirectoryTreeProps = DirectoryTreeHandlerProps & {
@@ -105,6 +113,8 @@ function RenameInput({
 function DirectoryTree({
   activeDirectoryPath,
   activeFilePath,
+  directoryDragPreview,
+  directoryDropTargetPath,
   expandedPaths,
   isSelectionMode = false,
   item,
@@ -112,17 +122,16 @@ function DirectoryTree({
   onCancelRename,
   onCommitRename,
   onDirectoryContextMenu,
-  onDirectoryDragLeave,
   onDirectoryDragOver,
   onDirectoryDrop,
   onFileContextMenu,
+  onItemDragEnd,
   onItemDragStart,
   onOpenFile,
   onQuickLinkFile,
   onRenameDraftChange,
   onToggleEntrySelection,
   onToggleDirectory,
-  directoryDropTargetPath,
   renameDraft,
   renamingEntryPath,
   selectedEntryPaths,
@@ -133,6 +142,9 @@ function DirectoryTree({
   const isExpanded = expandedPaths.has(item.path);
   const isRenaming = renamingEntryPath === item.path;
   const isDirectoryDropTarget = directoryDropTargetPath === item.path;
+  const shouldShowDropPreview =
+    isDirectoryDropTarget && Boolean(directoryDragPreview);
+  const hasVisibleChildren = hasChildren || shouldShowDropPreview;
   const renameInputValue =
     isRenaming && renameDraft !== undefined
       ? renameDraft
@@ -153,7 +165,7 @@ function DirectoryTree({
           <span className="directory-tree-caret-placeholder" />
           {isSelectionMode ? (
             <DirectoryEntryCheckbox
-              checked={selectedEntryPaths?.has(item.path) ?? false}
+              checked={isWorkspaceEntrySelected(selectedEntryPaths, item)}
               item={item}
               onToggleEntrySelection={onToggleEntrySelection}
             />
@@ -169,73 +181,105 @@ function DirectoryTree({
           />
         </div>
       ) : (
-        <button
-          className={
-            [
-              "directory-tree-folder",
-              isCurrentDirectory ? "directory-tree-folder-active" : "",
-              isDirectoryDropTarget ? "directory-tree-folder-drop-target" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")
-          }
-          style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
-          title={item.name}
-          type="button"
-          draggable={Boolean(onItemDragStart)}
-          onClick={() => onToggleDirectory(item.path)}
-          onContextMenu={(event) => onDirectoryContextMenu?.(event, item.path)}
-          onDragLeave={onDirectoryDragLeave}
-          onDragOver={(event) => onDirectoryDragOver?.(event, item)}
-          onDragStart={(event) => onItemDragStart?.(event, item)}
-          onDrop={(event) => onDirectoryDrop?.(event, item)}
-        >
-          {hasChildren ? (
-            isExpanded ? (
-              <ChevronDown className="directory-tree-caret" size={14} />
+        <div className="directory-tree-folder-drop-zone">
+          <button
+            className={
+              [
+                "directory-tree-folder",
+                isCurrentDirectory ? "directory-tree-folder-active" : "",
+                isDirectoryDropTarget ? "directory-tree-folder-drop-target" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")
+            }
+            style={{ "--tree-depth": `${level * 18}px` } as CSSProperties}
+            title={item.name}
+            type="button"
+            draggable={Boolean(onItemDragStart)}
+            onClick={() => onToggleDirectory(item.path)}
+            onContextMenu={(event) => onDirectoryContextMenu?.(event, item.path)}
+            onDragEnd={onItemDragEnd}
+            onDragEnter={(event) => onDirectoryDragOver?.(event, item)}
+            onDragOver={(event) => onDirectoryDragOver?.(event, item)}
+            onDragStart={(event) => onItemDragStart?.(event, item)}
+            onDrop={(event) => onDirectoryDrop?.(event, item)}
+          >
+            {hasVisibleChildren ? (
+              isExpanded ? (
+                <ChevronDown className="directory-tree-caret" size={14} />
+              ) : (
+                <ChevronRight className="directory-tree-caret" size={14} />
+              )
             ) : (
-              <ChevronRight className="directory-tree-caret" size={14} />
-            )
-          ) : (
-            <span className="directory-tree-caret-placeholder" />
-          )}
-          {isSelectionMode ? (
-            <DirectoryEntryCheckbox
-              checked={selectedEntryPaths?.has(item.path) ?? false}
-              item={item}
-              onToggleEntrySelection={onToggleEntrySelection}
-            />
-          ) : null}
-          {isRoot ? <FolderOpen size={18} /> : <Folder size={18} />}
-          <span>{item.name}</span>
-        </button>
+              <span className="directory-tree-caret-placeholder" />
+            )}
+            {isSelectionMode ? (
+              <DirectoryEntryCheckbox
+                checked={isWorkspaceEntrySelected(selectedEntryPaths, item)}
+                item={item}
+                onToggleEntrySelection={onToggleEntrySelection}
+              />
+            ) : null}
+            {isRoot ? <FolderOpen size={18} /> : <Folder size={18} />}
+            <span>{item.name}</span>
+          </button>
+        </div>
       )}
       {isExpanded ? (
-        <DirectoryTreeItems
-          activeDirectoryPath={activeDirectoryPath}
-          activeFilePath={activeFilePath}
-          expandedPaths={expandedPaths}
-          directoryDropTargetPath={directoryDropTargetPath}
-          isSelectionMode={isSelectionMode}
-          items={item.children ?? []}
-          level={level + 1}
-          onCancelRename={onCancelRename}
-          onCommitRename={onCommitRename}
-          onDirectoryContextMenu={onDirectoryContextMenu}
-          onDirectoryDragLeave={onDirectoryDragLeave}
-          onDirectoryDragOver={onDirectoryDragOver}
-          onDirectoryDrop={onDirectoryDrop}
-          onFileContextMenu={onFileContextMenu}
-          onItemDragStart={onItemDragStart}
-          onOpenFile={onOpenFile}
-          onQuickLinkFile={onQuickLinkFile}
-          onRenameDraftChange={onRenameDraftChange}
-          onToggleEntrySelection={onToggleEntrySelection}
-          onToggleDirectory={onToggleDirectory}
-          renameDraft={renameDraft}
-          renamingEntryPath={renamingEntryPath}
-          selectedEntryPaths={selectedEntryPaths}
-        />
+        <>
+          {shouldShowDropPreview && directoryDragPreview ? (
+            <div
+              className={[
+                "directory-tree-file",
+                "directory-tree-drop-preview",
+                directoryDragPreview.entryType === "directory"
+                  ? "directory-tree-drop-preview-directory"
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              style={{ "--tree-depth": `${(level + 1) * 18}px` } as CSSProperties}
+              onDragOver={(event) => onDirectoryDragOver?.(event, item)}
+              onDragEnter={(event) => onDirectoryDragOver?.(event, item)}
+              onDrop={(event) => onDirectoryDrop?.(event, item)}
+            >
+              <span className="directory-tree-caret-placeholder" />
+              {directoryDragPreview.entryType === "directory" ? (
+                <Folder size={17} />
+              ) : (
+                <DocumentFileIcon filePath={directoryDragPreview.path} size={17} />
+              )}
+              <span>{directoryDragPreview.name}</span>
+            </div>
+          ) : null}
+          <DirectoryTreeItems
+            activeDirectoryPath={activeDirectoryPath}
+            activeFilePath={activeFilePath}
+            directoryDragPreview={directoryDragPreview}
+            expandedPaths={expandedPaths}
+            directoryDropTargetPath={directoryDropTargetPath}
+            isSelectionMode={isSelectionMode}
+            items={item.children ?? []}
+            level={level + 1}
+            onCancelRename={onCancelRename}
+            onCommitRename={onCommitRename}
+            onDirectoryContextMenu={onDirectoryContextMenu}
+            onDirectoryDragOver={onDirectoryDragOver}
+            onDirectoryDrop={onDirectoryDrop}
+            onFileContextMenu={onFileContextMenu}
+            onItemDragEnd={onItemDragEnd}
+            onItemDragStart={onItemDragStart}
+            onOpenFile={onOpenFile}
+            onQuickLinkFile={onQuickLinkFile}
+            onRenameDraftChange={onRenameDraftChange}
+            onToggleEntrySelection={onToggleEntrySelection}
+            onToggleDirectory={onToggleDirectory}
+            parentDirectory={item}
+            renameDraft={renameDraft}
+            renamingEntryPath={renamingEntryPath}
+            selectedEntryPaths={selectedEntryPaths}
+          />
+        </>
       ) : null}
     </div>
   );
@@ -267,6 +311,7 @@ function DirectoryEntryCheckbox({
 type DirectoryTreeFileRowProps = DirectoryTreeHandlerProps & {
   child: DirectoryTreeItem;
   level: number;
+  parentDirectory?: DirectoryTreeItem;
 };
 
 function DirectoryTreeFileRow({
@@ -276,12 +321,16 @@ function DirectoryTreeFileRow({
   isSelectionMode = false,
   onCancelRename,
   onCommitRename,
+  onDirectoryDragOver,
+  onDirectoryDrop,
   onFileContextMenu,
+  onItemDragEnd,
   onItemDragStart,
   onOpenFile,
   onQuickLinkFile,
   onRenameDraftChange,
   onToggleEntrySelection,
+  parentDirectory,
   renameDraft,
   renamingEntryPath,
   selectedEntryPaths,
@@ -308,7 +357,7 @@ function DirectoryTreeFileRow({
         <span className="directory-tree-caret-placeholder" />
         {isSelectionMode ? (
           <DirectoryEntryCheckbox
-            checked={selectedEntryPaths?.has(child.path) ?? false}
+            checked={isWorkspaceEntrySelected(selectedEntryPaths, child)}
             item={child}
             onToggleEntrySelection={onToggleEntrySelection}
           />
@@ -345,7 +394,23 @@ function DirectoryTreeFileRow({
         event.stopPropagation();
         onOpenFile(child.path);
       }}
+      onDragEnd={onItemDragEnd}
+      onDragEnter={(event) => {
+        if (parentDirectory) {
+          onDirectoryDragOver?.(event, parentDirectory);
+        }
+      }}
+      onDragOver={(event) => {
+        if (parentDirectory) {
+          onDirectoryDragOver?.(event, parentDirectory);
+        }
+      }}
       onDragStart={(event) => onItemDragStart?.(event, child)}
+      onDrop={(event) => {
+        if (parentDirectory) {
+          onDirectoryDrop?.(event, parentDirectory);
+        }
+      }}
       onKeyDown={(event) => {
         if (!isQuickDocumentLinkShortcut(event)) {
           return;
@@ -364,7 +429,7 @@ function DirectoryTreeFileRow({
       <span className="directory-tree-caret-placeholder" />
       {isSelectionMode ? (
         <DirectoryEntryCheckbox
-          checked={selectedEntryPaths?.has(child.path) ?? false}
+          checked={isWorkspaceEntrySelected(selectedEntryPaths, child)}
           item={child}
           onToggleEntrySelection={onToggleEntrySelection}
         />
@@ -378,11 +443,14 @@ function DirectoryTreeFileRow({
 type DirectoryTreeItemsProps = DirectoryTreeHandlerProps & {
   items: DirectoryTreeItem[];
   level: number;
+  parentDirectory?: DirectoryTreeItem;
 };
 
 export function DirectoryTreeItems({
   activeDirectoryPath,
   activeFilePath,
+  directoryDragPreview,
+  directoryDropTargetPath,
   expandedPaths,
   isSelectionMode = false,
   items,
@@ -390,17 +458,17 @@ export function DirectoryTreeItems({
   onCancelRename,
   onCommitRename,
   onDirectoryContextMenu,
-  onDirectoryDragLeave,
   onDirectoryDragOver,
   onDirectoryDrop,
   onFileContextMenu,
+  onItemDragEnd,
   onItemDragStart,
   onOpenFile,
   onQuickLinkFile,
   onRenameDraftChange,
   onToggleEntrySelection,
   onToggleDirectory,
-  directoryDropTargetPath,
+  parentDirectory,
   renameDraft,
   renamingEntryPath,
   selectedEntryPaths,
@@ -412,6 +480,7 @@ export function DirectoryTreeItems({
           <DirectoryTree
             activeDirectoryPath={activeDirectoryPath}
             activeFilePath={activeFilePath}
+            directoryDragPreview={directoryDragPreview}
             directoryDropTargetPath={directoryDropTargetPath}
             expandedPaths={expandedPaths}
             isSelectionMode={isSelectionMode}
@@ -421,10 +490,10 @@ export function DirectoryTreeItems({
             onCancelRename={onCancelRename}
             onCommitRename={onCommitRename}
             onDirectoryContextMenu={onDirectoryContextMenu}
-            onDirectoryDragLeave={onDirectoryDragLeave}
             onDirectoryDragOver={onDirectoryDragOver}
             onDirectoryDrop={onDirectoryDrop}
             onFileContextMenu={onFileContextMenu}
+            onItemDragEnd={onItemDragEnd}
             onItemDragStart={onItemDragStart}
             onOpenFile={onOpenFile}
             onQuickLinkFile={onQuickLinkFile}
@@ -439,6 +508,7 @@ export function DirectoryTreeItems({
           <DirectoryTreeFileRow
             activeDirectoryPath={activeDirectoryPath}
             activeFilePath={activeFilePath}
+            directoryDragPreview={directoryDragPreview}
             directoryDropTargetPath={directoryDropTargetPath}
             child={child}
             expandedPaths={expandedPaths}
@@ -448,16 +518,17 @@ export function DirectoryTreeItems({
             onCancelRename={onCancelRename}
             onCommitRename={onCommitRename}
             onDirectoryContextMenu={onDirectoryContextMenu}
-            onDirectoryDragLeave={onDirectoryDragLeave}
             onDirectoryDragOver={onDirectoryDragOver}
             onDirectoryDrop={onDirectoryDrop}
             onFileContextMenu={onFileContextMenu}
+            onItemDragEnd={onItemDragEnd}
             onItemDragStart={onItemDragStart}
             onOpenFile={onOpenFile}
             onQuickLinkFile={onQuickLinkFile}
             onRenameDraftChange={onRenameDraftChange}
             onToggleEntrySelection={onToggleEntrySelection}
             onToggleDirectory={onToggleDirectory}
+            parentDirectory={parentDirectory}
             renameDraft={renameDraft}
             renamingEntryPath={renamingEntryPath}
             selectedEntryPaths={selectedEntryPaths}

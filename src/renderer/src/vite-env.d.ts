@@ -45,6 +45,10 @@ type DesktopApi = {
     }>
   >;
   readClipboardText: () => Promise<string>;
+  writeRichHtmlToClipboard: (payload: {
+    html?: string;
+    text?: string;
+  }) => Promise<boolean>;
   writeImageFileToClipboard: (filePath: string) => Promise<boolean>;
   checkAssetReferences: (payload: {
     documentFilePath: string;
@@ -98,6 +102,7 @@ type DesktopApi = {
     title: string;
   }) => Promise<string | null>;
   getDefaultWorkspaceDirectory: () => Promise<string>;
+  getAppVersion: () => Promise<string>;
   getPathForFile: (file: File) => string;
   getZoomFactor: () => Promise<number>;
   getWindowState: () => Promise<{
@@ -151,6 +156,14 @@ type DesktopApi = {
   ) => Promise<DirectoryTreeItem>;
   readExcelDocument: (filePath: string) => Promise<string>;
   readMarkdownFile: (filePath: string) => Promise<LocalMarkdownFile>;
+  readAssetAsDataUrl: (payload: {
+    documentFilePath: string;
+    reference: string;
+  }) => Promise<{
+    dataUrl: string;
+    fileName: string;
+    mimeType: string;
+  }>;
   readTextAsset: (payload: {
     documentFilePath: string;
     reference: string;

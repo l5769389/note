@@ -153,4 +153,31 @@ describe("WorkspaceStatusBar", () => {
     expect(html).toContain("配置同步信息");
     expect(html).not.toContain("disabled=\"\"");
   });
+
+  it("renders an enabled sync status entry for the account menu", () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceStatusBar
+        activeDocument={null}
+        isSidebarHidden={false}
+        missingAssetReferences={[]}
+        saveState="idle"
+        syncStatus={{
+          configuration: {
+            enabled: true,
+            serverUrl: "https://sync.example.com",
+            tokenConfigured: true,
+            workspaceId: "default",
+          },
+          state: "synced",
+        }}
+        wordCount={0}
+        onOpenSyncMenu={() => {}}
+        onToggleSidebar={() => {}}
+      />,
+    );
+
+    expect(html).toContain("workspace-sync-status-synced");
+    expect(html).toContain("已同步");
+    expect(html).not.toContain("disabled=\"\"");
+  });
 });
