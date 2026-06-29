@@ -49,6 +49,25 @@ export type MarkdownDocument = {
   updatedAt: string;
 };
 
+export type DocumentHistoryVersionReason = "auto" | "manual" | "restore";
+
+export type DocumentHistoryVersion = {
+  byteSize: number;
+  contentHash: string;
+  createdAt: string;
+  filePath: string;
+  id: string;
+  lineCount: number;
+  preview: string;
+  reason: DocumentHistoryVersionReason;
+  title: string;
+  wordCount: number;
+};
+
+export type DocumentHistoryVersionWithContent = DocumentHistoryVersion & {
+  content: string;
+};
+
 export type WorkspaceSource =
   | {
       directoryPath: string;

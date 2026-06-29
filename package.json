@@ -1,6 +1,6 @@
 {
   "name": "notedock",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "noteDock is a Typora-style Markdown notes app and document reader.",
   "private": true,
   "type": "module",

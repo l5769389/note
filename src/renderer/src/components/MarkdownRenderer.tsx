@@ -47,6 +47,7 @@ type MarkdownRendererProps = {
   onEditReactFlow?: (code: string) => void;
   onEditUniverSheet?: (code: string) => void;
   onOpenWikiLink?: (target: string) => void;
+  onPreviewImage?: (image: { alt?: string; src: string }) => void;
 };
 
 const safeEmbeddedImagePattern =
@@ -441,26 +442,54 @@ function PreRenderer({
 
 function MarkdownImageRenderer({
   filePath,
+  onPreviewImage,
   src,
   style,
   title,
   ...props
-}: ComponentPropsWithoutRef<"img"> & { filePath?: string }) {
+}: ComponentPropsWithoutRef<"img"> & Pick<MarkdownRendererProps, "filePath" | "onPreviewImage">) {
   const meta = parseImageMeta(title);
+  const renderedSrc = getRenderedResourceUrl(src, filePath) || "";
   const imageStyle = {
     ...style,
     ...(meta.width ? { width: `${meta.width}px` } : {}),
   };
 
   return (
-    <span className={`markdown-image-frame markdown-image-${meta.align}`}>
+    <span
+      className={[
+        "markdown-image-frame",
+        `markdown-image-${meta.align}`,
+        meta.hasExplicitAlign
+          ? "markdown-image-explicit-align"
+          : "markdown-image-inline",
+      ].join(" ")}
+    >
       <img
         {...props}
         decoding={props.decoding ?? "async"}
         loading={props.loading ?? "lazy"}
-        src={getRenderedResourceUrl(src, filePath)}
+        src={renderedSrc || undefined}
         style={imageStyle}
         title={meta.titleText || undefined}
+        onDoubleClick={(event) => {
+          props.onDoubleClick?.(event);
+
+          const previewSource = event.currentTarget.currentSrc || renderedSrc;
+
+          if (event.defaultPrevented || !onPreviewImage || !previewSource) {
+            return;
+          }
+
+          event.preventDefault();
+          onPreviewImage({
+            alt:
+              typeof props.alt === "string" && props.alt.trim()
+                ? props.alt
+                : "图片",
+            src: previewSource,
+          });
+        }}
       />
     </span>
   );
@@ -623,6 +652,7 @@ export function MarkdownRenderer({
   onEditReactFlow,
   onEditUniverSheet,
   onOpenWikiLink,
+  onPreviewImage,
 }: MarkdownRendererProps) {
   return (
     <ReactMarkdown
@@ -639,7 +669,12 @@ export function MarkdownRenderer({
         code: CodeRenderer,
         li: MarkdownListItemRenderer,
         img: ({ src, ...props }: ComponentPropsWithoutRef<"img">) => (
-          <MarkdownImageRenderer {...props} filePath={filePath} src={src} />
+          <MarkdownImageRenderer
+            {...props}
+            filePath={filePath}
+            onPreviewImage={onPreviewImage}
+            src={src}
+          />
         ),
         source: ({ src, ...props }: ComponentPropsWithoutRef<"source">) => (
           <MarkdownSourceRenderer {...props} filePath={filePath} src={src} />
@@ -671,6 +706,7 @@ export function InlineMarkdownRenderer({
   children,
   filePath,
   onOpenWikiLink,
+  onPreviewImage,
 }: MarkdownRendererProps) {
   return (
     <ReactMarkdown
@@ -684,7 +720,12 @@ export function InlineMarkdownRenderer({
           />
         ),
         img: ({ src, ...props }: ComponentPropsWithoutRef<"img">) => (
-          <MarkdownImageRenderer {...props} filePath={filePath} src={src} />
+          <MarkdownImageRenderer
+            {...props}
+            filePath={filePath}
+            onPreviewImage={onPreviewImage}
+            src={src}
+          />
         ),
         source: ({ src, ...props }: ComponentPropsWithoutRef<"source">) => (
           <MarkdownSourceRenderer {...props} filePath={filePath} src={src} />

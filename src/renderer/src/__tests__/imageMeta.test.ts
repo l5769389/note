@@ -13,16 +13,19 @@ describe("image metadata helpers", () => {
   it("parses image titles, width, and alignment metadata", () => {
     expect(parseImageMeta("Cover image width=2048px align=Center")).toEqual({
       align: "center",
+      hasExplicitAlign: true,
       titleText: "Cover image",
       width: 900,
     });
     expect(parseImageMeta("width=40 align=right")).toEqual({
       align: "right",
+      hasExplicitAlign: true,
       titleText: "",
       width: 120,
     });
     expect(parseImageMeta()).toEqual({
       align: "left",
+      hasExplicitAlign: false,
       titleText: "",
       width: undefined,
     });
@@ -33,13 +36,27 @@ describe("image metadata helpers", () => {
     expect(
       serializeImageMeta({
         align: "right",
+        hasExplicitAlign: true,
         titleText: "Logo",
         width: 1200,
       }),
     ).toBe("Logo width=900 align=right");
-    expect(serializeImageMeta({ align: "left", titleText: "", width: undefined })).toBe(
-      "align=left",
-    );
+    expect(
+      serializeImageMeta({
+        align: "left",
+        hasExplicitAlign: true,
+        titleText: "",
+        width: undefined,
+      }),
+    ).toBe("align=left");
+    expect(
+      serializeImageMeta({
+        align: "left",
+        hasExplicitAlign: false,
+        titleText: "",
+        width: undefined,
+      }),
+    ).toBe("");
   });
 
   it("patches image width and alignment without losing the human title", () => {
@@ -48,6 +65,12 @@ describe("image metadata helpers", () => {
     );
     expect(patchImageMetaTitle("Diagram width=320 align=right", { width: undefined })).toBe(
       "Diagram align=right",
+    );
+    expect(patchImageMetaTitle("Diagram width=320", { width: 400 })).toBe(
+      "Diagram width=400",
+    );
+    expect(patchImageMetaTitle("Diagram width=320", { align: "center" })).toBe(
+      "Diagram width=320 align=center",
     );
   });
 

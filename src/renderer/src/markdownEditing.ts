@@ -217,10 +217,14 @@ export function patchMarkdownImageTitle(
   patch: { align?: ImageAlignment; resetWidth?: boolean },
 ) {
   const meta = parseImageMeta(title);
+  const hasExplicitAlign = patch.align !== undefined
+    ? true
+    : meta.hasExplicitAlign;
 
   return serializeImageMeta({
     ...meta,
     align: patch.align ?? meta.align,
+    hasExplicitAlign,
     width: patch.resetWidth ? undefined : meta.width,
   });
 }

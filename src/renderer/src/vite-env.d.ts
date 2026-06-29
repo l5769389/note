@@ -2,6 +2,8 @@
 
 import type {
   DirectoryTreeItem,
+  DocumentHistoryVersion,
+  DocumentHistoryVersionWithContent,
   LocalMarkdownFile,
   LocalWorkspaceDirectory,
 } from "./types";
@@ -121,6 +123,10 @@ type DesktopApi = {
       })
     | null
   >;
+  exportCloudEntries: (payload?: { entryPaths?: string[] }) => Promise<{
+    exportedCount: number;
+    targetDirectoryPath: string;
+  } | null>;
   listMarkdownFiles: (directoryPath: string) => Promise<LocalMarkdownFile[]>;
   newWindow: () => Promise<void>;
   onWorkspaceFileChanged: (
@@ -156,6 +162,20 @@ type DesktopApi = {
   ) => Promise<DirectoryTreeItem>;
   readExcelDocument: (filePath: string) => Promise<string>;
   readMarkdownFile: (filePath: string) => Promise<LocalMarkdownFile>;
+  listDocumentHistory: (filePath: string) => Promise<DocumentHistoryVersion[]>;
+  readDocumentHistoryVersion: (payload: {
+    filePath: string;
+    versionId: string;
+  }) => Promise<DocumentHistoryVersionWithContent | null>;
+  createDocumentHistoryVersion: (payload: {
+    content: string;
+    filePath: string;
+    reason?: "auto" | "manual" | "restore";
+  }) => Promise<DocumentHistoryVersion | null>;
+  restoreDocumentHistoryVersion: (payload: {
+    filePath: string;
+    versionId: string;
+  }) => Promise<LocalMarkdownFile>;
   readAssetAsDataUrl: (payload: {
     documentFilePath: string;
     reference: string;

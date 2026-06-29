@@ -89,6 +89,7 @@ export function createExcalidrawImageTitle(
   return serializeImageMeta({
     ...meta,
     align: previousTitle ? meta.align : "center",
+    hasExplicitAlign: previousTitle ? meta.hasExplicitAlign : true,
     titleText,
     width: meta.width ?? defaultExcalidrawPreviewWidth,
   });

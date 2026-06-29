@@ -115,6 +115,18 @@ describe("markdown editing helpers", () => {
     ).toBeNull();
   });
 
+  it("resets image width without adding default alignment metadata", () => {
+    const content = '![logo](logo.png "Logo width=320")';
+
+    expect(
+      createMarkdownImageEdit(selectedLineRange(content, 3), { resetWidth: true }),
+    ).toEqual({
+      content: '![logo](logo.png "Logo")',
+      selectionEnd: 24,
+      selectionStart: 24,
+    });
+  });
+
   it("moves selected lines up and down", () => {
     expect(
       createMoveSelectedLinesEdit(getSelectedLineRange("a\nb\nc", 2, 2), "up"),

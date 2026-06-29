@@ -165,6 +165,17 @@ contextBridge.exposeInMainWorld("desktop", {
   ) => ipcRenderer.invoke("workspace:read-directory-tree", directoryPath, options),
   readMarkdownFile: (filePath: string) =>
     ipcRenderer.invoke("workspace:read-markdown-file", filePath),
+  listDocumentHistory: (filePath: string) =>
+    ipcRenderer.invoke("workspace:list-document-history", filePath),
+  readDocumentHistoryVersion: (payload: { filePath: string; versionId: string }) =>
+    ipcRenderer.invoke("workspace:read-document-history-version", payload),
+  createDocumentHistoryVersion: (payload: {
+    content: string;
+    filePath: string;
+    reason?: "auto" | "manual" | "restore";
+  }) => ipcRenderer.invoke("workspace:create-document-history-version", payload),
+  restoreDocumentHistoryVersion: (payload: { filePath: string; versionId: string }) =>
+    ipcRenderer.invoke("workspace:restore-document-history-version", payload),
   readAssetAsDataUrl: (payload: { documentFilePath: string; reference: string }) =>
     ipcRenderer.invoke("workspace:read-asset-data-url", payload),
   readTextAsset: (payload: { documentFilePath: string; reference: string }) =>
@@ -217,6 +228,8 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("sync:open-cloud-workspace"),
   importLocalDirectoryToCloud: (directoryPath?: string) =>
     ipcRenderer.invoke("sync:import-local-directory-to-cloud", directoryPath),
+  exportCloudEntries: (payload?: { entryPaths?: string[] }) =>
+    ipcRenderer.invoke("sync:export-cloud-entries", payload),
   syncNow: () =>
     ipcRenderer.invoke("sync:now"),
   watchWorkspaceDirectory: (directoryPath: string) =>

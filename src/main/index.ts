@@ -32,6 +32,14 @@ import {
   createWorkspaceRenamedEntryName,
   splitWorkspaceEntryNameForRename,
 } from "../shared/workspaceRename";
+import {
+  createDocumentHistoryVersion,
+  listDocumentHistoryVersions,
+  maybeCreateDocumentHistoryVersion,
+  readCurrentDocumentContent,
+  readDocumentHistoryVersion,
+  type DocumentHistoryVersionReason,
+} from "./documentHistory";
 
 const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 const isE2E = process.env.NOTEDOCK_E2E === "1";
@@ -49,6 +57,7 @@ const defaultSyncServerUrl =
 const appName = "noteDock";
 const appUserModelId = "com.local.notedock";
 const appStateFileName = "notedock-state-v1.json";
+const documentHistoryDirectoryName = "document-history-v1";
 const localPreviewProtocol = "typora-local";
 const windowZoomMax = 2;
 const windowZoomMin = 0.5;
@@ -119,6 +128,17 @@ const workspaceAssetsDirectoryName = ".assets";
 const localSchemePattern = /^[a-z][a-z\d+.-]*:/i;
 
 type DocumentFileType = "markdown" | "html" | "pdf" | "word" | "excel" | "sheet" | "drawing";
+
+type CreateDocumentHistoryVersionPayload = {
+  content: string;
+  filePath: string;
+  reason?: DocumentHistoryVersionReason;
+};
+
+type ReadDocumentHistoryVersionPayload = {
+  filePath: string;
+  versionId: string;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -214,6 +234,15 @@ type CopyWorkspaceAssetFromFilePayload = {
   documentFilePath: string;
   fileName: string;
   sourceFilePath: string;
+};
+
+type ExportCloudEntriesPayload = {
+  entryPaths?: string[];
+};
+
+type ExportCloudEntriesResult = {
+  exportedCount: number;
+  targetDirectoryPath: string;
 };
 
 type ClipboardMediaFile = {
@@ -1044,6 +1073,27 @@ async function readMarkdownFile(filePath: string) {
   };
 }
 
+function getDocumentHistoryRootPath() {
+  return join(app.getPath("userData"), documentHistoryDirectoryName);
+}
+
+async function writeDocumentFileWithHistory(filePath: string, content: string) {
+  const documentType = getDocumentFileType(filePath);
+
+  if (documentType === "markdown") {
+    const previousContent = await readCurrentDocumentContent(filePath);
+
+    await maybeCreateDocumentHistoryVersion({
+      filePath,
+      historyRootPath: getDocumentHistoryRootPath(),
+      nextContent: content,
+      previousContent,
+    });
+  }
+
+  await writeFile(filePath, content, "utf-8");
+}
+
 async function pickWorkspaceDirectory() {
   const options: OpenDialogOptions = {
     properties: ["openDirectory", "createDirectory"],
@@ -1116,6 +1166,247 @@ async function readDirectoryTree(
     path: directoryPath,
     type: "directory",
   };
+}
+
+function isPathInsideRoot(targetPath: string, rootPath: string) {
+  const relativePath = relative(resolve(rootPath), resolve(targetPath));
+
+  return (
+    !relativePath ||
+    (!relativePath.startsWith("..") && !isAbsolute(relativePath))
+  );
+}
+
+function getRelativePathInsideRoot(rootPath: string, targetPath: string) {
+  const relativePath = relative(resolve(rootPath), resolve(targetPath));
+
+  if (
+    relativePath.startsWith("..") ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error("Selected cloud file is outside the cloud workspace.");
+  }
+
+  return relativePath.replace(/\\/g, "/");
+}
+
+function resolveExportTargetPath(targetDirectoryPath: string, relativePath: string) {
+  return relativePath
+    ? resolve(targetDirectoryPath, ...relativePath.split("/").filter(Boolean))
+    : resolve(targetDirectoryPath);
+}
+
+async function copyCloudExportFile({
+  copiedTargetPaths,
+  sourcePath,
+  sourceRootPath,
+  targetDirectoryPath,
+}: {
+  copiedTargetPaths: Set<string>;
+  sourcePath: string;
+  sourceRootPath: string;
+  targetDirectoryPath: string;
+}) {
+  const relativePath = getRelativePathInsideRoot(sourceRootPath, sourcePath);
+  const targetPath = resolveExportTargetPath(targetDirectoryPath, relativePath);
+  const targetKey = resolve(targetPath).toLowerCase();
+
+  if (copiedTargetPaths.has(targetKey)) {
+    return 0;
+  }
+
+  await mkdir(dirname(targetPath), { recursive: true });
+  await copyFile(sourcePath, targetPath);
+  copiedTargetPaths.add(targetKey);
+  return 1;
+}
+
+async function copyCloudExportAssetReferences({
+  copiedTargetPaths,
+  sourcePath,
+  sourceRootPath,
+  targetDirectoryPath,
+}: {
+  copiedTargetPaths: Set<string>;
+  sourcePath: string;
+  sourceRootPath: string;
+  targetDirectoryPath: string;
+}) {
+  if (!isTextDocumentWithWorkspaceAssets(sourcePath)) {
+    return 0;
+  }
+
+  let content = "";
+
+  try {
+    content = await readFile(sourcePath, "utf-8");
+  } catch {
+    return 0;
+  }
+
+  let copiedCount = 0;
+
+  for (const reference of collectWorkspaceAssetReferences(content)) {
+    try {
+      const assetPath = resolveWorkspaceReference(sourcePath, reference);
+
+      if (!isPathInsideRoot(assetPath, sourceRootPath)) {
+        continue;
+      }
+
+      const assetStats = await stat(assetPath);
+
+      if (!assetStats.isFile()) {
+        continue;
+      }
+
+      copiedCount += await copyCloudExportFile({
+        copiedTargetPaths,
+        sourcePath: assetPath,
+        sourceRootPath,
+        targetDirectoryPath,
+      });
+    } catch {
+      // Keep export best-effort for broken asset references.
+    }
+  }
+
+  return copiedCount;
+}
+
+async function copyCloudExportEntry({
+  copiedTargetPaths,
+  sourcePath,
+  sourceRootPath,
+  targetDirectoryPath,
+}: {
+  copiedTargetPaths: Set<string>;
+  sourcePath: string;
+  sourceRootPath: string;
+  targetDirectoryPath: string;
+}): Promise<number> {
+  const sourceStats = await stat(sourcePath);
+
+  if (sourceStats.isFile()) {
+    const copiedDocumentCount = await copyCloudExportFile({
+      copiedTargetPaths,
+      sourcePath,
+      sourceRootPath,
+      targetDirectoryPath,
+    });
+    const copiedAssetCount = await copyCloudExportAssetReferences({
+      copiedTargetPaths,
+      sourcePath,
+      sourceRootPath,
+      targetDirectoryPath,
+    });
+
+    return copiedDocumentCount + copiedAssetCount;
+  }
+
+  if (!sourceStats.isDirectory()) {
+    return 0;
+  }
+
+  let copiedCount = 0;
+
+  for (const entry of await readSafeDirectoryEntries(sourcePath)) {
+    if (ignoredDirectoryNames.has(entry.name)) {
+      continue;
+    }
+
+    copiedCount += await copyCloudExportEntry({
+      copiedTargetPaths,
+      sourcePath: join(sourcePath, entry.name),
+      sourceRootPath,
+      targetDirectoryPath,
+    });
+  }
+
+  return copiedCount;
+}
+
+async function getCloudExportSourcePaths(
+  sourceRootPath: string,
+  entryPaths?: string[],
+) {
+  const hasExplicitEntryPaths = Array.isArray(entryPaths);
+  const requestedPaths = (entryPaths ?? [])
+    .filter((entryPath): entryPath is string => typeof entryPath === "string")
+    .map((entryPath) => resolve(entryPath))
+    .filter((entryPath) => isPathInsideRoot(entryPath, sourceRootPath));
+
+  if (!hasExplicitEntryPaths) {
+    return [resolve(sourceRootPath)];
+  }
+
+  if (!requestedPaths.length) {
+    return [];
+  }
+
+  const uniquePaths = Array.from(new Set(requestedPaths));
+  const existingPaths: string[] = [];
+
+  for (const entryPath of uniquePaths) {
+    if (await pathExists(entryPath)) {
+      existingPaths.push(entryPath);
+    }
+  }
+
+  const sortedPaths = existingPaths.sort(
+    (first, second) => first.length - second.length,
+  );
+  const topLevelPaths: string[] = [];
+
+  for (const entryPath of sortedPaths) {
+    if (
+      topLevelPaths.some(
+        (parentPath) =>
+          resolve(parentPath) !== resolve(entryPath) &&
+          isPathInsideRoot(entryPath, parentPath),
+      )
+    ) {
+      continue;
+    }
+
+    topLevelPaths.push(entryPath);
+  }
+
+  return topLevelPaths;
+}
+
+async function exportCloudEntriesFromCache({
+  entryPaths,
+  sourceRootPath,
+  targetDirectoryPath,
+}: {
+  entryPaths?: string[];
+  sourceRootPath: string;
+  targetDirectoryPath: string;
+}) {
+  if (isPathInsideRoot(targetDirectoryPath, sourceRootPath)) {
+    throw new Error("不能导出到云端缓存目录内部。");
+  }
+
+  await mkdir(targetDirectoryPath, { recursive: true });
+
+  const sourcePaths = await getCloudExportSourcePaths(sourceRootPath, entryPaths);
+  const copiedTargetPaths = new Set<string>();
+  let exportedCount = 0;
+
+  for (const sourcePath of sourcePaths) {
+    exportedCount += await copyCloudExportEntry({
+      copiedTargetPaths,
+      sourcePath,
+      sourceRootPath,
+      targetDirectoryPath,
+    });
+  }
+
+  return {
+    exportedCount,
+    targetDirectoryPath,
+  } satisfies ExportCloudEntriesResult;
 }
 
 async function listMarkdownFiles(directoryPath: string, depth = 0): Promise<Awaited<ReturnType<typeof readMarkdownFile>>[]> {
@@ -1623,6 +1914,33 @@ function registerSyncIpc() {
   ipcMain.handle("sync:now", async () => {
     return syncService?.syncNow();
   });
+
+  ipcMain.handle(
+    "sync:export-cloud-entries",
+    async (_, payload?: ExportCloudEntriesPayload) => {
+      if (!syncService) {
+        throw new Error("云同步服务尚未初始化。");
+      }
+
+      const targetDirectoryPath = await pickWorkspaceDirectory();
+
+      if (!targetDirectoryPath) {
+        return null;
+      }
+
+      const syncStatus = await syncService.syncNow();
+
+      if (syncStatus.state === "failed") {
+        throw new Error(syncStatus.message || "同步云端文件失败，无法导出。");
+      }
+
+      return exportCloudEntriesFromCache({
+        entryPaths: payload?.entryPaths,
+        sourceRootPath: syncService.getCloudWorkspacePath(),
+        targetDirectoryPath,
+      });
+    },
+  );
 }
 
 if (process.platform === "win32") {
@@ -1773,7 +2091,7 @@ function registerFileIpc() {
       return null;
     }
 
-    await writeFile(result.filePath, payload.content, "utf-8");
+    await writeDocumentFileWithHistory(result.filePath, payload.content);
     queueSync();
     return readMarkdownFile(result.filePath);
   });
@@ -1814,7 +2132,7 @@ function registerFileIpc() {
       await mkdir(directoryPath, { recursive: true });
 
       const filePath = await createUniqueDocumentPath(directoryPath, title, extension);
-      await writeFile(filePath, payload.content, "utf-8");
+      await writeDocumentFileWithHistory(filePath, payload.content);
       queueSync();
 
       return readMarkdownFile(filePath);
@@ -2331,7 +2649,7 @@ function registerFileIpc() {
   );
 
   ipcMain.handle("workspace:write-markdown-file", async (_, payload: { content: string; filePath: string }) => {
-    await writeFile(payload.filePath, payload.content, "utf-8");
+    await writeDocumentFileWithHistory(payload.filePath, payload.content);
     queueSync();
     return readMarkdownFile(payload.filePath);
   });
@@ -2339,6 +2657,67 @@ function registerFileIpc() {
   ipcMain.handle("workspace:read-markdown-file", async (_, filePath: string) => {
     return readMarkdownFile(filePath);
   });
+
+  ipcMain.handle(
+    "workspace:list-document-history",
+    async (_, filePath: string) =>
+      listDocumentHistoryVersions({
+        filePath,
+        historyRootPath: getDocumentHistoryRootPath(),
+      }),
+  );
+
+  ipcMain.handle(
+    "workspace:read-document-history-version",
+    async (_, payload: ReadDocumentHistoryVersionPayload) =>
+      readDocumentHistoryVersion({
+        filePath: payload.filePath,
+        historyRootPath: getDocumentHistoryRootPath(),
+        versionId: payload.versionId,
+      }),
+  );
+
+  ipcMain.handle(
+    "workspace:create-document-history-version",
+    async (_, payload: CreateDocumentHistoryVersionPayload) =>
+      createDocumentHistoryVersion({
+        content: payload.content,
+        filePath: payload.filePath,
+        historyRootPath: getDocumentHistoryRootPath(),
+        reason: payload.reason ?? "manual",
+      }),
+  );
+
+  ipcMain.handle(
+    "workspace:restore-document-history-version",
+    async (_, payload: ReadDocumentHistoryVersionPayload) => {
+      const version = await readDocumentHistoryVersion({
+        filePath: payload.filePath,
+        historyRootPath: getDocumentHistoryRootPath(),
+        versionId: payload.versionId,
+      });
+
+      if (!version) {
+        throw new Error("Document history version not found.");
+      }
+
+      const currentContent = await readCurrentDocumentContent(payload.filePath);
+
+      if (currentContent !== version.content && currentContent.trim()) {
+        await createDocumentHistoryVersion({
+          content: currentContent,
+          filePath: payload.filePath,
+          historyRootPath: getDocumentHistoryRootPath(),
+          reason: "restore",
+        });
+      }
+
+      await writeFile(payload.filePath, version.content, "utf-8");
+      queueSync();
+
+      return readMarkdownFile(payload.filePath);
+    },
+  );
 
   ipcMain.handle("workspace:read-word-document", async (_, filePath: string) => {
     if (!wordExtensions.has(extname(filePath).toLowerCase())) {
@@ -2603,7 +2982,9 @@ if (!singleInstanceLock) {
   app.quit();
 } else {
   if (!isE2E && !allowMultipleInstances) {
-    app.on("second-instance", requestInspirationNote);
+    app.on("second-instance", () => {
+      showMainWindow();
+    });
   }
 
   app.whenReady().then(async () => {

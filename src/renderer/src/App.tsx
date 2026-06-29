@@ -25,6 +25,8 @@ import {
   ListChecks,
   ListTree,
   LogOut,
+  Maximize2,
+  Minus,
   PencilLine,
   Plus,
   RefreshCw,
@@ -252,6 +254,8 @@ import { fileToDataUrl } from "./services/imageUpload";
 import { createDocument, renameFromMarkdown } from "./storage";
 import type {
   DirectoryTreeItem,
+  DocumentHistoryVersion,
+  DocumentHistoryVersionWithContent,
   DocumentLinkReference,
   DocumentMetadata,
   DrawingAsset,
@@ -313,7 +317,10 @@ import {
   getPathLabel,
   normalizeFilePathKey,
 } from "./workspaceDisplay";
-import { toggleWorkspaceEntrySelection } from "./workspaceSelection";
+import {
+  collectWorkspaceEntryPaths,
+  toggleWorkspaceEntrySelection,
+} from "./workspaceSelection";
 import {
   splitWorkspaceEntryNameForRename,
   validateWorkspaceRenameBaseName,
@@ -436,6 +443,12 @@ const DocumentInspectorSidebar = lazy(() =>
   })),
 );
 
+const DocumentHistoryPanel = lazy(() =>
+  import("./components/DocumentHistoryPanel").then((module) => ({
+    default: module.DocumentHistoryPanel,
+  })),
+);
+
 const WorkspaceSearchPanel = lazy(() =>
   import("./components/WorkspaceSearchPanel").then((module) => ({
     default: module.WorkspaceSearchPanel,
@@ -544,6 +557,7 @@ type EditorContextMenuInfo = {
   isTaskListItem: boolean;
   isVideo: boolean;
   linkHref?: string;
+  mediaAlt?: string;
   mediaKind?: "image" | "video";
   mediaSource?: string;
   taskChecked?: boolean;
@@ -997,9 +1011,23 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeSettingsSection, setActiveSettingsSection] =
     useState<SettingsSectionId>("editor");
+  const [documentImagePreview, setDocumentImagePreview] = useState<{
+    alt: string;
+    src: string;
+  } | null>(null);
+  const [documentImagePreviewZoom, setDocumentImagePreviewZoom] = useState(1);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isDocumentInspectorOpen, setIsDocumentInspectorOpen] = useState(false);
+  const [documentHistoryVersions, setDocumentHistoryVersions] = useState<
+    DocumentHistoryVersion[]
+  >([]);
+  const [selectedDocumentHistoryVersion, setSelectedDocumentHistoryVersion] =
+    useState<DocumentHistoryVersionWithContent | null>(null);
+  const [isDocumentHistoryLoading, setIsDocumentHistoryLoading] =
+    useState(false);
+  const [isDocumentHistoryRestoring, setIsDocumentHistoryRestoring] =
+    useState(false);
   const [isKnowledgeGraphOpen, setIsKnowledgeGraphOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<AppContextMenuState | null>(null);
   const [findPanelMode, setFindPanelMode] = useState<FindPanelMode>("find");
@@ -1032,6 +1060,7 @@ export function App() {
   const [cloudSidebarWorkspace, setCloudSidebarWorkspace] =
     useState<CloudSidebarWorkspace | null>(null);
   const [isCloudImporting, setIsCloudImporting] = useState(false);
+  const [isCloudExporting, setIsCloudExporting] = useState(false);
   const [isCloudDirectoryCreating, setIsCloudDirectoryCreating] = useState(false);
   const [isCloudMultiSelectEnabled, setIsCloudMultiSelectEnabled] =
     useState(false);
@@ -1074,6 +1103,26 @@ export function App() {
     () => collectDirectoryEntryMap(cloudSidebarWorkspace?.tree),
     [cloudSidebarWorkspace?.tree],
   );
+  const cloudSelectableEntryPaths = useMemo(
+    () =>
+      (cloudSidebarWorkspace?.tree?.children ?? []).flatMap((item) =>
+        collectWorkspaceEntryPaths(item),
+      ),
+    [cloudSidebarWorkspace?.tree],
+  );
+  const areAllCloudEntriesSelected = useMemo(() => {
+    if (!cloudSelectableEntryPaths.length) {
+      return false;
+    }
+
+    const selectedKeys = new Set(
+      Array.from(selectedCloudEntryPaths, (path) => normalizeFilePathKey(path)),
+    );
+
+    return cloudSelectableEntryPaths.every((path) =>
+      selectedKeys.has(normalizeFilePathKey(path)),
+    );
+  }, [cloudSelectableEntryPaths, selectedCloudEntryPaths]);
   const activeSidebarDragPayloadRef = useRef<SidebarDragPayload | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [inspectorWidth, setInspectorWidth] = useState(defaultInspectorWidth);
@@ -1845,6 +1894,151 @@ export function App() {
     });
   }
 
+  async function refreshDocumentHistory(filePath = activeDocument?.filePath) {
+    if (
+      !filePath ||
+      !activeDocument ||
+      activeDocument.filePath !== filePath ||
+      !isMarkdownDocument(activeDocument) ||
+      !window.desktop?.listDocumentHistory
+    ) {
+      setDocumentHistoryVersions([]);
+      setSelectedDocumentHistoryVersion(null);
+      return;
+    }
+
+    setIsDocumentHistoryLoading(true);
+
+    try {
+      const versions = await window.desktop.listDocumentHistory(filePath);
+
+      setDocumentHistoryVersions(versions);
+      setSelectedDocumentHistoryVersion((current) => {
+        if (!current) {
+          return null;
+        }
+
+        return versions.some((version) => version.id === current.id) ? current : null;
+      });
+    } catch {
+      setDocumentHistoryVersions([]);
+      setSelectedDocumentHistoryVersion(null);
+    } finally {
+      setIsDocumentHistoryLoading(false);
+    }
+  }
+
+  async function selectDocumentHistoryVersion(version: DocumentHistoryVersion) {
+    if (!activeDocument?.filePath || !window.desktop?.readDocumentHistoryVersion) {
+      return;
+    }
+
+    setIsDocumentHistoryLoading(true);
+
+    try {
+      const versionWithContent = await window.desktop.readDocumentHistoryVersion({
+        filePath: activeDocument.filePath,
+        versionId: version.id,
+      });
+
+      if (versionWithContent) {
+        setSelectedDocumentHistoryVersion(versionWithContent);
+      }
+    } finally {
+      setIsDocumentHistoryLoading(false);
+    }
+  }
+
+  async function createActiveDocumentHistorySnapshot() {
+    if (
+      !activeDocument?.filePath ||
+      !isMarkdownDocument(activeDocument) ||
+      !window.desktop?.createDocumentHistoryVersion
+    ) {
+      return;
+    }
+
+    setIsDocumentHistoryLoading(true);
+
+    try {
+      const version = await window.desktop.createDocumentHistoryVersion({
+        content: activeDocument.content,
+        filePath: activeDocument.filePath,
+        reason: "manual",
+      });
+
+      await refreshDocumentHistory(activeDocument.filePath);
+
+      if (version) {
+        void selectDocumentHistoryVersion(version);
+      }
+    } catch {
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "当前版本记录失败，请确认文档仍然可访问。",
+        title: "记录历史版本失败",
+        tone: "danger",
+      });
+    } finally {
+      setIsDocumentHistoryLoading(false);
+    }
+  }
+
+  async function restoreActiveDocumentHistoryVersion(
+    version: DocumentHistoryVersionWithContent,
+  ) {
+    if (
+      !activeDocument?.filePath ||
+      !window.desktop?.restoreDocumentHistoryVersion
+    ) {
+      return;
+    }
+
+    const confirmed = await showAppConfirm({
+      cancelLabel: "取消",
+      confirmLabel: "恢复版本",
+      description: "当前内容会先保存为一条“恢复前”历史记录，然后替换为所选版本。",
+      title: "恢复到这个历史版本？",
+      tone: "warning",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDocumentHistoryRestoring(true);
+
+    try {
+      const savedFile = await window.desktop.restoreDocumentHistoryVersion({
+        filePath: activeDocument.filePath,
+        versionId: version.id,
+      });
+      const restoredDocument = createDocumentFromSavedFile(activeDocument, savedFile);
+
+      rememberInternalFileWrite(savedFile.filePath, savedFile.content);
+      acknowledgeSavedFileContent(savedFile.filePath, savedFile.content);
+      setWorkspace((current) =>
+        applySavedDocumentToWorkspace(current, restoredDocument),
+      );
+      setDocumentReloadTokens((current) => ({
+        ...current,
+        [activeDocument.id]: (current[activeDocument.id] ?? 0) + 1,
+      }));
+      setSaveState("saved");
+      await loadDirectoryTree(getDirectoryPath(savedFile.filePath));
+      await refreshDocumentHistory(savedFile.filePath);
+    } catch {
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "恢复历史版本失败，请确认文档仍然可写。",
+        title: "恢复失败",
+        tone: "danger",
+      });
+    } finally {
+      setIsDocumentHistoryRestoring(false);
+    }
+  }
+
   function openSettings(section: SettingsSectionId = "editor") {
     setActiveSettingsSection(section);
     setIsSettingsOpen(true);
@@ -2284,6 +2478,29 @@ export function App() {
     workspace,
     writeMarkdownFile: window.desktop?.writeMarkdownFile,
   });
+
+  useEffect(() => {
+    setSelectedDocumentHistoryVersion(null);
+
+    if (!activeDocument?.filePath || !isMarkdownDocument(activeDocument)) {
+      setDocumentHistoryVersions([]);
+      return;
+    }
+
+    void refreshDocumentHistory(activeDocument.filePath);
+  }, [activeDocument?.filePath, activeDocument?.documentType]);
+
+  useEffect(() => {
+    if (
+      saveState !== "saved" ||
+      !activeDocument?.filePath ||
+      !isMarkdownDocument(activeDocument)
+    ) {
+      return;
+    }
+
+    void refreshDocumentHistory(activeDocument.filePath);
+  }, [saveState, activeDocument?.filePath, activeDocument?.documentType]);
 
   function setActiveDocument(documentId: string) {
     setIsHomeOpen(false);
@@ -3256,32 +3473,43 @@ export function App() {
     }
   }
 
-  async function exportCloudEntryToLocal(entryPath: string) {
-    if (
-      !window.desktop?.selectWorkspaceDirectory ||
-      !window.desktop?.copyEntryToDirectory
-    ) {
+  function toggleSelectAllCloudEntries() {
+    setIsCloudMultiSelectEnabled(true);
+    setSelectedCloudEntryPaths(() =>
+      areAllCloudEntriesSelected
+        ? new Set()
+        : new Set(cloudSelectableEntryPaths),
+    );
+  }
+
+  async function exportCloudEntriesToLocal(entryPaths?: string[]) {
+    if (!window.desktop?.exportCloudEntries) {
       await showAppAlert({
         confirmLabel: "知道了",
-        description: "当前运行环境不支持选择本地目录。",
+        description: "当前运行环境不支持导出云端文档。",
         title: "无法导出",
         tone: "warning",
       });
       return;
     }
 
-    const targetDirectoryPath = await window.desktop.selectWorkspaceDirectory();
-
-    if (!targetDirectoryPath) {
-      return;
-    }
+    setIsCloudExporting(true);
 
     try {
-      const result = await window.desktop.copyEntryToDirectory({
-        sourcePath: entryPath,
-        targetDirectoryPath,
-        queueSync: false,
+      const result = await window.desktop.exportCloudEntries({
+        entryPaths:
+          entryPaths && entryPaths.length > 0
+            ? entryPaths
+            : selectedCloudEntryPaths.size > 0
+              ? Array.from(selectedCloudEntryPaths)
+              : undefined,
       });
+
+      if (!result) {
+        return;
+      }
+
+      await refreshCloudSidebarWorkspaceFromCache();
 
       if (workspace.workspacePath && !isCloudWorkspace) {
         await loadDirectoryTree(workspace.workspacePath);
@@ -3289,9 +3517,9 @@ export function App() {
 
       await showAppAlert({
         confirmLabel: "完成",
-        description: `已导出 ${result.copiedCount} 个文件。`,
-        detail: result.targetPath,
-        title: "已导出到本地",
+        description: `已导出 ${result.exportedCount} 个文件。`,
+        detail: result.targetDirectoryPath,
+        title: "云端文档已导出",
         tone: "info",
       });
     } catch (error) {
@@ -3299,11 +3527,16 @@ export function App() {
         confirmLabel: "知道了",
         description:
           error instanceof Error ? error.message : "导出云端文档失败。",
-        detail: getPathLabel(entryPath),
         title: "导出失败",
         tone: "danger",
       });
+    } finally {
+      setIsCloudExporting(false);
     }
+  }
+
+  async function exportCloudEntryToLocal(entryPath: string) {
+    await exportCloudEntriesToLocal([entryPath]);
   }
 
   async function openFileFromTree(filePath: string) {
@@ -4686,6 +4919,39 @@ export function App() {
     return element.currentSrc || element.getAttribute("src") || undefined;
   }
 
+  function getImageAltFromElement(element?: HTMLImageElement | null) {
+    return (
+      element?.alt?.trim() ||
+      element?.getAttribute("aria-label")?.trim() ||
+      "图片"
+    );
+  }
+
+  function openDocumentImagePreview(image: { alt?: string; src?: string }) {
+    const src = image.src?.trim();
+
+    if (!src) {
+      return;
+    }
+
+    setDocumentImagePreview({
+      alt: image.alt?.trim() || "图片",
+      src,
+    });
+    setDocumentImagePreviewZoom(1);
+  }
+
+  function closeDocumentImagePreview() {
+    setDocumentImagePreview(null);
+    setDocumentImagePreviewZoom(1);
+  }
+
+  function changeDocumentImagePreviewZoom(delta: number) {
+    setDocumentImagePreviewZoom((currentZoom) =>
+      Math.min(4, Math.max(0.25, Number((currentZoom + delta).toFixed(2)))),
+    );
+  }
+
   async function copyMediaResourceToClipboard(contextInfo: EditorContextMenuInfo) {
     const source = contextInfo.mediaSource;
 
@@ -4886,7 +5152,7 @@ export function App() {
       taskElement?.getAttribute("data-checked") ??
       taskElement?.getAttribute("data-task-checked");
     const imageElement = target?.closest<HTMLImageElement>(
-      "img.typora-editable-image, .typora-raw-html-preview img",
+      "img.typora-editable-image, .typora-raw-html-preview img, .markdown-preview img",
     );
     const videoElement = target?.closest<HTMLVideoElement>(
       ".typora-raw-html-preview video, .markdown-preview video, video.markdown-video-player",
@@ -4913,6 +5179,7 @@ export function App() {
         : undefined;
     const mediaKind = imageElement ? "image" : videoElement ? "video" : undefined;
     const mediaSource = getMediaSourceFromElement(imageElement ?? videoElement);
+    const mediaAlt = imageElement ? getImageAltFromElement(imageElement) : undefined;
     const domTaskChecked =
       taskCheckedAttribute === "true"
         ? true
@@ -4936,6 +5203,7 @@ export function App() {
         Boolean(taskElement) || Boolean(textareaInfo.isTaskListItem),
       isVideo: Boolean(videoElement),
       linkHref: linkElement?.href || textareaInfo.linkHref,
+      mediaAlt,
       mediaKind,
       mediaSource,
       taskChecked: domTaskChecked ?? textareaInfo.taskChecked,
@@ -5052,6 +5320,20 @@ export function App() {
         : []),
       ...(contextInfo.mediaKind
         ? [
+            ...(contextInfo.mediaKind === "image"
+              ? [
+                  {
+                    disabled: !contextInfo.mediaSource,
+                    icon: <Maximize2 size={15} />,
+                    label: "全屏浏览",
+                    onSelect: () =>
+                      openDocumentImagePreview({
+                        alt: contextInfo.mediaAlt,
+                        src: contextInfo.mediaSource,
+                      }),
+                  },
+                ]
+              : []),
             {
               icon: <Copy size={15} />,
               label:
@@ -6438,7 +6720,7 @@ export function App() {
         fileName,
         dataUrl,
       );
-      insertMarkdown(`![${fileName}](${reference} "align=left") `);
+      insertMarkdown(`![${fileName}](${reference}) `);
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
     }
@@ -6473,7 +6755,7 @@ export function App() {
         file.filePath,
         "image.gif",
       );
-      insertMarkdown(`![${file.fileName}](${reference} "align=left") `);
+      insertMarkdown(`![${file.fileName}](${reference}) `);
       return true;
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
@@ -7768,6 +8050,22 @@ export function App() {
     showContentLinks: false,
     showMissingRelations: false,
   });
+  const inspectorHistoryPanel =
+    activeDocument?.filePath && isMarkdownDocument(activeDocument) ? (
+      <Suspense fallback={null}>
+        <DocumentHistoryPanel
+          activeDocument={activeDocument}
+          isLoading={isDocumentHistoryLoading}
+          isRestoring={isDocumentHistoryRestoring}
+          selectedVersion={selectedDocumentHistoryVersion}
+          versions={documentHistoryVersions}
+          onCreateSnapshot={() => void createActiveDocumentHistorySnapshot()}
+          onRefresh={() => void refreshDocumentHistory(activeDocument.filePath)}
+          onRestore={(version) => void restoreActiveDocumentHistoryVersion(version)}
+          onSelectVersion={(version) => void selectDocumentHistoryVersion(version)}
+        />
+      </Suspense>
+    ) : null;
 
   return (
     <>
@@ -7949,6 +8247,60 @@ export function App() {
                             onClick={toggleCloudMultiSelect}
                           >
                             <ListChecks size={15} />
+                          </button>
+                          {isCloudMultiSelectEnabled ? (
+                            <button
+                              className={[
+                                "explorer-storage-heading-button",
+                                areAllCloudEntriesSelected
+                                  ? "explorer-storage-heading-button-active"
+                                  : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                              type="button"
+                              aria-label={
+                                areAllCloudEntriesSelected
+                                  ? "清空云端文档选择"
+                                  : "全选云端文档"
+                              }
+                              aria-pressed={areAllCloudEntriesSelected}
+                              title={
+                                areAllCloudEntriesSelected
+                                  ? "清空选择"
+                                  : "全选云端文档"
+                              }
+                              disabled={!cloudSelectableEntryPaths.length}
+                              onClick={toggleSelectAllCloudEntries}
+                            >
+                              {areAllCloudEntriesSelected ? (
+                                <Square size={15} />
+                              ) : (
+                                <Check size={15} />
+                              )}
+                            </button>
+                          ) : null}
+                          <button
+                            className="explorer-storage-heading-button"
+                            type="button"
+                            aria-label={
+                              selectedCloudEntryPaths.size > 0
+                                ? `导出选中的 ${selectedCloudEntryPaths.size} 项`
+                                : "导出全部云端文档"
+                            }
+                            title={
+                              selectedCloudEntryPaths.size > 0
+                                ? `导出选中的 ${selectedCloudEntryPaths.size} 项`
+                                : "导出全部云端文档"
+                            }
+                            disabled={
+                              isCloudExporting ||
+                              !cloudSidebarWorkspace ||
+                              !cloudSelectableEntryPaths.length
+                            }
+                            onClick={() => void exportCloudEntriesToLocal()}
+                          >
+                            <Download size={15} />
                           </button>
                           {isCloudMultiSelectEnabled &&
                           selectedCloudEntryPaths.size > 0 ? (
@@ -8320,6 +8672,7 @@ export function App() {
                       }
                       onContextMenu={openEditorContextMenu}
                       onPaste={handlePaste}
+                      onPreviewImage={openDocumentImagePreview}
                       onRequestDocumentReference={openDocumentReferencePicker}
                       onRequestTableInsert={() => insertTable({ columns: 3, rows: 3 })}
                     />
@@ -8361,6 +8714,7 @@ export function App() {
                         onOpenWikiLink={(target) => {
                           void openWikiLinkTarget(target);
                         }}
+                        onPreviewImage={openDocumentImagePreview}
                       >
                         {activeMarkdownBody}
                       </MarkdownRenderer>
@@ -8416,6 +8770,7 @@ export function App() {
           <Suspense fallback={null}>
             <DocumentInspectorSidebar
               activeDocument={activeDocument}
+              historyPanel={inspectorHistoryPanel}
               isOpen={isDocumentInspectorOpen}
               knowledgePanel={inspectorKnowledgePanel}
               relationsPanel={renderKnowledgeRelationsPanel()}
@@ -9039,6 +9394,80 @@ export function App() {
                   />
                 </Suspense>
               )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root
+          open={Boolean(documentImagePreview)}
+          onOpenChange={(open) => {
+            if (!open) {
+              closeDocumentImagePreview();
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Content className="document-image-preview-dialog">
+              <Dialog.Title className="sr-only">
+                {documentImagePreview?.alt || "图片预览"}
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button
+                  className="document-image-preview-close"
+                  type="button"
+                  aria-label="关闭图片预览"
+                >
+                  <X size={18} />
+                </button>
+              </Dialog.Close>
+              {documentImagePreview ? (
+                <>
+                  <div
+                    className="document-image-preview-viewport"
+                    onWheel={(event) => {
+                      event.preventDefault();
+                      changeDocumentImagePreviewZoom(
+                        event.deltaY < 0 ? 0.1 : -0.1,
+                      );
+                    }}
+                  >
+                    <img
+                      alt={documentImagePreview.alt}
+                      draggable={false}
+                      src={documentImagePreview.src}
+                      style={{
+                        transform: `scale(${documentImagePreviewZoom})`,
+                      }}
+                    />
+                  </div>
+                  <div
+                    className="document-image-preview-toolbar"
+                    aria-label="图片缩放"
+                  >
+                    <button
+                      type="button"
+                      aria-label="缩小图片"
+                      onClick={() => changeDocumentImagePreviewZoom(-0.1)}
+                    >
+                      <Minus size={16} />
+                    </button>
+                    <button
+                      className="document-image-preview-zoom-value"
+                      type="button"
+                      onClick={() => setDocumentImagePreviewZoom(1)}
+                    >
+                      {Math.round(documentImagePreviewZoom * 100)}%
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="放大图片"
+                      onClick={() => changeDocumentImagePreviewZoom(0.1)}
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>

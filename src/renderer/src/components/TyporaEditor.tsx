@@ -199,6 +199,7 @@ type TyporaEditorProps = {
   onEditUniverSheet?: (code: string) => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
   onPaste: (event: ClipboardEvent<HTMLElement>) => void;
+  onPreviewImage?: (image: { alt?: string; src: string }) => void;
   onRequestDocumentReference?: () => void;
   onRequestTableInsert?: () => void;
   value: string;
@@ -3070,6 +3071,9 @@ function createEditableImageDecoration(
                 "typora-editable-image",
                 isExcalidrawImage ? "typora-editable-image-excalidraw" : "",
                 `typora-editable-image-${meta.align}`,
+                meta.hasExplicitAlign
+                  ? "typora-editable-image-explicit-align"
+                  : "typora-editable-image-inline",
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -3935,6 +3939,8 @@ function MilkdownRuntime({
   const pendingActiveHeadingRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const imageResizeRef = useRef<{
+    currentWidth: number;
+    imageElement: HTMLImageElement | null;
     pos: number;
     startWidth: number;
     startX: number;
@@ -4723,6 +4729,31 @@ function MilkdownRuntime({
     });
   }
 
+  function getImageElementForResize(
+    state: Extract<ImageToolbarState, { visible: true }>,
+  ) {
+    if (state.source === "html") {
+      return getRawHtmlPreviewImageElement(state.pos);
+    }
+
+    const editor = get();
+    let imageElement: HTMLImageElement | null = null;
+
+    editor?.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const nodeDom = view.nodeDOM(state.pos);
+
+      imageElement =
+        nodeDom instanceof HTMLImageElement
+          ? nodeDom
+          : nodeDom instanceof Element
+            ? nodeDom.querySelector<HTMLImageElement>("img.typora-editable-image")
+            : null;
+    });
+
+    return imageElement;
+  }
+
   function getEventTargetElement(target: EventTarget | null) {
     if (target instanceof Element) {
       return target;
@@ -4940,32 +4971,14 @@ function MilkdownRuntime({
     });
   }
 
-  function flushPendingImageResize() {
-    const resizeState = imageResizeRef.current;
-
-    if (!resizeState || resizeState.pendingWidth === null) {
-      return;
-    }
-
-    const nextWidth = resizeState.pendingWidth;
-
-    if (resizeState.frameId !== null) {
-      window.cancelAnimationFrame(resizeState.frameId);
-      resizeState.frameId = null;
-    }
-
-    resizeState.pendingWidth = null;
-    updateImageMeta(resizeState.pos, { width: nextWidth });
-  }
-
-  function scheduleImageResize(width: number) {
+  function applyImageResizePreview(width: number) {
     const resizeState = imageResizeRef.current;
 
     if (!resizeState) {
       return;
     }
 
-    resizeState.pendingWidth = width;
+    resizeState.pendingWidth = clampImageWidth(width);
 
     if (resizeState.frameId !== null) {
       return;
@@ -4981,8 +4994,74 @@ function MilkdownRuntime({
       const nextWidth = currentResizeState.pendingWidth;
       currentResizeState.pendingWidth = null;
       currentResizeState.frameId = null;
-      updateImageMeta(currentResizeState.pos, { width: nextWidth });
+      currentResizeState.currentWidth = nextWidth;
+
+      const imageElement = currentResizeState.imageElement;
+
+      if (!imageElement || !rootRef.current?.contains(imageElement)) {
+        setImageToolbar((current) =>
+          current.visible && current.pos === currentResizeState.pos
+            ? {
+                ...current,
+                displayWidth: nextWidth,
+                imageWidth: nextWidth,
+                width: nextWidth,
+              }
+            : current,
+        );
+        return;
+      }
+
+      imageElement.style.width = `${nextWidth}px`;
+      imageElement.style.height = "auto";
+      imageElement.style.maxWidth = "100%";
+
+      const root = rootRef.current;
+      const overlay = getOverlayContainer(root);
+      const overlayRect = overlay.getBoundingClientRect();
+      const imageRect = imageElement.getBoundingClientRect();
+
+      setImageToolbar((current) =>
+        current.visible && current.pos === currentResizeState.pos
+          ? {
+              ...current,
+              displayWidth: clampImageWidth(imageRect.width || nextWidth),
+              imageHeight: imageRect.height || current.imageHeight,
+              imageLeft: imageRect.left - overlayRect.left,
+              imageTop: imageRect.top - overlayRect.top,
+              imageWidth: imageRect.width || nextWidth,
+              width: nextWidth,
+            }
+          : current,
+      );
     });
+  }
+
+  function flushPendingImageResize() {
+    const resizeState = imageResizeRef.current;
+
+    if (!resizeState) {
+      return;
+    }
+
+    const nextWidth = resizeState.pendingWidth ?? resizeState.currentWidth;
+
+    if (resizeState.frameId !== null) {
+      window.cancelAnimationFrame(resizeState.frameId);
+      resizeState.frameId = null;
+    }
+
+    resizeState.pendingWidth = null;
+
+    if (resizeState.imageElement && rootRef.current?.contains(resizeState.imageElement)) {
+      resizeState.imageElement.style.width = `${nextWidth}px`;
+      resizeState.imageElement.style.height = "auto";
+      resizeState.imageElement.style.maxWidth = "100%";
+    }
+
+    if (nextWidth !== resizeState.startWidth) {
+      updateImageMeta(resizeState.pos, { width: nextWidth });
+    }
   }
 
   function stopImageResize(event?: PointerEvent) {
@@ -5003,7 +5082,8 @@ function MilkdownRuntime({
       return;
     }
 
-    scheduleImageResize(resizeState.startWidth + event.clientX - resizeState.startX);
+    event.preventDefault();
+    applyImageResizePreview(resizeState.startWidth + event.clientX - resizeState.startX);
   }
 
   function startImageResize(
@@ -5014,8 +5094,10 @@ function MilkdownRuntime({
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     imageResizeRef.current = {
+      currentWidth: clampImageWidth(state.displayWidth),
+      imageElement: getImageElementForResize(state),
       pos: state.pos,
-      startWidth: state.displayWidth,
+      startWidth: clampImageWidth(state.displayWidth),
       startX: event.clientX,
       pendingWidth: null,
       frameId: null,
@@ -6318,6 +6400,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
       onEditDrawing,
       onEditUniverSheet,
       onPaste,
+      onPreviewImage,
       onRequestDocumentReference,
       onRequestTableInsert,
       value,
@@ -6468,21 +6551,43 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
           onContextMenu?.(event);
         }}
         onDoubleClick={(event) => {
-          if (!onEditDrawing || !(event.target instanceof Element)) {
+          if (!(event.target instanceof Element)) {
             return;
           }
 
-          const imageElement = event.target.closest("img.typora-editable-image");
+          const imageElement = event.target.closest<HTMLImageElement>(
+            "img.typora-editable-image, .typora-raw-html-preview img",
+          );
+
+          if (!imageElement) {
+            return;
+          }
+
           const drawingId = getExcalidrawDrawingId(
             imageElement?.getAttribute("title") ?? undefined,
           );
 
-          if (!drawingId) {
+          if (drawingId && onEditDrawing) {
+            event.preventDefault();
+            onEditDrawing(drawingId);
+            return;
+          }
+
+          const src =
+            imageElement.currentSrc || imageElement.getAttribute("src") || "";
+
+          if (!src || !onPreviewImage) {
             return;
           }
 
           event.preventDefault();
-          onEditDrawing(drawingId);
+          onPreviewImage({
+            alt:
+              imageElement.alt?.trim() ||
+              imageElement.getAttribute("aria-label")?.trim() ||
+              "图片",
+            src,
+          });
         }}
         onPasteCapture={onPaste}
         spellCheck={false}

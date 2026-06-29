@@ -3,6 +3,7 @@ import type { MarkdownDocument } from "../types";
 
 type DocumentInspectorSidebarProps = {
   activeDocument: MarkdownDocument | null;
+  historyPanel?: ReactNode;
   isOpen: boolean;
   knowledgePanel: ReactNode;
   relationsPanel?: ReactNode;
@@ -10,6 +11,7 @@ type DocumentInspectorSidebarProps = {
 
 export function DocumentInspectorSidebar({
   activeDocument,
+  historyPanel,
   isOpen,
   knowledgePanel,
   relationsPanel,
@@ -40,6 +42,11 @@ export function DocumentInspectorSidebar({
             <summary>关系总览</summary>
             {relationsPanel}
           </details>
+        ) : null}
+        {activeDocument && historyPanel ? (
+          <section className="document-inspector-card document-inspector-card-history">
+            {historyPanel}
+          </section>
         ) : null}
       </div>
     </aside>
