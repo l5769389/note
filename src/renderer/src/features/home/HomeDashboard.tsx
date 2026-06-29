@@ -90,6 +90,8 @@ type HomeDashboardProps = {
   remainingTodoCount: number;
   selectedMonthLabel: string;
   selectedYear: number;
+  showNotePanel?: boolean;
+  showTodoPanel?: boolean;
   todoDateLabel: string;
   todoDateTitle: string;
   todoDraft: string;
@@ -166,6 +168,8 @@ export function HomeDashboard({
   remainingTodoCount,
   selectedMonthLabel,
   selectedYear,
+  showNotePanel = true,
+  showTodoPanel = true,
   todoDateLabel,
   todoDateTitle,
   todoDraft,
@@ -179,10 +183,19 @@ export function HomeDashboard({
   yearOptions,
 }: HomeDashboardProps) {
   const hasVisibleTodos = visibleTodoItems.length > 0 || Boolean(todoDrag);
+  const showSideColumn = showTodoPanel || showNotePanel;
+  const sideColumnIsSinglePanel = showTodoPanel !== showNotePanel;
 
   return (
     <section className="welcome-home">
-      <section className="home-dashboard">
+      <section
+        className={[
+          "home-dashboard",
+          showSideColumn ? "" : "home-dashboard-side-hidden",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
         <section className="home-main-column">
           <section className="home-brand-panel" aria-label="工作台">
             <div className="home-brand-logo">
@@ -304,7 +317,17 @@ export function HomeDashboard({
           </section>
         </section>
 
-        <section className="home-side-column" aria-label="今日安排">
+        {showSideColumn ? (
+        <section
+          className={[
+            "home-side-column",
+            sideColumnIsSinglePanel ? "home-side-column-single" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          aria-label="今日安排"
+        >
+          {showTodoPanel ? (
           <section className="home-todo-panel" aria-label="今日待办">
             <div className="home-todo-header">
               <div className="home-todo-title">
@@ -538,11 +561,13 @@ export function HomeDashboard({
                 type="button"
                 onClick={onClearCompletedTodos}
               >
-                清除已完成
-              </button>
-            ) : null}
+              清除已完成
+            </button>
+          ) : null}
           </section>
+          ) : null}
 
+          {showNotePanel ? (
           <section className="home-note-panel home-note-panel-side" aria-label="灵感便签">
             <header className="home-section-header">
               <div>
@@ -618,7 +643,9 @@ export function HomeDashboard({
               )}
             </div>
           </section>
+          ) : null}
         </section>
+        ) : null}
       </section>
     </section>
   );

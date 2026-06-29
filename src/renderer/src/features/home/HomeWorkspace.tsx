@@ -24,6 +24,8 @@ type HomeWorkspaceProps = {
   ) => void;
   onOpenWorkspaceFolder: () => void | Promise<void>;
   recentDocuments: MarkdownDocument[];
+  showNotePanel?: boolean;
+  showTodoPanel?: boolean;
   workspacePath?: string;
 };
 
@@ -37,6 +39,8 @@ export function HomeWorkspace({
   onOpenRecentDocumentContextMenu,
   onOpenWorkspaceFolder,
   recentDocuments,
+  showNotePanel = true,
+  showTodoPanel = true,
   workspacePath,
 }: HomeWorkspaceProps) {
   const home = useHomeController({ recentDocuments });
@@ -63,6 +67,8 @@ export function HomeWorkspace({
         onOpenRecentDocument={onOpenRecentDocument}
         onOpenRecentDocumentContextMenu={onOpenRecentDocumentContextMenu}
         onOpenWorkspaceFolder={onOpenWorkspaceFolder}
+        showNotePanel={showNotePanel}
+        showTodoPanel={showTodoPanel}
         workspacePath={workspacePath}
       />
 

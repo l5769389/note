@@ -354,6 +354,46 @@ const TyporaEditor = lazy(() =>
   })),
 );
 
+type IdleCallbackHandle = number;
+
+type WindowWithIdleCallback = typeof window & {
+  cancelIdleCallback?: (handle: IdleCallbackHandle) => void;
+  requestIdleCallback?: (
+    callback: IdleRequestCallback,
+    options?: IdleRequestOptions,
+  ) => IdleCallbackHandle;
+};
+
+function scheduleRuntimePreload(callback: () => void, delayMs: number) {
+  const runtimeWindow = window as WindowWithIdleCallback;
+  let idleHandle: IdleCallbackHandle | null = null;
+
+  const timeoutHandle = window.setTimeout(() => {
+    if (runtimeWindow.requestIdleCallback) {
+      idleHandle = runtimeWindow.requestIdleCallback(callback, { timeout: 1800 });
+      return;
+    }
+
+    callback();
+  }, delayMs);
+
+  return () => {
+    window.clearTimeout(timeoutHandle);
+
+    if (idleHandle !== null) {
+      runtimeWindow.cancelIdleCallback?.(idleHandle);
+    }
+  };
+}
+
+function preloadMarkdownPreviewRuntime() {
+  void import("./components/MarkdownRenderer");
+}
+
+function preloadMarkdownEditorRuntime() {
+  void import("./components/TyporaEditor");
+}
+
 const MindMapModal = lazy(() =>
   import("./components/MindMapModal").then((module) => ({
     default: module.MindMapModal,
@@ -772,6 +812,12 @@ const settingsDirectoryItems = [
     label: "字体大小",
   },
   {
+    description: "首页模块显示",
+    icon: ListChecks,
+    id: "home",
+    label: "功能设置",
+  },
+  {
     description: "服务器与账号登录",
     icon: Cloud,
     id: "sync",
@@ -875,6 +921,22 @@ function normalizeSyncServerUrlInput(serverUrl: string): string {
 }
 
 export function App() {
+  useEffect(() => {
+    const cancelPreviewPreload = scheduleRuntimePreload(
+      preloadMarkdownPreviewRuntime,
+      450,
+    );
+    const cancelEditorPreload = scheduleRuntimePreload(
+      preloadMarkdownEditorRuntime,
+      1800,
+    );
+
+    return () => {
+      cancelPreviewPreload();
+      cancelEditorPreload();
+    };
+  }, []);
+
   const [workspace, setWorkspace] = useState(createStartupWorkspace);
   const [mode, setMode] = useState<EditorMode>(defaultAppSettings.editorMode);
   const [topMenu, setTopMenu] = useState<TopMenu>(null);
@@ -1166,17 +1228,27 @@ export function App() {
       return;
     }
 
-    setSyncEnabledDraft(syncStatus.configuration.enabled);
+    setSyncEnabledDraft(
+      syncStatus.configuration.tokenConfigured &&
+        syncStatus.configuration.enabled,
+    );
     setSyncServerUrlDraft(
       normalizeSyncServerUrlInput(
         syncStatus.configuration.serverUrl || defaultSyncServerUrl,
       ),
     );
     setSyncLoginUsernameDraft(defaultSyncLoginUsername);
-    setSyncLoginPasswordDraft(defaultSyncLoginPassword);
+    setSyncLoginPasswordDraft(
+      syncStatus.configuration.tokenConfigured ? "" : defaultSyncLoginPassword,
+    );
     setSyncLoginMessage("");
     setSyncLoginMessageTone("info");
-  }, [isSettingsOpen]);
+  }, [
+    isSettingsOpen,
+    syncStatus.configuration.enabled,
+    syncStatus.configuration.serverUrl,
+    syncStatus.configuration.tokenConfigured,
+  ]);
 
   useEffect(() => {
     if (
@@ -1821,7 +1893,7 @@ export function App() {
       setSyncEnabledDraft(true);
       setSyncLoginPasswordDraft("");
       setSyncLoginMessageTone("success");
-      setSyncLoginMessage(`已登录 ${result.user.username}，云同步已启用。`);
+      setSyncLoginMessage("云同步已启用。");
 
       if (status) {
         setSyncStatus(status);
@@ -1866,7 +1938,49 @@ export function App() {
     ]);
   }
 
+  function closeCloudDocumentsAfterLogout(cloudRootPath?: string) {
+    const activeDocumentIsCloud =
+      isCloudWorkspaceSource(workspace.source) ||
+      Boolean(
+        activeDocument?.filePath &&
+          cloudRootPath &&
+          isPathInsideDirectoryPath(activeDocument.filePath, cloudRootPath),
+      );
+
+    setWorkspace((current) => {
+      const currentWorkspaceIsCloud = isCloudWorkspaceSource(current.source);
+      const documents = currentWorkspaceIsCloud
+        ? []
+        : current.documents.filter((document) => {
+            if (!document.filePath || !cloudRootPath) {
+              return true;
+            }
+
+            return !isPathInsideDirectoryPath(document.filePath, cloudRootPath);
+          });
+      const activeDocumentId = documents.some(
+        (document) => document.id === current.activeDocumentId,
+      )
+        ? current.activeDocumentId
+        : "";
+
+      return {
+        ...current,
+        activeDocumentId,
+        documents,
+        source: currentWorkspaceIsCloud ? undefined : current.source,
+        updatedAt: now(),
+        workspacePath: currentWorkspaceIsCloud ? undefined : current.workspacePath,
+      };
+    });
+
+    if (activeDocumentIsCloud) {
+      setIsHomeOpen(true);
+    }
+  }
+
   async function logoutSync() {
+    const cloudRootPath = cloudSidebarWorkspace?.directoryPath;
     const status = await window.desktop?.syncConfigure?.({
       enabled: false,
       serverUrl: syncServerUrlDraft || syncStatus.configuration.serverUrl,
@@ -1878,6 +1992,7 @@ export function App() {
     setSyncLoginPasswordDraft(defaultSyncLoginPassword);
     setSyncLoginMessageTone("info");
     setSyncLoginMessage("已退出云同步账号。");
+    closeCloudDocumentsAfterLogout(cloudRootPath);
     setCloudSidebarWorkspace(null);
     setIsCloudMultiSelectEnabled(false);
     setSelectedCloudEntryPaths(new Set());
@@ -8060,6 +8175,8 @@ export function App() {
               }}
               onOpenWorkspaceFolder={openWorkspaceFolder}
               recentDocuments={recentDocuments}
+              showNotePanel={settings.homeShowNotePanel}
+              showTodoPanel={settings.homeShowTodoPanel}
               workspacePath={workspace.workspacePath}
             />
           ) : (            <section
@@ -9013,10 +9130,6 @@ export function App() {
                   {activeSettingsSection === "editor" ? (
                     <section className="settings-redesign-card settings-redesign-reader">
                       <div className="settings-redesign-density-card">
-                        <div className="settings-redesign-card-heading">
-                          <h3>字体大小</h3>
-                          <p>选择编辑器正文、列表和预览的整体阅读密度。</p>
-                        </div>
                         <ToggleGroup.Root
                           className="settings-redesign-density"
                           type="single"
@@ -9046,14 +9159,15 @@ export function App() {
 
                       <div
                         className="settings-redesign-preview"
-                        style={settingsPreviewStyle}
                         aria-label="显示预览"
                       >
                         <div className="settings-redesign-card-heading">
                           <h3>效果预览</h3>
-                          <p>右侧内容会跟随当前选择实时调整。</p>
                         </div>
-                        <div className="settings-redesign-preview-page">
+                        <div
+                          className="settings-redesign-preview-page"
+                          style={settingsPreviewStyle}
+                        >
                           <h4>项目笔记</h4>
                           <p>正文、列表和表格会跟随当前阅读密度。</p>
                           <ul>
@@ -9066,22 +9180,69 @@ export function App() {
                     </section>
                   ) : null}
 
+                  {activeSettingsSection === "home" ? (
+                    <section className="settings-redesign-card settings-redesign-home">
+                      <div className="settings-redesign-card-heading">
+                        <h3>首页</h3>
+                      </div>
+                      <div className="settings-redesign-toggle-list">
+                        <label className="settings-redesign-toggle-row">
+                          <span>今日待办</span>
+                          <span className="settings-redesign-switch">
+                            <input
+                              type="checkbox"
+                              checked={settings.homeShowTodoPanel}
+                              onChange={(event) =>
+                                updateSetting(
+                                  "homeShowTodoPanel",
+                                  event.currentTarget.checked,
+                                )
+                              }
+                            />
+                            <span />
+                          </span>
+                        </label>
+                        <label className="settings-redesign-toggle-row">
+                          <span>灵感便签</span>
+                          <span className="settings-redesign-switch">
+                            <input
+                              type="checkbox"
+                              checked={settings.homeShowNotePanel}
+                              onChange={(event) =>
+                                updateSetting(
+                                  "homeShowNotePanel",
+                                  event.currentTarget.checked,
+                                )
+                              }
+                            />
+                            <span />
+                          </span>
+                        </label>
+                      </div>
+                    </section>
+                  ) : null}
+
                   {activeSettingsSection === "sync" ? (
                     <section className="settings-redesign-card settings-redesign-sync">
                       <div className="settings-redesign-sync-head">
                         <div>
                           <h3>云同步</h3>
-                          {syncStatus.configuration.tokenConfigured ? (
-                            <p>已登录 {syncLoginUsernameDraft || defaultSyncLoginUsername}</p>
-                          ) : null}
                         </div>
                         <label className="settings-redesign-switch">
                           <input
                             type="checkbox"
-                            checked={syncEnabledDraft}
-                            onChange={(event) =>
-                              setSyncEnabledDraft(event.currentTarget.checked)
+                            checked={
+                              syncStatus.configuration.tokenConfigured &&
+                              syncEnabledDraft
                             }
+                            disabled={!syncStatus.configuration.tokenConfigured}
+                            onChange={(event) => {
+                              if (!syncStatus.configuration.tokenConfigured) {
+                                return;
+                              }
+
+                              setSyncEnabledDraft(event.currentTarget.checked);
+                            }}
                           />
                           <span />
                         </label>
@@ -9108,6 +9269,10 @@ export function App() {
                               autoComplete="username"
                               placeholder={defaultSyncLoginUsername}
                               value={syncLoginUsernameDraft}
+                              disabled={
+                                syncStatus.configuration.tokenConfigured ||
+                                isSyncLoginRunning
+                              }
                               onChange={(event) =>
                                 setSyncLoginUsernameDraft(
                                   event.currentTarget.value,
@@ -9122,6 +9287,10 @@ export function App() {
                               autoComplete="current-password"
                               placeholder={defaultSyncLoginPassword}
                               value={syncLoginPasswordDraft}
+                              disabled={
+                                syncStatus.configuration.tokenConfigured ||
+                                isSyncLoginRunning
+                              }
                               onChange={(event) =>
                                 setSyncLoginPasswordDraft(
                                   event.currentTarget.value,
@@ -9151,18 +9320,16 @@ export function App() {
                             退出登录
                           </button>
                         ) : null}
-                        <button
-                          className="settings-redesign-primary"
-                          type="button"
-                          disabled={isSyncLoginRunning}
-                          onClick={() => void loginAndConfigureSync()}
-                        >
-                          {isSyncLoginRunning
-                            ? "登录中..."
-                            : syncStatus.configuration.tokenConfigured
-                              ? "重新登录并启用"
-                              : "登录并启用"}
-                        </button>
+                        {!syncStatus.configuration.tokenConfigured ? (
+                          <button
+                            className="settings-redesign-primary"
+                            type="button"
+                            disabled={isSyncLoginRunning}
+                            onClick={() => void loginAndConfigureSync()}
+                          >
+                            {isSyncLoginRunning ? "登录中..." : "登录并启用"}
+                          </button>
+                        ) : null}
                       </div>
                     </section>
                   ) : null}

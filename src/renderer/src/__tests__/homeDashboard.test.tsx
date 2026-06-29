@@ -158,4 +158,19 @@ describe("HomeDashboard", () => {
     expect(html).toContain("home-calendar-popover");
     expect(html).toContain("<option");
   });
+
+  it("lets the home side panels be hidden", () => {
+    const html = renderHomeDashboard({
+      notes: [note()],
+      showNotePanel: false,
+      showTodoPanel: false,
+      visibleTodoItems: [todo()],
+    });
+
+    expect(html).toContain("home-dashboard-side-hidden");
+    expect(html).not.toContain("今日待办");
+    expect(html).not.toContain("灵感便签");
+    expect(html).not.toContain("整理会议笔记");
+    expect(html).not.toContain("一个临时想法");
+  });
 });

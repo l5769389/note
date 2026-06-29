@@ -5737,6 +5737,7 @@ textarea,
 }
 
 .settings-redesign-shell {
+  position: relative;
   display: grid;
   height: 100%;
   min-height: 0;
@@ -5925,6 +5926,10 @@ textarea,
 }
 
 .settings-redesign-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 3;
   display: grid;
   width: 32px;
   height: 32px;
@@ -5962,6 +5967,264 @@ textarea,
 .settings-redesign-sync {
   display: grid;
   gap: 16px;
+}
+
+
+.settings-redesign-home {
+  align-content: start;
+  max-width: 620px;
+}
+
+.settings-redesign-toggle-list {
+  gap: 12px;
+}
+
+.settings-redesign-toggle-row {
+  min-height: 62px;
+  border-color: rgba(226, 232, 240, 0.96);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.045);
+  color: #1e293b;
+  padding: 0 16px 0 18px;
+}
+
+.settings-redesign-toggle-row:hover {
+  border-color: rgba(129, 140, 248, 0.54);
+  background: #fbfcff;
+}
+
+.settings-redesign-sync {
+  max-width: 680px;
+}
+
+.settings-redesign-sync-head {
+  margin-bottom: 2px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.82);
+  padding-bottom: 14px;
+}
+
+.settings-redesign-form {
+  gap: 16px;
+}
+
+.settings-redesign-field {
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.settings-redesign-field input {
+  min-height: 42px;
+  border-color: #dce5f3;
+  border-radius: 13px;
+  background: #ffffff;
+  font-size: 13px;
+  padding: 0 13px;
+}
+
+.settings-redesign-field input:focus {
+  border-color: #818cf8;
+  outline: 3px solid rgba(129, 140, 248, 0.18);
+}
+
+.settings-redesign-message {
+  border-radius: 13px;
+  font-size: 13px;
+  padding: 12px 13px;
+}
+
+.settings-redesign-actions {
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.settings-redesign-primary,
+.settings-redesign-secondary,
+.settings-redesign-text-button {
+  min-height: 40px;
+  border-radius: 13px;
+  font-size: 13px;
+}
+
+.settings-redesign-primary {
+  border: 0;
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  box-shadow: 0 14px 24px rgba(79, 70, 229, 0.22);
+}
+
+.settings-redesign-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #4f46e5, #4338ca);
+}
+
+.settings-redesign-text-button {
+  border: 1px solid rgba(254, 202, 202, 0.86);
+  background: #fff7f7;
+  color: #dc2626;
+  padding: 0 14px;
+}
+
+.settings-redesign-text-button:hover {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign,
+:root[data-theme="night"] .settings-dialog.settings-redesign {
+  border-color: rgba(51, 65, 85, 0.98);
+  background:
+    radial-gradient(circle at 88% 8%, rgba(99, 102, 241, 0.22), transparent 32%),
+    linear-gradient(135deg, #0b1120, #111827 56%, #101827);
+}
+
+:root[data-theme="dark"] .settings-redesign-sidebar,
+:root[data-theme="night"] .settings-redesign-sidebar,
+:root[data-theme="dark"] .settings-redesign-main,
+:root[data-theme="night"] .settings-redesign-main,
+:root[data-theme="dark"] .settings-redesign-density-card,
+:root[data-theme="night"] .settings-redesign-density-card,
+:root[data-theme="dark"] .settings-redesign-preview,
+:root[data-theme="night"] .settings-redesign-preview,
+:root[data-theme="dark"] .settings-redesign-home,
+:root[data-theme="night"] .settings-redesign-home,
+:root[data-theme="dark"] .settings-redesign-sync,
+:root[data-theme="night"] .settings-redesign-sync {
+  border-color: rgba(51, 65, 85, 0.95);
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(17, 24, 39, 0.9)),
+    #111827;
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.26);
+}
+
+:root[data-theme="dark"] .settings-redesign-brand,
+:root[data-theme="night"] .settings-redesign-brand,
+:root[data-theme="dark"] .settings-redesign-sync-head,
+:root[data-theme="night"] .settings-redesign-sync-head {
+  border-color: rgba(51, 65, 85, 0.92);
+}
+
+:root[data-theme="dark"] .settings-redesign-title,
+:root[data-theme="night"] .settings-redesign-title,
+:root[data-theme="dark"] .settings-redesign-card-heading h3,
+:root[data-theme="night"] .settings-redesign-card-heading h3,
+:root[data-theme="dark"] .settings-redesign-sync-head h3,
+:root[data-theme="night"] .settings-redesign-sync-head h3,
+:root[data-theme="dark"] .settings-redesign-toggle-row,
+:root[data-theme="night"] .settings-redesign-toggle-row {
+  color: #e5edf7;
+}
+
+:root[data-theme="dark"] .settings-redesign-app-name,
+:root[data-theme="night"] .settings-redesign-app-name,
+:root[data-theme="dark"] .settings-redesign-nav-item,
+:root[data-theme="night"] .settings-redesign-nav-item,
+:root[data-theme="dark"] .settings-redesign-field,
+:root[data-theme="night"] .settings-redesign-field {
+  color: #93a4bb;
+}
+
+:root[data-theme="dark"] .settings-redesign-brand-icon,
+:root[data-theme="night"] .settings-redesign-brand-icon,
+:root[data-theme="dark"] .settings-redesign-close,
+:root[data-theme="night"] .settings-redesign-close,
+:root[data-theme="dark"] .settings-redesign-density-item,
+:root[data-theme="night"] .settings-redesign-density-item,
+:root[data-theme="dark"] .settings-redesign-toggle-row,
+:root[data-theme="night"] .settings-redesign-toggle-row,
+:root[data-theme="dark"] .settings-redesign-field input,
+:root[data-theme="night"] .settings-redesign-field input {
+  border-color: rgba(51, 65, 85, 0.98);
+  background: #172033;
+  color: #dbe7f5;
+}
+
+:root[data-theme="dark"] .settings-redesign-nav-item:hover,
+:root[data-theme="night"] .settings-redesign-nav-item:hover,
+:root[data-theme="dark"] .settings-redesign-nav-item-active,
+:root[data-theme="night"] .settings-redesign-nav-item-active,
+:root[data-theme="dark"] .settings-redesign-nav-item-active:hover {
+  border-color: rgba(129, 140, 248, 0.42);
+  background: rgba(99, 102, 241, 0.14);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .settings-redesign-preview-page,
+:root[data-theme="night"] .settings-redesign-preview-page {
+  border-color: rgba(51, 65, 85, 0.98);
+  background: #0f172a;
+}
+
+@media (max-width: 860px) {
+  .settings-dialog.settings-redesign {
+    width: min(720px, calc(100vw - 24px));
+    height: min(760px, calc(100vh - 24px));
+  }
+
+  .settings-redesign-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .settings-redesign-sidebar {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto;
+    align-items: center;
+    padding: 12px;
+  }
+
+  .settings-redesign-brand {
+    border-bottom: 0;
+    padding: 0;
+  }
+
+  .settings-redesign-nav {
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+
+  .settings-redesign-main {
+    padding: 16px;
+  }
+
+  .settings-redesign-reader,
+  .settings-redesign-field-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.settings-redesign-home {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.settings-redesign-toggle-list {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-redesign-toggle-row {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #111827;
+  cursor: pointer;
+  padding: 0 14px 0 16px;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.settings-redesign-toggle-row:hover {
+  border-color: #c7d2fe;
+  background: #f8faff;
 }
 
 .settings-redesign-sync-head {
@@ -6166,6 +6429,17 @@ textarea,
   transform: translateX(20px);
 }
 
+.settings-redesign-switch input:disabled + span {
+  cursor: not-allowed;
+  border-color: #d7deea;
+  background: #e9eef6;
+  opacity: 0.72;
+}
+
+.settings-redesign-switch input:disabled + span::after {
+  background: #cbd5e1;
+}
+
 .settings-redesign-form {
   display: grid;
   gap: 14px;
@@ -6199,6 +6473,13 @@ textarea,
 .settings-redesign-field input:focus {
   border-color: #9ca3ff;
   outline: 2px solid rgba(98, 84, 232, 0.18);
+}
+
+.settings-redesign-field input:disabled {
+  cursor: not-allowed;
+  border-color: #e2e8f0;
+  background: #f1f5f9;
+  color: #64748b;
 }
 
 .settings-redesign-message {
@@ -6307,7 +6588,9 @@ textarea,
 :root[data-theme="dark"] .settings-redesign-toolbar,
 :root[data-theme="night"] .settings-redesign-toolbar,
 :root[data-theme="dark"] .settings-redesign-card,
-:root[data-theme="night"] .settings-redesign-card {
+:root[data-theme="night"] .settings-redesign-card,
+:root[data-theme="dark"] .settings-redesign-toggle-row,
+:root[data-theme="night"] .settings-redesign-toggle-row {
   border-color: #2f3b4c;
   background: rgba(15, 23, 42, 0.86);
 }
@@ -6318,6 +6601,8 @@ textarea,
 :root[data-theme="night"] .settings-redesign-toolbar h2,
 :root[data-theme="dark"] .settings-redesign-card-heading h3,
 :root[data-theme="night"] .settings-redesign-card-heading h3,
+:root[data-theme="dark"] .settings-redesign-toggle-row,
+:root[data-theme="night"] .settings-redesign-toggle-row,
 :root[data-theme="dark"] .settings-redesign-sync-head h3,
 :root[data-theme="night"] .settings-redesign-sync-head h3,
 :root[data-theme="dark"] .settings-redesign-preview-page h4,
@@ -6351,6 +6636,19 @@ textarea,
   border-color: #344256;
   background: #172033;
   color: #d7e1ee;
+}
+
+:root[data-theme="dark"] .settings-redesign-field input:disabled,
+:root[data-theme="night"] .settings-redesign-field input:disabled {
+  border-color: #2f3b4c;
+  background: #111827;
+  color: #7f8ca3;
+}
+
+:root[data-theme="dark"] .settings-redesign-switch input:disabled + span,
+:root[data-theme="night"] .settings-redesign-switch input:disabled + span {
+  border-color: #2f3b4c;
+  background: #1f2937;
 }
 
 :root[data-theme="dark"] .settings-redesign-preview-page,
@@ -8532,7 +8830,7 @@ textarea,
 
 .document-inspector-card-relations > summary::after {
   color: #98a2b3;
-  content: "展开";
+  content: "灞曞紑";
   font-size: 12px;
   font-weight: 700;
 }
@@ -8542,7 +8840,7 @@ textarea,
 }
 
 .document-inspector-card-relations[open] > summary::after {
-  content: "收起";
+  content: "鏀惰捣";
 }
 
 .document-inspector-empty {
@@ -10794,9 +11092,14 @@ textarea,
   width: 100%;
   height: 100%;
   min-height: 0;
-  grid-template-columns: minmax(520px, 1fr) minmax(330px, 400px);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
   gap: 24px;
   margin: 0 auto;
+}
+
+.home-dashboard-side-hidden {
+  max-width: 1180px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .home-main-column {
@@ -11331,9 +11634,17 @@ textarea,
   gap: 16px;
 }
 
+.home-side-column-single {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .home-note-panel-side {
   height: 260px;
   min-height: 0;
+}
+
+.home-side-column-single .home-note-panel-side {
+  height: 100%;
 }
 
 .home-note-panel-side textarea {
@@ -11346,6 +11657,7 @@ textarea,
   height: 100%;
   max-height: none;
   width: 100%;
+  min-width: 0;
   min-height: 0;
   grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
   gap: 12px;
@@ -11362,6 +11674,7 @@ textarea,
 
 .home-todo-header {
   display: flex;
+  min-width: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
@@ -11369,6 +11682,7 @@ textarea,
 
 .home-todo-title {
   display: grid;
+  min-width: 0;
   gap: 5px;
 }
 
@@ -11389,8 +11703,11 @@ textarea,
 
 .home-todo-header strong {
   display: inline-flex;
+  max-width: 126px;
+  min-width: 0;
   min-height: 28px;
   align-items: center;
+  overflow: hidden;
   border: 1px solid rgba(99, 102, 241, 0.18);
   border-radius: 999px;
   background: rgba(99, 102, 241, 0.08);
@@ -11398,6 +11715,7 @@ textarea,
   padding: 0 11px;
   font-size: 12px;
   font-weight: 800;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -11420,7 +11738,7 @@ textarea,
 .home-todo-date-bar {
   position: relative;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 30px auto;
+  grid-template-columns: 30px minmax(0, 1fr) 30px minmax(42px, auto);
   min-width: 0;
   align-items: center;
   gap: 8px;
@@ -15967,5 +16285,543 @@ body.home-todo-global-dragging * {
   .typora-blank-line {
     width: 100%;
     max-width: 100%;
+  }
+}
+
+
+/* Settings dialog sketch layout */
+.settings-dialog.settings-redesign {
+  width: min(1060px, calc(100vw - 72px));
+  height: min(720px, calc(100vh - 72px));
+  border: 1px solid rgba(30, 41, 59, 0.14);
+  border-radius: 22px;
+  background: #ffffff;
+  box-shadow:
+    0 28px 80px rgba(15, 23, 42, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.settings-dialog.settings-redesign .settings-redesign-shell {
+  grid-template-columns: 178px minmax(0, 1fr);
+  gap: 28px;
+  padding: 78px 74px 48px 54px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-brand {
+  position: absolute;
+  top: 24px;
+  left: 74px;
+  z-index: 2;
+  display: block;
+  border: 0;
+  padding: 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-brand-icon {
+  display: none;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-app-name {
+  display: block;
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-title {
+  color: #111827;
+  font-size: 18px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-close {
+  top: 21px;
+  right: 32px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #111827;
+  box-shadow: none;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-close svg {
+  width: 28px;
+  height: 28px;
+  stroke-width: 1.8;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-close:hover {
+  background: #f1f5f9;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-sidebar {
+  min-height: 0;
+  border: 1px solid rgba(30, 41, 59, 0.18);
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow: none;
+  padding: 18px 12px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-nav {
+  align-content: start;
+  gap: 10px;
+  padding: 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-nav-item {
+  min-height: 48px;
+  border-radius: 16px;
+  color: #64748b;
+  padding: 0 14px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-nav-item:hover {
+  transform: none;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-nav-item-active,
+.settings-dialog.settings-redesign .settings-redesign-nav-item-active:hover {
+  border-color: rgba(79, 70, 229, 0.18);
+  background: #f5f6ff;
+  color: #4f46e5;
+  box-shadow: none;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-main {
+  border: 1px solid rgba(30, 41, 59, 0.18);
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow: none;
+  padding: 26px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-density-card,
+.settings-dialog.settings-redesign .settings-redesign-preview,
+.settings-dialog.settings-redesign .settings-redesign-home,
+.settings-dialog.settings-redesign .settings-redesign-sync {
+  border-color: #e6edf7;
+  border-radius: 18px;
+  background: #fbfdff;
+  box-shadow: none;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-reader {
+  height: 100%;
+  grid-template-columns: minmax(190px, 0.52fr) minmax(320px, 1.48fr);
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign,
+:root[data-theme="night"] .settings-dialog.settings-redesign {
+  border-color: rgba(71, 85, 105, 0.76);
+  background: #0f172a;
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-sidebar,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-sidebar,
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-main {
+  border-color: rgba(71, 85, 105, 0.66);
+  background: #111827;
+}
+
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-main {
+  border-color: rgba(71, 85, 105, 0.66);
+  background: #111827;
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-close,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-close,
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-title,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-title {
+  color: #e5edf7;
+}
+
+@media (max-width: 860px) {
+  .settings-dialog.settings-redesign {
+    width: min(720px, calc(100vw - 24px));
+    height: min(760px, calc(100vh - 24px));
+  }
+
+  .settings-dialog.settings-redesign .settings-redesign-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 12px;
+    padding: 64px 14px 14px;
+  }
+
+  .settings-dialog.settings-redesign .settings-redesign-brand {
+    top: 22px;
+    left: 24px;
+  }
+
+  .settings-dialog.settings-redesign .settings-redesign-sidebar {
+    min-height: auto;
+    border-radius: 18px;
+    padding: 10px;
+  }
+
+  .settings-dialog.settings-redesign .settings-redesign-nav {
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+
+  .settings-dialog.settings-redesign .settings-redesign-main {
+    border-radius: 18px;
+    padding: 16px;
+  }
+}
+
+/* Settings dialog flatter content layer */
+.settings-dialog.settings-redesign .settings-redesign-brand {
+  right: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-close {
+  position: static;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-main {
+  padding: 34px 42px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-reader {
+  grid-template-columns: minmax(180px, 0.42fr) minmax(0, 1fr);
+  gap: 34px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-density-card,
+.settings-dialog.settings-redesign .settings-redesign-preview,
+.settings-dialog.settings-redesign .settings-redesign-home,
+.settings-dialog.settings-redesign .settings-redesign-sync {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-density-card {
+  border-right: 1px solid #e5edf6;
+  padding-right: 28px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-density-card .settings-redesign-density {
+  margin-top: 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-card-heading {
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5edf6;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-card-heading h3,
+.settings-dialog.settings-redesign .settings-redesign-sync-head h3 {
+  font-size: 20px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-density {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid #e5edf6;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-density-item {
+  min-height: 46px;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-density-item + .settings-redesign-density-item {
+  border-top: 1px solid #e5edf6;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-density-item[data-state="on"] {
+  background: #f5f6ff;
+  box-shadow: inset 3px 0 0 #5b55f0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-preview-page {
+  min-height: 320px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-toggle-list {
+  gap: 0;
+  max-width: 640px;
+  border-top: 1px solid #e5edf6;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-toggle-row {
+  min-height: 64px;
+  border: 0;
+  border-bottom: 1px solid #e5edf6;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-toggle-row:hover {
+  background: #f8faff;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-sync-head {
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-form {
+  gap: 18px;
+  max-width: 760px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-field {
+  gap: 8px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-field input {
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-message {
+  max-width: 760px;
+  border-radius: 12px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-actions {
+  max-width: 760px;
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-density-card,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-density-card,
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-card-heading,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-card-heading,
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-sync-head,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-sync-head,
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-toggle-row,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-toggle-row,
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-toggle-list,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-toggle-list {
+  border-color: rgba(71, 85, 105, 0.7);
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-density,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-density {
+  border-color: rgba(71, 85, 105, 0.7);
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-density-item,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-density-item {
+  background: transparent;
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-density-item + .settings-redesign-density-item,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-density-item + .settings-redesign-density-item {
+  border-top-color: rgba(71, 85, 105, 0.7);
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-density-item[data-state="on"],
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-density-item[data-state="on"] {
+  background: rgba(99, 102, 241, 0.16);
+}
+
+@media (max-width: 860px) {
+  .settings-dialog.settings-redesign .settings-redesign-brand {
+    right: 18px;
+  }
+
+  .settings-dialog.settings-redesign .settings-redesign-main {
+    padding: 18px;
+  }
+
+  .settings-dialog.settings-redesign .settings-redesign-density-card {
+    border-right: 0;
+    padding-right: 0;
+  }
+}
+
+/* Low-cost markdown open performance: keep offscreen heavy media out of layout/paint. */
+.markdown-preview .markdown-image-frame,
+.markdown-preview .markdown-video-player,
+.typora-raw-html-preview-image,
+.typora-raw-html-preview-video,
+.typora-milkdown-content .ProseMirror img.typora-editable-image,
+.typora-mermaid-diagram,
+.typora-univer-sheet-preview {
+  content-visibility: auto;
+  contain-intrinsic-size: 320px;
+}
+
+.markdown-rich-preview-loading {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  margin: 18px 0;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.markdown-rich-preview-loading span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.markdown-rich-preview-loading span::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: "";
+  opacity: 0.72;
+}
+
+.typora-rich-preview-loading {
+  min-height: 220px;
+  margin: 10px 0 16px;
+}
+
+/* Settings dialog flat layout: fewer card-like containers, clearer settings rows. */
+.settings-dialog.settings-redesign {
+  width: min(1040px, calc(100vw - 64px));
+  height: min(680px, calc(100vh - 64px));
+  border-radius: 22px;
+  background: #f8fafc;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-shell {
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 34px;
+  padding: 72px 44px 40px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-brand {
+  top: 26px;
+  right: 44px;
+  left: 44px;
+  align-items: center;
+  width: auto;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-sidebar {
+  border: 0;
+  border-right: 1px solid #dde6f1;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 24px 8px 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-main {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-reader {
+  grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
+  gap: 38px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-density-card,
+.settings-dialog.settings-redesign .settings-redesign-preview,
+.settings-dialog.settings-redesign .settings-redesign-home,
+.settings-dialog.settings-redesign .settings-redesign-sync {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-preview {
+  border-left: 1px solid #dde6f1;
+  padding-left: 38px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-preview-page {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-card-heading {
+  border-bottom: 1px solid #dde6f1;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-toggle-list {
+  max-width: 720px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-toggle-row {
+  min-height: 58px;
+}
+
+.settings-dialog.settings-redesign .settings-redesign-sync-head {
+  max-width: 760px;
+  border-bottom: 1px solid #dde6f1;
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign,
+:root[data-theme="night"] .settings-dialog.settings-redesign {
+  background: #0f172a;
+}
+
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-sidebar,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-sidebar,
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-preview,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-preview,
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-card-heading,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-card-heading,
+:root[data-theme="dark"] .settings-dialog.settings-redesign .settings-redesign-sync-head,
+:root[data-theme="night"] .settings-dialog.settings-redesign .settings-redesign-sync-head {
+  border-color: rgba(71, 85, 105, 0.72);
+}
+
+@media (max-width: 860px) {
+  .settings-dialog.settings-redesign .settings-redesign-shell {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 64px 18px 18px;
+  }
+
+  .settings-dialog.settings-redesign .settings-redesign-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #dde6f1;
+    padding: 0 0 12px;
+  }
+
+  .settings-dialog.settings-redesign .settings-redesign-preview {
+    border-left: 0;
+    padding-left: 0;
   }
 }

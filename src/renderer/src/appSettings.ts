@@ -25,12 +25,14 @@ export type AppSettings = {
   editorFontSize: string;
   editorLineHeight: string;
   editorMode: "typora" | "source" | "split" | "preview";
+  homeShowNotePanel: boolean;
+  homeShowTodoPanel: boolean;
   settingsVersion: number;
 };
 
 export const appSettingsStorageKey = noteDockStorageKeys.appSettings;
 export const appThemeStorageKey = noteDockStorageKeys.theme;
-export const appSettingsVersion = 3;
+export const appSettingsVersion = 4;
 
 const themeValue = "theme";
 
@@ -66,6 +68,8 @@ export const defaultAppSettings: AppSettings = {
   editorFontSize: themeValue,
   editorLineHeight: themeValue,
   editorMode: "typora",
+  homeShowNotePanel: true,
+  homeShowTodoPanel: true,
   settingsVersion: appSettingsVersion,
 };
 
@@ -396,6 +400,10 @@ function normalizeTypographyValue(
   return getAllowedValue(options, value, themeValue);
 }
 
+function normalizeBooleanSetting(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
 export function normalizeAppSettings(settings: unknown): AppSettings {
   const source =
     settings && typeof settings === "object"
@@ -454,6 +462,14 @@ export function normalizeAppSettings(settings: unknown): AppSettings {
       source.editorMode,
       defaultAppSettings.editorMode,
     ) as AppSettings["editorMode"],
+    homeShowNotePanel: normalizeBooleanSetting(
+      source.homeShowNotePanel,
+      defaultAppSettings.homeShowNotePanel,
+    ),
+    homeShowTodoPanel: normalizeBooleanSetting(
+      source.homeShowTodoPanel,
+      defaultAppSettings.homeShowTodoPanel,
+    ),
     settingsVersion: appSettingsVersion,
   };
 }

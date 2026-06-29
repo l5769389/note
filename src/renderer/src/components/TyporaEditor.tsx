@@ -42,6 +42,8 @@ import {
 } from "lucide-react";
 import {
   forwardRef,
+  lazy,
+  Suspense,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -109,9 +111,6 @@ import {
   getProportionalHeight,
   getSafeAspectRatio,
 } from "../mediaSizing";
-import { MindMapDiagram } from "./MindMapDiagram";
-import { ReactFlowDiagram } from "./ReactFlowDiagram";
-import { UniverSheetPreview } from "./UniverSheetPreview";
 import {
   createAssetFileName,
   isLocalAssetReference,
@@ -168,6 +167,28 @@ export type {
   TyporaFormatCommand,
   TyporaParagraphCommand,
 } from "../editorCommands";
+
+const LazyReactFlowDiagram = lazy(() =>
+  import("./ReactFlowDiagram").then((module) => ({
+    default: module.ReactFlowDiagram,
+  })),
+);
+const LazyMindMapDiagram = lazy(() =>
+  import("./MindMapDiagram").then((module) => ({ default: module.MindMapDiagram })),
+);
+const LazyUniverSheetPreview = lazy(() =>
+  import("./UniverSheetPreview").then((module) => ({
+    default: module.UniverSheetPreview,
+  })),
+);
+
+function EditorRichPreviewFallback({ label }: { label: string }) {
+  return (
+    <figure className="markdown-rich-preview-loading typora-rich-preview-loading">
+      <span>{label}</span>
+    </figure>
+  );
+}
 
 type TyporaEditorProps = {
   documentId: string;
@@ -661,6 +682,20 @@ function createRenderedHtmlPreview(
         element.pause();
       }
     });
+  });
+
+  wrapper.querySelectorAll("img").forEach((element) => {
+    if (!(element instanceof HTMLImageElement)) {
+      return;
+    }
+
+    if (!element.hasAttribute("loading")) {
+      element.loading = "lazy";
+    }
+
+    if (!element.hasAttribute("decoding")) {
+      element.decoding = "async";
+    }
   });
 
   return wrapper;
@@ -2429,7 +2464,13 @@ const mermaidBlockDecoration = $prose(
                       );
                       view.focus();
                     });
-                    root.render(<ReactFlowDiagram code={node.textContent} />);
+                    root.render(
+                      <Suspense
+                        fallback={<EditorRichPreviewFallback label="React Flow" />}
+                      >
+                        <LazyReactFlowDiagram code={node.textContent} />
+                      </Suspense>,
+                    );
 
                     return container;
                   }
@@ -2450,7 +2491,11 @@ const mermaidBlockDecoration = $prose(
                       );
                       view.focus();
                     });
-                    root.render(<MindMapDiagram code={node.textContent} />);
+                    root.render(
+                      <Suspense fallback={<EditorRichPreviewFallback label="Mind Map" />}>
+                        <LazyMindMapDiagram code={node.textContent} />
+                      </Suspense>,
+                    );
 
                     return container;
                   }
@@ -2610,11 +2655,13 @@ function createUniverSheetBlockDecoration(
                     container.className = "typora-univer-sheet-widget";
                     container.setAttribute("aria-label", "Univer sheet");
                     root.render(
-                      <UniverSheetPreview
-                        code={node.textContent}
-                        filePath={filePathRef.current}
-                        onEdit={(code) => onEditUniverSheetRef.current?.(code)}
-                      />,
+                      <Suspense fallback={<EditorRichPreviewFallback label="在线表格" />}>
+                        <LazyUniverSheetPreview
+                          code={node.textContent}
+                          filePath={filePathRef.current}
+                          onEdit={(code) => onEditUniverSheetRef.current?.(code)}
+                        />
+                      </Suspense>,
                     );
 
                     return container;
@@ -3028,7 +3075,9 @@ function createEditableImageDecoration(
                 .join(" ");
               const attrs: Record<string, string> = {
                 class: className,
+                decoding: "async",
                 "data-image-align": meta.align,
+                loading: "lazy",
               };
 
               if (isExcalidrawImage) {

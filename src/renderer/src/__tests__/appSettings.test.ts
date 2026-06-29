@@ -56,6 +56,8 @@ describe("loadAppSettings", () => {
               editorFontSize: "16px",
               editorLineHeight: "2",
               editorMode: "split",
+              homeShowNotePanel: false,
+              homeShowTodoPanel: false,
               settingsVersion: appSettingsVersion,
               imageUploadEndpoint: "https://example.com/upload",
               remoteServerUrl: "https://example.com/sync",
@@ -72,6 +74,8 @@ describe("loadAppSettings", () => {
       editorFontSize: "16px",
       editorLineHeight: "2",
       editorMode: "split",
+      homeShowNotePanel: false,
+      homeShowTodoPanel: false,
       settingsVersion: appSettingsVersion,
     });
   });

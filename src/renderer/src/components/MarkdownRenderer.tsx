@@ -4,6 +4,10 @@ import {
   Children,
   cloneElement,
   isValidElement,
+  lazy,
+  Suspense,
+  useEffect,
+  useState,
   type ComponentPropsWithoutRef,
   type MouseEvent,
   type ReactNode,
@@ -24,11 +28,6 @@ import rehypeRaw from "rehype-raw";
 import remarkDeflist from "remark-deflist";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import { MermaidDiagram } from "./MermaidDiagram";
-import { MindMapDiagram } from "./MindMapDiagram";
-import { ReactFlowDiagram } from "./ReactFlowDiagram";
-import { UniverSheetPreview } from "./UniverSheetPreview";
-import { registerMarkdownLanguages } from "../syntaxHighlighting";
 import {
   getMarkdownAlertByPrefix,
   stripMarkdownAlertMarker,
@@ -56,6 +55,40 @@ const localPreviewUrlPattern = /^typora-local:\/\//i;
 const languagePattern = /language-(\S+)/;
 const videoControlsSafeZone = 44;
 const wikiLinkHrefPrefix = "notedock-wikilink:";
+let markdownLanguagesRegistered = false;
+let markdownLanguageRegistrationPromise: Promise<void> | null = null;
+
+const MermaidDiagram = lazy(() =>
+  import("./MermaidDiagram").then((module) => ({ default: module.MermaidDiagram })),
+);
+const ReactFlowDiagram = lazy(() =>
+  import("./ReactFlowDiagram").then((module) => ({
+    default: module.ReactFlowDiagram,
+  })),
+);
+const MindMapDiagram = lazy(() =>
+  import("./MindMapDiagram").then((module) => ({ default: module.MindMapDiagram })),
+);
+const UniverSheetPreview = lazy(() =>
+  import("./UniverSheetPreview").then((module) => ({
+    default: module.UniverSheetPreview,
+  })),
+);
+
+function ensureMarkdownSyntaxLanguages() {
+  if (markdownLanguagesRegistered) {
+    return Promise.resolve();
+  }
+
+  markdownLanguageRegistrationPromise ??= import("../syntaxHighlighting").then(
+    ({ registerMarkdownLanguages }) => {
+      registerMarkdownLanguages(refractor);
+      markdownLanguagesRegistered = true;
+    },
+  );
+
+  return markdownLanguageRegistrationPromise;
+}
 
 const markdownAlertIcons: Record<TyporaAlertKind, LucideIcon> = {
   caution: OctagonAlert,
@@ -83,8 +116,6 @@ type HighlightNode = {
   type: string;
   value?: string;
 };
-
-registerMarkdownLanguages(refractor);
 
 function markdownUrlTransform(url: string, filePath?: string) {
   if (url.startsWith(wikiLinkHrefPrefix)) {
@@ -225,15 +256,47 @@ function CodeRenderer({
   className?: string;
 }) {
   const language = className?.match(languagePattern)?.[1];
+  const [languagesReady, setLanguagesReady] = useState(markdownLanguagesRegistered);
 
-  if (!language || !refractor.registered(language)) {
+  useEffect(() => {
+    if (!language || languagesReady) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    ensureMarkdownSyntaxLanguages()
+      .then(() => {
+        if (!isCancelled) {
+          setLanguagesReady(true);
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setLanguagesReady(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [language, languagesReady]);
+
+  if (!language || !languagesReady) {
     return <code className={className}>{children}</code>;
   }
 
   const code = String(children ?? "").replace(/\n$/, "");
-  const highlighted = refractor.highlight(code, language) as unknown as {
-    children: HighlightNode[];
-  };
+
+  let highlighted: { children: HighlightNode[] };
+
+  try {
+    highlighted = refractor.highlight(code, language) as unknown as {
+      children: HighlightNode[];
+    };
+  } catch {
+    return <code className={className}>{children}</code>;
+  }
 
   return (
     <code className={className}>
@@ -241,6 +304,14 @@ function CodeRenderer({
         renderHighlightedNode(node, `code-${index}`),
       )}
     </code>
+  );
+}
+
+function RichCodePreviewFallback({ label }: { label: string }) {
+  return (
+    <figure className="markdown-rich-preview-loading">
+      <span>{label}</span>
+    </figure>
   );
 }
 
@@ -326,27 +397,41 @@ function PreRenderer({
 
     if (language === "mermaid") {
       const code = String(child.props.children ?? "").replace(/\n$/, "");
-      return <MermaidDiagram code={code} />;
+      return (
+        <Suspense fallback={<RichCodePreviewFallback label="Mermaid" />}>
+          <MermaidDiagram code={code} />
+        </Suspense>
+      );
     }
 
     if (language && isReactFlowLanguage(language)) {
       const code = String(child.props.children ?? "").replace(/\n$/, "");
-      return <ReactFlowDiagram code={code} onEdit={onEditReactFlow} />;
+      return (
+        <Suspense fallback={<RichCodePreviewFallback label="React Flow" />}>
+          <ReactFlowDiagram code={code} onEdit={onEditReactFlow} />
+        </Suspense>
+      );
     }
 
     if (language && isMindMapLanguage(language)) {
       const code = String(child.props.children ?? "").replace(/\n$/, "");
-      return <MindMapDiagram code={code} onEdit={onEditMindMap} />;
+      return (
+        <Suspense fallback={<RichCodePreviewFallback label="Mind Map" />}>
+          <MindMapDiagram code={code} onEdit={onEditMindMap} />
+        </Suspense>
+      );
     }
 
     if (language && isUniverSheetLanguage(language)) {
       const code = String(child.props.children ?? "").replace(/\n$/, "");
       return (
-        <UniverSheetPreview
-          code={code}
-          filePath={filePath}
-          onEdit={onEditUniverSheet}
-        />
+        <Suspense fallback={<RichCodePreviewFallback label="在线表格" />}>
+          <UniverSheetPreview
+            code={code}
+            filePath={filePath}
+            onEdit={onEditUniverSheet}
+          />
+        </Suspense>
       );
     }
   }
@@ -371,6 +456,8 @@ function MarkdownImageRenderer({
     <span className={`markdown-image-frame markdown-image-${meta.align}`}>
       <img
         {...props}
+        decoding={props.decoding ?? "async"}
+        loading={props.loading ?? "lazy"}
         src={getRenderedResourceUrl(src, filePath)}
         style={imageStyle}
         title={meta.titleText || undefined}
