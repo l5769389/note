@@ -15,13 +15,13 @@ import {
   Copy,
   Download,
   ExternalLink,
+  FileClock,
   FilePlus2,
   FileText,
   Folder,
   FolderOpen,
   FolderPlus,
   Italic,
-  Link2,
   ListChecks,
   ListTree,
   LogOut,
@@ -96,6 +96,7 @@ import type { TyporaEditorHandle } from "./components/TyporaEditor";
 import appLogoUrl from "../../../resources/icon.png";
 import type {
   ImageAlignment,
+  ImageFitMode,
   TyporaEditCommand,
   TyporaFormatCommand,
   TyporaParagraphCommand,
@@ -550,6 +551,7 @@ type EditorContextMenuInfo = {
   };
   hasSelection: boolean;
   imageAlign?: ImageAlignment;
+  imageFit?: ImageFitMode;
   isDocumentReference: boolean;
   isImage: boolean;
   isEditable: boolean;
@@ -1027,6 +1029,8 @@ export function App() {
   const [isDocumentHistoryLoading, setIsDocumentHistoryLoading] =
     useState(false);
   const [isDocumentHistoryRestoring, setIsDocumentHistoryRestoring] =
+    useState(false);
+  const [isDocumentHistoryDialogOpen, setIsDocumentHistoryDialogOpen] =
     useState(false);
   const [isKnowledgeGraphOpen, setIsKnowledgeGraphOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<AppContextMenuState | null>(null);
@@ -2482,17 +2486,26 @@ export function App() {
   useEffect(() => {
     setSelectedDocumentHistoryVersion(null);
 
-    if (!activeDocument?.filePath || !isMarkdownDocument(activeDocument)) {
+    if (
+      !isDocumentHistoryDialogOpen ||
+      !activeDocument?.filePath ||
+      !isMarkdownDocument(activeDocument)
+    ) {
       setDocumentHistoryVersions([]);
       return;
     }
 
     void refreshDocumentHistory(activeDocument.filePath);
-  }, [activeDocument?.filePath, activeDocument?.documentType]);
+  }, [
+    activeDocument?.filePath,
+    activeDocument?.documentType,
+    isDocumentHistoryDialogOpen,
+  ]);
 
   useEffect(() => {
     if (
       saveState !== "saved" ||
+      !isDocumentHistoryDialogOpen ||
       !activeDocument?.filePath ||
       !isMarkdownDocument(activeDocument)
     ) {
@@ -2500,7 +2513,12 @@ export function App() {
     }
 
     void refreshDocumentHistory(activeDocument.filePath);
-  }, [saveState, activeDocument?.filePath, activeDocument?.documentType]);
+  }, [
+    saveState,
+    activeDocument?.filePath,
+    activeDocument?.documentType,
+    isDocumentHistoryDialogOpen,
+  ]);
 
   function setActiveDocument(documentId: string) {
     setIsHomeOpen(false);
@@ -5137,6 +5155,38 @@ export function App() {
     return "left";
   }
 
+  function getImageContextMenuFit(
+    imageElement: HTMLImageElement | null | undefined,
+  ): ImageFitMode | undefined {
+    if (!imageElement) {
+      return undefined;
+    }
+
+    const dataFit = imageElement.dataset.imageFit;
+
+    if (dataFit === "auto" || dataFit === "contain" || dataFit === "cover") {
+      return dataFit;
+    }
+
+    const imageFrame = imageElement.closest<HTMLElement>(".markdown-image-frame");
+
+    if (imageFrame?.classList.contains("markdown-image-fit-contain")) {
+      return "contain";
+    }
+
+    if (imageFrame?.classList.contains("markdown-image-fit-cover")) {
+      return "cover";
+    }
+
+    const objectFit = imageElement.style.objectFit.trim().toLowerCase();
+
+    if (objectFit === "contain" || objectFit === "cover") {
+      return objectFit;
+    }
+
+    return "auto";
+  }
+
   async function getEditorContextMenuInfo(
     event: ReactMouseEvent<HTMLElement>,
   ): Promise<EditorContextMenuInfo> {
@@ -5195,6 +5245,7 @@ export function App() {
       documentReference,
       hasSelection: selectedText.length > 0,
       imageAlign: getImageContextMenuAlignment(imageElement),
+      imageFit: getImageContextMenuFit(imageElement),
       isDocumentReference: Boolean(documentReferenceElement),
       isImage: Boolean(imageElement),
       isEditable,
@@ -5374,6 +5425,34 @@ export function App() {
               label: "布局",
               type: "iconGroup" as const,
             },
+            {
+              actions: [
+                {
+                  active:
+                    !contextInfo.imageFit || contextInfo.imageFit === "auto",
+                  icon: <Maximize2 size={16} />,
+                  label: "自动",
+                  onSelect: () =>
+                    runFormatCommand({ fit: "auto", type: "imageFit" }),
+                },
+                {
+                  active: contextInfo.imageFit === "contain",
+                  icon: <Square size={16} />,
+                  label: "等比",
+                  onSelect: () =>
+                    runFormatCommand({ fit: "contain", type: "imageFit" }),
+                },
+                {
+                  active: contextInfo.imageFit === "cover",
+                  icon: <Rows3 size={16} />,
+                  label: "裁剪",
+                  onSelect: () =>
+                    runFormatCommand({ fit: "cover", type: "imageFit" }),
+                },
+              ],
+              label: "显示",
+              type: "iconGroup" as const,
+            },
             { type: "separator" as const },
           ]
         : []),
@@ -5517,15 +5596,9 @@ export function App() {
     const fileName = getPathLabel(filePath);
     const canUseFileIpc = Boolean(window.desktop);
     const isCloudEntry = isCloudSidebarEntryPath(filePath);
-    const sourceDocument = getDocumentByFilePath(filePath);
-    const canUseFileAsLinkSource = Boolean(sourceDocument);
-    const canInsertFileAsReference = Boolean(
-      sourceDocument &&
-        activeDocument &&
-        isMarkdownDocument(activeDocument) &&
-        normalizeFilePathKey(sourceDocument.filePath) !==
-          normalizeFilePathKey(activeDocument.filePath),
-    );
+    const canShowHistory =
+      /\.(?:md|markdown|mdown)$/i.test(filePath) &&
+      Boolean(window.desktop?.listDocumentHistory);
 
     openContextMenu(
       event,
@@ -5542,26 +5615,13 @@ export function App() {
           onSelect: () => startRenamingEntry(filePath, "file"),
         },
         {
-          disabled: !canInsertFileAsReference,
-          icon: <BookOpenText size={15} />,
-          label: "插入为引用文档",
+          disabled: !canShowHistory,
+          icon: <FileClock size={15} />,
+          label: "历史记录",
           onSelect: () => {
-            if (sourceDocument) {
-              insertDocumentReferenceFromDocument(sourceDocument);
-            }
+            setIsDocumentHistoryDialogOpen(true);
+            void openFileFromTree(filePath);
           },
-        },
-        {
-          disabled: !canRelateDocumentFile(filePath),
-          icon: <Link2 size={15} />,
-          label: "添加到相关文档",
-          onSelect: () => relateDocumentFromFile(filePath),
-        },
-        {
-          disabled: !canUseFileAsLinkSource,
-          icon: <BookOpenText size={15} />,
-          label: "选择相关文档...",
-          onSelect: () => openDocumentLinkPicker(sourceDocument),
         },
         { type: "separator" },
         {
@@ -8770,7 +8830,6 @@ export function App() {
           <Suspense fallback={null}>
             <DocumentInspectorSidebar
               activeDocument={activeDocument}
-              historyPanel={inspectorHistoryPanel}
               isOpen={isDocumentInspectorOpen}
               knowledgePanel={inspectorKnowledgePanel}
               relationsPanel={renderKnowledgeRelationsPanel()}
@@ -9399,6 +9458,36 @@ export function App() {
         </Dialog.Root>
 
         <Dialog.Root
+          open={isDocumentHistoryDialogOpen}
+          onOpenChange={setIsDocumentHistoryDialogOpen}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="document-history-dialog-overlay" />
+            <Dialog.Content className="document-history-dialog">
+              <Dialog.Title className="document-history-dialog-title">
+                历史记录
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button
+                  className="document-history-dialog-close"
+                  type="button"
+                  aria-label="关闭历史记录"
+                >
+                  <X size={18} />
+                </button>
+              </Dialog.Close>
+              {inspectorHistoryPanel ?? (
+                <div className="document-history-empty">
+                  <FileClock size={18} />
+                  <strong>暂无可查看的历史记录</strong>
+                  <span>请先打开 Markdown 文档。</span>
+                </div>
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root
           open={Boolean(documentImagePreview)}
           onOpenChange={(open) => {
             if (!open) {
@@ -9424,6 +9513,11 @@ export function App() {
                 <>
                   <div
                     className="document-image-preview-viewport"
+                    onMouseDown={(event) => {
+                      if (event.target === event.currentTarget) {
+                        closeDocumentImagePreview();
+                      }
+                    }}
                     onWheel={(event) => {
                       event.preventDefault();
                       changeDocumentImagePreviewZoom(
@@ -9435,6 +9529,7 @@ export function App() {
                       alt={documentImagePreview.alt}
                       draggable={false}
                       src={documentImagePreview.src}
+                      onMouseDown={(event) => event.stopPropagation()}
                       style={{
                         transform: `scale(${documentImagePreviewZoom})`,
                       }}

@@ -1537,6 +1537,15 @@ textarea,
   margin-left: auto;
 }
 
+.editor-layout .markdown-preview > *,
+.editor-layout .typora-raw-html-preview,
+.editor-layout .typora-milkdown-content .ProseMirror {
+  width: 100%;
+  max-width: none;
+  margin-right: 0;
+  margin-left: 0;
+}
+
 .markdown-preview > *:first-child,
 .typora-editor > *:first-child {
   margin-top: 0;
@@ -2227,6 +2236,8 @@ textarea,
 
 .markdown-preview .markdown-image-frame img {
   height: auto;
+  max-height: min(72vh, 720px);
+  object-fit: contain;
 }
 
 .markdown-preview details {
@@ -3745,6 +3756,7 @@ textarea,
 .typora-milkdown-content .ProseMirror img.typora-editable-image {
   display: inline-block;
   height: auto;
+  max-height: min(72vh, 720px);
   max-width: 100%;
   margin: 0.15em 0.35em 0.15em 0;
   border-color: transparent;
@@ -3753,6 +3765,19 @@ textarea,
   transition:
     box-shadow 140ms ease,
     border-color 140ms ease;
+}
+
+.markdown-preview .markdown-image-fit-contain img,
+.typora-milkdown-content .ProseMirror img.typora-editable-image-fit-contain {
+  max-height: min(58vh, 560px);
+  object-fit: contain;
+}
+
+.markdown-preview .markdown-image-fit-cover img,
+.typora-milkdown-content .ProseMirror img.typora-editable-image-fit-cover {
+  width: min(100%, 760px);
+  height: min(42vh, 420px);
+  object-fit: cover;
 }
 
 .typora-milkdown-content .ProseMirror img.typora-editable-image-left:not(.typora-editable-image-explicit-align) {
@@ -8916,6 +8941,88 @@ textarea,
   overflow: hidden;
 }
 
+.document-history-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 92;
+  background: rgba(15, 23, 42, 0.44);
+  backdrop-filter: blur(8px);
+}
+
+.document-history-dialog {
+  position: fixed;
+  z-index: 93;
+  top: 50%;
+  left: 50%;
+  width: min(1060px, calc(100vw - 56px));
+  max-height: min(760px, calc(100vh - 56px));
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  border: 1px solid #d8e1ee;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 22px;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.24);
+}
+
+.document-history-dialog-title {
+  margin: 0 0 14px;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 860;
+}
+
+.document-history-dialog-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #dbe3f1;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #263244;
+}
+
+.document-history-dialog-close:hover {
+  border-color: #c7d2fe;
+  background: #f6f7ff;
+  color: #5147f5;
+}
+
+.document-history-dialog .document-history-panel {
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  max-height: calc(min(760px, 100vh - 56px) - 88px);
+  overflow: hidden;
+  padding: 0;
+}
+
+.document-history-dialog .document-history-header {
+  grid-column: 1;
+}
+
+.document-history-dialog .document-history-list,
+.document-history-dialog .document-history-empty {
+  grid-column: 1;
+}
+
+.document-history-dialog .document-history-list {
+  max-height: none;
+  min-height: 0;
+}
+
+.document-history-dialog .document-history-preview {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  min-height: 0;
+  border-top: 0;
+  border-left: 1px solid #e5eaf2;
+  padding-top: 0;
+  padding-left: 18px;
+}
+
 .document-history-panel {
   display: grid;
   min-width: 0;
@@ -9123,6 +9230,28 @@ textarea,
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.document-history-preview-markdown {
+  min-height: 0;
+  max-height: min(600px, calc(100vh - 180px));
+  overflow: auto;
+  border: 1px solid #dde5f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.document-history-preview-markdown .markdown-preview {
+  min-height: auto;
+  overflow: visible;
+  padding: 18px;
+}
+
+.document-history-preview-markdown .markdown-preview > * {
+  width: 100%;
+  max-width: none;
+  margin-right: 0;
+  margin-left: 0;
 }
 
 .inspector-resizer {
@@ -11003,7 +11132,7 @@ textarea,
   min-width: 0;
   min-height: 0;
   place-items: center;
-  overflow: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
 }
 
@@ -16478,6 +16607,15 @@ body.home-todo-global-dragging * {
 :root[data-theme] .typora-milkdown-content .ProseMirror,
 :root[data-theme] .typora-mdx-content {
   max-width: min(var(--editor-content-width), 100%);
+}
+
+:root[data-theme] .editor-layout .markdown-preview > *,
+:root[data-theme] .editor-layout .typora-raw-html-preview,
+:root[data-theme] .editor-layout .typora-milkdown-content .ProseMirror {
+  width: 100%;
+  max-width: none;
+  margin-right: 0;
+  margin-left: 0;
 }
 
 @media (max-width: 860px) {

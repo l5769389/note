@@ -469,7 +469,7 @@ function applyRawHtmlImageAlignment(
 
 function patchRawHtmlImage(
   value: string,
-  patch: Partial<Pick<ImageMeta, "align" | "width">>,
+  patch: Partial<Pick<ImageMeta, "align" | "fit" | "width">>,
 ) {
   const host = document.createElement("div");
   host.innerHTML = value.trim();
@@ -499,6 +499,18 @@ function patchRawHtmlImage(
 
   if (patch.align) {
     applyRawHtmlImageAlignment(image, patch.align);
+  }
+
+  if (patch.fit) {
+    if (patch.fit === "auto") {
+      image.style.removeProperty("aspect-ratio");
+      image.style.removeProperty("max-height");
+      image.style.removeProperty("object-fit");
+    } else {
+      image.style.maxWidth = "100%";
+      image.style.maxHeight = "58vh";
+      image.style.objectFit = patch.fit;
+    }
   }
 
   if (!image.getAttribute("style")?.trim()) {
@@ -2066,6 +2078,47 @@ function focusEditorAtMousePosition(view: EditorView, event: ReactMouseEvent<HTM
   return true;
 }
 
+function isTrailingTextBlockWhitespaceClick(event: ReactMouseEvent<HTMLElement>) {
+  const target = event.target instanceof Element ? event.target : null;
+  const textBlock = target?.closest<HTMLElement>(
+    "p, li, h1, h2, h3, h4, h5, h6, blockquote",
+  );
+
+  if (!textBlock || target?.closest("pre, table, button, input, textarea, select")) {
+    return false;
+  }
+
+  const blockRect = textBlock.getBoundingClientRect();
+
+  if (
+    event.clientX <= blockRect.left ||
+    event.clientX >= blockRect.right ||
+    event.clientY < blockRect.top ||
+    event.clientY > blockRect.bottom
+  ) {
+    return false;
+  }
+
+  const range = document.createRange();
+  range.selectNodeContents(textBlock);
+
+  const inlineRects = Array.from(range.getClientRects()).filter(
+    (rect) =>
+      rect.width > 0 &&
+      event.clientY >= rect.top - 3 &&
+      event.clientY <= rect.bottom + 3,
+  );
+  range.detach();
+
+  if (!inlineRects.length) {
+    return false;
+  }
+
+  const rightEdge = Math.max(...inlineRects.map((rect) => rect.right));
+
+  return event.clientX > rightEdge + 4;
+}
+
 function shouldRecoverEditorFocusOnMouseDown(
   event: ReactMouseEvent<HTMLElement>,
   root: HTMLElement,
@@ -2093,7 +2146,7 @@ function shouldRecoverEditorFocusOnMouseDown(
     return true;
   }
 
-  return target === proseMirror;
+  return target === proseMirror || isTrailingTextBlockWhitespaceClick(event);
 }
 
 function shouldFocusDocumentEndOnMouseDown(
@@ -3071,6 +3124,7 @@ function createEditableImageDecoration(
                 "typora-editable-image",
                 isExcalidrawImage ? "typora-editable-image-excalidraw" : "",
                 `typora-editable-image-${meta.align}`,
+                `typora-editable-image-fit-${meta.fit}`,
                 meta.hasExplicitAlign
                   ? "typora-editable-image-explicit-align"
                   : "typora-editable-image-inline",
@@ -3081,6 +3135,7 @@ function createEditableImageDecoration(
                 class: className,
                 decoding: "async",
                 "data-image-align": meta.align,
+                "data-image-fit": meta.fit,
                 loading: "lazy",
               };
 
@@ -3522,7 +3577,7 @@ function getSelectedLinkHref(view: EditorView) {
 function applyImageMetaPatch(
   view: EditorView,
   pos: number,
-  patch: Partial<Pick<ImageMeta, "align" | "width">>,
+  patch: Partial<Pick<ImageMeta, "align" | "fit" | "width">>,
 ) {
   const node = view.state.doc.nodeAt(pos);
 
@@ -3545,7 +3600,7 @@ function applyImageMetaPatch(
 function applyRenderableImageMetaPatch(
   view: EditorView,
   pos: number,
-  patch: Partial<Pick<ImageMeta, "align" | "width">>,
+  patch: Partial<Pick<ImageMeta, "align" | "fit" | "width">>,
 ) {
   const node = view.state.doc.nodeAt(pos);
 
@@ -5977,6 +6032,38 @@ function MilkdownRuntime({
                 contextImageTarget &&
                 applyRenderableImageMetaPatch(view, contextImageTarget.pos, {
                   align: command.align,
+                })
+              ) {
+                requestAnimationFrame(() => {
+                  if (contextImageTarget.source === "html") {
+                    updateImageToolbarFromRawHtmlImageElement(
+                      getRawHtmlPreviewImageElement(contextImageTarget.pos),
+                    );
+                  } else {
+                    updateImageToolbarFromView(view);
+                  }
+                });
+                break;
+              }
+              break;
+            }
+            case "imageFit": {
+              const image = getSelectedImage(view);
+
+              if (image) {
+                applyRenderableImageMetaPatch(view, image.pos, {
+                  fit: command.fit,
+                });
+                requestAnimationFrame(() => updateImageToolbarFromView(view));
+                break;
+              }
+
+              const contextImageTarget = contextImageTargetRef.current;
+
+              if (
+                contextImageTarget &&
+                applyRenderableImageMetaPatch(view, contextImageTarget.pos, {
+                  fit: command.fit,
                 })
               ) {
                 requestAnimationFrame(() => {

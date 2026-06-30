@@ -85,6 +85,15 @@ describe("source editor command helpers", () => {
 
     expect(
       createSourceFormatCommandEdit({
+        command: { fit: "cover", type: "imageFit" },
+        content: '![logo](logo.png "Logo align=center")',
+        selectionEnd: 3,
+        selectionStart: 3,
+      })?.content,
+    ).toBe('![logo](logo.png "Logo align=center fit=cover")');
+
+    expect(
+      createSourceFormatCommandEdit({
         command: { type: "imageResetSize" },
         content: '![logo](logo.png "Logo width=400 align=center")',
         selectionEnd: 3,

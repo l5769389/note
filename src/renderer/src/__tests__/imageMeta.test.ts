@@ -13,21 +13,35 @@ describe("image metadata helpers", () => {
   it("parses image titles, width, and alignment metadata", () => {
     expect(parseImageMeta("Cover image width=2048px align=Center")).toEqual({
       align: "center",
+      fit: "auto",
       hasExplicitAlign: true,
+      hasExplicitFit: false,
       titleText: "Cover image",
       width: 900,
     });
     expect(parseImageMeta("width=40 align=right")).toEqual({
       align: "right",
+      fit: "auto",
       hasExplicitAlign: true,
+      hasExplicitFit: false,
       titleText: "",
       width: 120,
     });
     expect(parseImageMeta()).toEqual({
       align: "left",
+      fit: "auto",
       hasExplicitAlign: false,
+      hasExplicitFit: false,
       titleText: "",
       width: undefined,
+    });
+    expect(parseImageMeta("Preview fit=cover width=500")).toEqual({
+      align: "left",
+      fit: "cover",
+      hasExplicitAlign: false,
+      hasExplicitFit: true,
+      titleText: "Preview",
+      width: 500,
     });
   });
 
@@ -36,7 +50,9 @@ describe("image metadata helpers", () => {
     expect(
       serializeImageMeta({
         align: "right",
+        fit: "auto",
         hasExplicitAlign: true,
+        hasExplicitFit: false,
         titleText: "Logo",
         width: 1200,
       }),
@@ -44,7 +60,9 @@ describe("image metadata helpers", () => {
     expect(
       serializeImageMeta({
         align: "left",
+        fit: "auto",
         hasExplicitAlign: true,
+        hasExplicitFit: false,
         titleText: "",
         width: undefined,
       }),
@@ -52,11 +70,23 @@ describe("image metadata helpers", () => {
     expect(
       serializeImageMeta({
         align: "left",
+        fit: "auto",
         hasExplicitAlign: false,
+        hasExplicitFit: false,
         titleText: "",
         width: undefined,
       }),
     ).toBe("");
+    expect(
+      serializeImageMeta({
+        align: "left",
+        fit: "contain",
+        hasExplicitAlign: false,
+        hasExplicitFit: true,
+        titleText: "",
+        width: undefined,
+      }),
+    ).toBe("fit=contain");
   });
 
   it("patches image width and alignment without losing the human title", () => {
@@ -72,6 +102,10 @@ describe("image metadata helpers", () => {
     expect(patchImageMetaTitle("Diagram width=320", { align: "center" })).toBe(
       "Diagram width=320 align=center",
     );
+    expect(patchImageMetaTitle("Diagram width=320", { fit: "cover" })).toBe(
+      "Diagram width=320 fit=cover",
+    );
+    expect(patchImageMetaTitle("Diagram fit=cover", { fit: "auto" })).toBe("Diagram");
   });
 
   it("reads and updates Excalidraw scene references inside title text", () => {

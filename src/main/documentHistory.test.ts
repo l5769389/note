@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createDocumentHistoryVersion,
@@ -19,6 +19,7 @@ async function makeTempDir() {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(
     tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })),
   );
@@ -67,6 +68,47 @@ describe("document history", () => {
     await expect(
       listDocumentHistoryVersions({ filePath, historyRootPath }),
     ).resolves.toHaveLength(1);
+  });
+
+  it("throttles automatic snapshots for five minutes", async () => {
+    const root = await makeTempDir();
+    const historyRootPath = join(root, "history");
+    const filePath = join(root, "note.md");
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    await maybeCreateDocumentHistoryVersion({
+      filePath,
+      historyRootPath,
+      nextContent: "next",
+      previousContent: "first",
+    });
+    await expect(
+      listDocumentHistoryVersions({ filePath, historyRootPath }),
+    ).resolves.toHaveLength(1);
+
+    vi.setSystemTime(new Date("2026-01-01T00:04:59.000Z"));
+    await maybeCreateDocumentHistoryVersion({
+      filePath,
+      historyRootPath,
+      nextContent: "next 2",
+      previousContent: "second",
+    });
+    await expect(
+      listDocumentHistoryVersions({ filePath, historyRootPath }),
+    ).resolves.toHaveLength(1);
+
+    vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+    await maybeCreateDocumentHistoryVersion({
+      filePath,
+      historyRootPath,
+      nextContent: "next 3",
+      previousContent: "third",
+    });
+
+    await expect(
+      listDocumentHistoryVersions({ filePath, historyRootPath }),
+    ).resolves.toHaveLength(2);
   });
 
   it("reads the full content for a selected history version", async () => {

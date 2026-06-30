@@ -1,4 +1,4 @@
-import type { ImageAlignment } from "./editorCommands";
+import type { ImageAlignment, ImageFitMode } from "./editorCommands";
 import { parseImageMeta, serializeImageMeta } from "./imageMeta";
 
 export type TextEditResult = {
@@ -214,24 +214,29 @@ export function createRemoveMarkdownLinkEdit(
 
 export function patchMarkdownImageTitle(
   title: string | undefined,
-  patch: { align?: ImageAlignment; resetWidth?: boolean },
+  patch: { align?: ImageAlignment; fit?: ImageFitMode; resetWidth?: boolean },
 ) {
   const meta = parseImageMeta(title);
   const hasExplicitAlign = patch.align !== undefined
     ? true
     : meta.hasExplicitAlign;
+  const hasExplicitFit = patch.fit !== undefined
+    ? patch.fit !== "auto"
+    : meta.hasExplicitFit;
 
   return serializeImageMeta({
     ...meta,
     align: patch.align ?? meta.align,
+    fit: patch.fit ?? meta.fit,
     hasExplicitAlign,
+    hasExplicitFit,
     width: patch.resetWidth ? undefined : meta.width,
   });
 }
 
 export function createMarkdownImageEdit(
   range: SelectedTextRange,
-  patch: { align?: ImageAlignment; resetWidth?: boolean },
+  patch: { align?: ImageAlignment; fit?: ImageFitMode; resetWidth?: boolean },
 ): TextEditResult | null {
   const line = range.content.slice(range.lineStart, range.lineEnd);
   const imagePattern = /!\[([^\]]*)]\((\S+?)(?:\s+"([^"]*)")?\)/g;

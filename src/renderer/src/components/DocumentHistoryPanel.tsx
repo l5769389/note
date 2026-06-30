@@ -4,6 +4,7 @@ import type {
   DocumentHistoryVersionWithContent,
   MarkdownDocument,
 } from "../types";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 type DocumentHistoryPanelProps = {
   activeDocument: MarkdownDocument;
@@ -160,7 +161,11 @@ export function DocumentHistoryPanel({
               恢复
             </button>
           </div>
-          <pre>{selectedVersion.content}</pre>
+          <div className="document-history-preview-markdown">
+            <MarkdownRenderer filePath={activeDocument.filePath}>
+              {selectedVersion.content}
+            </MarkdownRenderer>
+          </div>
         </div>
       ) : null}
     </section>

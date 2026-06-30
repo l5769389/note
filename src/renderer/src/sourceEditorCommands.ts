@@ -101,9 +101,11 @@ export function createSourceFormatCommandEdit({
       return link ? createRemoveMarkdownLinkEdit(content, link) : null;
     }
     case "imageAlign":
+    case "imageFit":
     case "imageResetSize":
       return createMarkdownImageEdit(range, {
         align: command.type === "imageAlign" ? command.align : undefined,
+        fit: command.type === "imageFit" ? command.fit : undefined,
         resetWidth: command.type === "imageResetSize",
       });
     case "copyLink":

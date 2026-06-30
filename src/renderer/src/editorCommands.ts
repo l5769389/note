@@ -1,4 +1,5 @@
 export type ImageAlignment = "left" | "center" | "right";
+export type ImageFitMode = "auto" | "contain" | "cover";
 
 export type TyporaEditCommand =
   | "copy"
@@ -19,6 +20,7 @@ export type TyporaFormatCommand =
   | { type: "comment" }
   | { type: "copyLink" }
   | { type: "imageAlign"; align: ImageAlignment }
+  | { type: "imageFit"; fit: ImageFitMode }
   | { type: "imageResetSize" }
   | { type: "inlineCode" }
   | { type: "italic" }

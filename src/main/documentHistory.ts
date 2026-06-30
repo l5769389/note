@@ -22,7 +22,7 @@ export type DocumentHistoryVersionWithContent = DocumentHistoryVersion & {
 };
 
 const markdownHistoryExtensions = new Set([".md", ".markdown", ".mdown"]);
-const documentHistoryMinIntervalMs = 10 * 60 * 1000;
+const documentHistoryMinIntervalMs = 5 * 60 * 1000;
 const documentHistoryLargeChangeThreshold = 640;
 const documentHistoryMaxVersions = 80;
 

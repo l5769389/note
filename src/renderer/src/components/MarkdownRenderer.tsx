@@ -460,13 +460,16 @@ function MarkdownImageRenderer({
       className={[
         "markdown-image-frame",
         `markdown-image-${meta.align}`,
+        `markdown-image-fit-${meta.fit}`,
         meta.hasExplicitAlign
           ? "markdown-image-explicit-align"
           : "markdown-image-inline",
+        meta.hasExplicitFit ? "markdown-image-explicit-fit" : "",
       ].join(" ")}
     >
       <img
         {...props}
+        data-image-fit={meta.fit}
         decoding={props.decoding ?? "async"}
         loading={props.loading ?? "lazy"}
         src={renderedSrc || undefined}
