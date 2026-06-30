@@ -87,6 +87,7 @@ type HomeDashboardProps = {
   onToggleTodo: (todoId: string) => void;
   onUseToday: () => void;
   recentDocuments: MarkdownDocument[];
+  getDocumentPathLabel?: (document: MarkdownDocument) => string;
   remainingTodoCount: number;
   selectedMonthLabel: string;
   selectedYear: number;
@@ -165,6 +166,7 @@ export function HomeDashboard({
   onToggleTodo,
   onUseToday,
   recentDocuments,
+  getDocumentPathLabel,
   remainingTodoCount,
   selectedMonthLabel,
   selectedYear,
@@ -276,6 +278,12 @@ export function HomeDashboard({
                   );
 
                   return (
+                    (() => {
+                      const pathLabel =
+                        getDocumentPathLabel?.(document) ??
+                        getDocumentPathPreview(document, workspacePath);
+
+                      return (
                     <button
                       aria-current={isActiveRecentDocument ? "page" : undefined}
                       data-document-path={document.filePath}
@@ -288,10 +296,7 @@ export function HomeDashboard({
                         .filter(Boolean)
                         .join(" ")}
                       key={document.id}
-                      title={`${getDocumentDisplayName(document)}\n${getDocumentPathPreview(
-                        document,
-                        workspacePath,
-                      )}`}
+                      title={`${getDocumentDisplayName(document)}\n${pathLabel}`}
                       type="button"
                       onClick={() => void onOpenRecentDocument(document)}
                       onContextMenu={(event) =>
@@ -300,11 +305,13 @@ export function HomeDashboard({
                     >
                       <FileText size={16} />
                       <strong>{getDocumentDisplayName(document)}</strong>
-                      <span>{getDocumentPathPreview(document, workspacePath)}</span>
+                      <span>{pathLabel}</span>
                       <time dateTime={getRecentDocumentTimestamp(document)}>
                         {formatRecentTimestamp(getRecentDocumentTimestamp(document))}
                       </time>
                     </button>
+                      );
+                    })()
                   );
                 })
               ) : (

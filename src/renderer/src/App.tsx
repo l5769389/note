@@ -163,6 +163,7 @@ import {
   createExcalidrawImageTitle,
   findExcalidrawMarkdownImage,
 } from "./drawingDocument";
+import { getDefaultImageFitMode } from "./imageMeta";
 import {
   acknowledgeSavedFileContent as acknowledgeFileContent,
   createSavedFileContentByPath,
@@ -1032,6 +1033,17 @@ export function App() {
     useState(false);
   const [isDocumentHistoryDialogOpen, setIsDocumentHistoryDialogOpen] =
     useState(false);
+  const [historyBrowserDocumentPath, setHistoryBrowserDocumentPath] =
+    useState<string | null>(null);
+  const [historyBrowserVersions, setHistoryBrowserVersions] = useState<
+    DocumentHistoryVersion[]
+  >([]);
+  const [selectedHistoryBrowserVersion, setSelectedHistoryBrowserVersion] =
+    useState<DocumentHistoryVersionWithContent | null>(null);
+  const [isHistoryBrowserLoading, setIsHistoryBrowserLoading] =
+    useState(false);
+  const [isHistoryBrowserRestoring, setIsHistoryBrowserRestoring] =
+    useState(false);
   const [isKnowledgeGraphOpen, setIsKnowledgeGraphOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<AppContextMenuState | null>(null);
   const [findPanelMode, setFindPanelMode] = useState<FindPanelMode>("find");
@@ -1654,6 +1666,26 @@ export function App() {
         ),
     [workspace.documents],
   );
+  const historyBrowserDocuments = useMemo(
+    () =>
+      recentDocuments
+        .filter((document) => document.filePath && isMarkdownDocument(document))
+        .slice(0, 10),
+    [recentDocuments],
+  );
+  const historyBrowserDocument = useMemo(
+    () =>
+      historyBrowserDocuments.find(
+        (document) =>
+          document.filePath &&
+          historyBrowserDocumentPath &&
+          normalizeFilePathKey(document.filePath) ===
+            normalizeFilePathKey(historyBrowserDocumentPath),
+      ) ??
+      historyBrowserDocuments[0] ??
+      null,
+    [historyBrowserDocumentPath, historyBrowserDocuments],
+  );
   const recentDocumentFilePaths = useMemo(
     () =>
       Array.from(
@@ -1924,6 +1956,10 @@ export function App() {
 
         return versions.some((version) => version.id === current.id) ? current : null;
       });
+
+      if (!selectedDocumentHistoryVersion && versions[0]) {
+        void selectDocumentHistoryVersion(versions[0], filePath);
+      }
     } catch {
       setDocumentHistoryVersions([]);
       setSelectedDocumentHistoryVersion(null);
@@ -1932,8 +1968,11 @@ export function App() {
     }
   }
 
-  async function selectDocumentHistoryVersion(version: DocumentHistoryVersion) {
-    if (!activeDocument?.filePath || !window.desktop?.readDocumentHistoryVersion) {
+  async function selectDocumentHistoryVersion(
+    version: DocumentHistoryVersion,
+    filePath = activeDocument?.filePath,
+  ) {
+    if (!filePath || !window.desktop?.readDocumentHistoryVersion) {
       return;
     }
 
@@ -1941,7 +1980,7 @@ export function App() {
 
     try {
       const versionWithContent = await window.desktop.readDocumentHistoryVersion({
-        filePath: activeDocument.filePath,
+        filePath,
         versionId: version.id,
       });
 
@@ -1953,39 +1992,26 @@ export function App() {
     }
   }
 
-  async function createActiveDocumentHistorySnapshot() {
-    if (
-      !activeDocument?.filePath ||
-      !isMarkdownDocument(activeDocument) ||
-      !window.desktop?.createDocumentHistoryVersion
-    ) {
+  async function clearActiveDocumentHistory() {
+    if (!activeDocument?.filePath || !window.desktop?.clearDocumentHistory) {
       return;
     }
 
-    setIsDocumentHistoryLoading(true);
+    const confirmed = await showAppConfirm({
+      cancelLabel: "取消",
+      confirmLabel: "清空历史",
+      description: "只会清空当前文档的历史版本，不会删除文档本身。",
+      title: "清空当前文档历史？",
+      tone: "warning",
+    });
 
-    try {
-      const version = await window.desktop.createDocumentHistoryVersion({
-        content: activeDocument.content,
-        filePath: activeDocument.filePath,
-        reason: "manual",
-      });
-
-      await refreshDocumentHistory(activeDocument.filePath);
-
-      if (version) {
-        void selectDocumentHistoryVersion(version);
-      }
-    } catch {
-      void showAppAlert({
-        confirmLabel: "知道了",
-        description: "当前版本记录失败，请确认文档仍然可访问。",
-        title: "记录历史版本失败",
-        tone: "danger",
-      });
-    } finally {
-      setIsDocumentHistoryLoading(false);
+    if (!confirmed) {
+      return;
     }
+
+    await window.desktop.clearDocumentHistory(activeDocument.filePath);
+    setDocumentHistoryVersions([]);
+    setSelectedDocumentHistoryVersion(null);
   }
 
   async function restoreActiveDocumentHistoryVersion(
@@ -2041,6 +2067,129 @@ export function App() {
     } finally {
       setIsDocumentHistoryRestoring(false);
     }
+  }
+
+  async function refreshHistoryBrowser(filePath = historyBrowserDocument?.filePath) {
+    if (!filePath || !window.desktop?.listDocumentHistory) {
+      setHistoryBrowserVersions([]);
+      setSelectedHistoryBrowserVersion(null);
+      return;
+    }
+
+    setIsHistoryBrowserLoading(true);
+
+    try {
+      const versions = await window.desktop.listDocumentHistory(filePath);
+      setHistoryBrowserVersions(versions);
+
+      const selectedVersionId = selectedHistoryBrowserVersion?.id;
+      const nextVersion =
+        versions.find((version) => version.id === selectedVersionId) ?? versions[0];
+
+      if (nextVersion) {
+        const versionWithContent = await window.desktop.readDocumentHistoryVersion?.({
+          filePath,
+          versionId: nextVersion.id,
+        });
+
+        setSelectedHistoryBrowserVersion(versionWithContent ?? null);
+      } else {
+        setSelectedHistoryBrowserVersion(null);
+      }
+    } catch {
+      setHistoryBrowserVersions([]);
+      setSelectedHistoryBrowserVersion(null);
+    } finally {
+      setIsHistoryBrowserLoading(false);
+    }
+  }
+
+  async function selectHistoryBrowserVersion(
+    version: DocumentHistoryVersion,
+    filePath = historyBrowserDocument?.filePath,
+  ) {
+    if (!filePath || !window.desktop?.readDocumentHistoryVersion) {
+      return;
+    }
+
+    setIsHistoryBrowserLoading(true);
+
+    try {
+      const versionWithContent = await window.desktop.readDocumentHistoryVersion({
+        filePath,
+        versionId: version.id,
+      });
+
+      setSelectedHistoryBrowserVersion(versionWithContent);
+    } finally {
+      setIsHistoryBrowserLoading(false);
+    }
+  }
+
+  async function clearHistoryBrowserDocumentHistory() {
+    const filePath = historyBrowserDocument?.filePath;
+
+    if (!filePath || !window.desktop?.clearDocumentHistory) {
+      return;
+    }
+
+    const confirmed = await showAppConfirm({
+      cancelLabel: "取消",
+      confirmLabel: "清空历史",
+      description: "只会清空这个文档的历史版本，不会删除文档本身。",
+      title: "清空该文档历史？",
+      tone: "warning",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    await window.desktop.clearDocumentHistory(filePath);
+    setHistoryBrowserVersions([]);
+    setSelectedHistoryBrowserVersion(null);
+  }
+
+  async function restoreHistoryBrowserVersion(
+    version: DocumentHistoryVersionWithContent,
+  ) {
+    if (!historyBrowserDocument?.filePath || !window.desktop?.restoreDocumentHistoryVersion) {
+      return;
+    }
+
+    setIsHistoryBrowserRestoring(true);
+
+    try {
+      const savedFile = await window.desktop.restoreDocumentHistoryVersion({
+        filePath: historyBrowserDocument.filePath,
+        versionId: version.id,
+      });
+      const restoredDocument = createDocumentFromSavedFile(
+        historyBrowserDocument,
+        savedFile,
+      );
+
+      rememberInternalFileWrite(savedFile.filePath, savedFile.content);
+      acknowledgeSavedFileContent(savedFile.filePath, savedFile.content);
+      setWorkspace((current) =>
+        applySavedDocumentToWorkspace(current, restoredDocument),
+      );
+      setDocumentReloadTokens((current) => ({
+        ...current,
+        [restoredDocument.id]: (current[restoredDocument.id] ?? 0) + 1,
+      }));
+      setSaveState("saved");
+      await refreshHistoryBrowser(savedFile.filePath);
+    } finally {
+      setIsHistoryBrowserRestoring(false);
+    }
+  }
+
+  function openDocumentHistoryDialog(filePath?: string) {
+    setHistoryBrowserDocumentPath(
+      filePath ?? activeDocument?.filePath ?? historyBrowserDocuments[0]?.filePath ?? null,
+    );
+    setIsDocumentHistoryDialogOpen(true);
   }
 
   function openSettings(section: SettingsSectionId = "editor") {
@@ -2486,11 +2635,7 @@ export function App() {
   useEffect(() => {
     setSelectedDocumentHistoryVersion(null);
 
-    if (
-      !isDocumentHistoryDialogOpen ||
-      !activeDocument?.filePath ||
-      !isMarkdownDocument(activeDocument)
-    ) {
+    if (!activeDocument?.filePath || !isMarkdownDocument(activeDocument)) {
       setDocumentHistoryVersions([]);
       return;
     }
@@ -2499,13 +2644,11 @@ export function App() {
   }, [
     activeDocument?.filePath,
     activeDocument?.documentType,
-    isDocumentHistoryDialogOpen,
   ]);
 
   useEffect(() => {
     if (
       saveState !== "saved" ||
-      !isDocumentHistoryDialogOpen ||
       !activeDocument?.filePath ||
       !isMarkdownDocument(activeDocument)
     ) {
@@ -2517,6 +2660,30 @@ export function App() {
     saveState,
     activeDocument?.filePath,
     activeDocument?.documentType,
+  ]);
+
+  useEffect(() => {
+    if (
+      isDocumentHistoryDialogOpen &&
+      !historyBrowserDocumentPath &&
+      historyBrowserDocuments[0]?.filePath
+    ) {
+      setHistoryBrowserDocumentPath(historyBrowserDocuments[0].filePath);
+    }
+  }, [
+    historyBrowserDocumentPath,
+    historyBrowserDocuments,
+    isDocumentHistoryDialogOpen,
+  ]);
+
+  useEffect(() => {
+    if (!isDocumentHistoryDialogOpen || !historyBrowserDocument?.filePath) {
+      return;
+    }
+
+    void refreshHistoryBrowser(historyBrowserDocument.filePath);
+  }, [
+    historyBrowserDocument?.filePath,
     isDocumentHistoryDialogOpen,
   ]);
 
@@ -2856,7 +3023,9 @@ export function App() {
   }
 
   function isCloudSidebarEntryPath(filePath: string) {
-    const cloudRootPath = cloudSidebarWorkspace?.directoryPath;
+    const cloudRootPath =
+      cloudSidebarWorkspace?.directoryPath ||
+      (workspace.source?.kind === "cloud" ? workspace.source.cachePath : "");
 
     if (!cloudRootPath) {
       return false;
@@ -2866,6 +3035,56 @@ export function App() {
     const cloudRootKey = normalizeFilePathKey(cloudRootPath).replace(/\/+$/, "");
 
     return fileKey === cloudRootKey || fileKey.startsWith(`${cloudRootKey}/`);
+  }
+
+  function getCloudDocumentDisplayPath(filePath?: string) {
+    const cloudRootPath =
+      cloudSidebarWorkspace?.directoryPath ||
+      (workspace.source?.kind === "cloud" ? workspace.source.cachePath : "");
+
+    if (!filePath || !cloudRootPath) {
+      return "云端文档/";
+    }
+
+    const normalizedRoot = cloudRootPath.replace(/\\/g, "/").replace(/\/+$/, "");
+    const normalizedPath = filePath.replace(/\\/g, "/");
+    const rootKey = normalizedRoot.toLocaleLowerCase();
+    const pathKey = normalizedPath.toLocaleLowerCase();
+
+    if (pathKey === rootKey) {
+      return "云端文档/";
+    }
+
+    if (!pathKey.startsWith(`${rootKey}/`)) {
+      return "云端文档/";
+    }
+
+    const relativePath = normalizedPath.slice(normalizedRoot.length + 1);
+    const relativeDirectory = getDirectoryPath(relativePath).replace(/\\/g, "/");
+
+    return relativeDirectory ? `云端文档/${relativeDirectory}/` : "云端文档/";
+  }
+
+  function getDocumentDisplayPath(document: MarkdownDocument) {
+    const cloudRootPath =
+      cloudSidebarWorkspace?.directoryPath ||
+      (workspace.source?.kind === "cloud" ? workspace.source.cachePath : "");
+    const normalizedRoot = cloudRootPath
+      ? normalizeFilePathKey(cloudRootPath).replace(/\/+$/, "")
+      : "";
+    const normalizedPath = document.filePath
+      ? normalizeFilePathKey(document.filePath)
+      : "";
+    const isCloudDocument =
+      Boolean(normalizedRoot && normalizedPath) &&
+      (normalizedPath === normalizedRoot ||
+        normalizedPath.startsWith(`${normalizedRoot}/`));
+
+    if (document.filePath && isCloudDocument) {
+      return getCloudDocumentDisplayPath(document.filePath);
+    }
+
+    return getDocumentPathPreview(document, workspace.workspacePath);
   }
 
   function toggleCloudMultiSelect() {
@@ -5162,10 +5381,20 @@ export function App() {
       return undefined;
     }
 
+    const inferImageFit = () => {
+      return getDefaultImageFitMode(
+        imageElement.naturalWidth || imageElement.clientWidth,
+        imageElement.naturalHeight || imageElement.clientHeight,
+      );
+    };
     const dataFit = imageElement.dataset.imageFit;
 
-    if (dataFit === "auto" || dataFit === "contain" || dataFit === "cover") {
+    if (dataFit === "contain" || dataFit === "cover") {
       return dataFit;
+    }
+
+    if (dataFit === "auto") {
+      return inferImageFit();
     }
 
     const imageFrame = imageElement.closest<HTMLElement>(".markdown-image-frame");
@@ -5184,7 +5413,7 @@ export function App() {
       return objectFit;
     }
 
-    return "auto";
+    return inferImageFit();
   }
 
   async function getEditorContextMenuInfo(
@@ -5428,14 +5657,6 @@ export function App() {
             {
               actions: [
                 {
-                  active:
-                    !contextInfo.imageFit || contextInfo.imageFit === "auto",
-                  icon: <Maximize2 size={16} />,
-                  label: "自动",
-                  onSelect: () =>
-                    runFormatCommand({ fit: "auto", type: "imageFit" }),
-                },
-                {
                   active: contextInfo.imageFit === "contain",
                   icon: <Square size={16} />,
                   label: "等比",
@@ -5618,10 +5839,7 @@ export function App() {
           disabled: !canShowHistory,
           icon: <FileClock size={15} />,
           label: "历史记录",
-          onSelect: () => {
-            setIsDocumentHistoryDialogOpen(true);
-            void openFileFromTree(filePath);
-          },
+          onSelect: () => openDocumentHistoryDialog(filePath),
         },
         { type: "separator" },
         {
@@ -5630,11 +5848,15 @@ export function App() {
           label: "复制文件",
           onSelect: () => void duplicateDocumentFile(filePath),
         },
-        {
-          icon: <Copy size={15} />,
-          label: "复制路径",
-          onSelect: () => void copyTextToClipboard(filePath),
-        },
+        ...(isCloudEntry
+          ? []
+          : [
+              {
+                icon: <Copy size={15} />,
+                label: "复制路径",
+                onSelect: () => void copyTextToClipboard(filePath),
+              },
+            ]),
         {
           icon: <Copy size={15} />,
           label: "复制文件名",
@@ -5661,13 +5883,17 @@ export function App() {
               },
             ]
           : []),
-        { type: "separator" },
-        {
-          disabled: !canUseFileIpc,
-          icon: <ExternalLink size={15} />,
-          label: "在资源管理器中显示",
-          onSelect: () => void window.desktop?.showInFolder?.(filePath),
-        },
+        ...(isCloudEntry
+          ? []
+          : [
+              { type: "separator" as const },
+              {
+                disabled: !canUseFileIpc,
+                icon: <ExternalLink size={15} />,
+                label: "在资源管理器中显示",
+                onSelect: () => void window.desktop?.showInFolder?.(filePath),
+              },
+            ]),
         { type: "separator" },
         {
           danger: true,
@@ -5698,11 +5924,15 @@ export function App() {
           label: "重命名",
           onSelect: () => startRenamingEntry(directoryPath, "directory"),
         },
-        {
-          icon: <ExternalLink size={15} />,
-          label: "在资源管理器中显示",
-          onSelect: () => void window.desktop?.showInFolder?.(directoryPath),
-        },
+        ...(isCloudEntry
+          ? []
+          : [
+              {
+                icon: <ExternalLink size={15} />,
+                label: "在资源管理器中显示",
+                onSelect: () => void window.desktop?.showInFolder?.(directoryPath),
+              },
+            ]),
         {
           icon: <RefreshCw size={15} />,
           label: "刷新",
@@ -7405,6 +7635,12 @@ export function App() {
             <MenuItem label="打开..." shortcut="Ctrl+O" onSelect={() => runTopMenuAction(() => void openMarkdownFile())} />
             <MenuItem label="打开文件夹..." onSelect={() => runTopMenuAction(() => void openWorkspaceFolder())} />
             <MenuSeparator />
+            <MenuItem
+              label="历史记录"
+              disabled={!historyBrowserDocuments.length}
+              onSelect={() => runTopMenuAction(() => openDocumentHistoryDialog())}
+            />
+            <MenuSeparator />
             <MenuSubmenu label="打开最近文件" panelClassName="recent-file-submenu-panel">
               {recentDocuments.length ? (
                 recentDocuments.map((document) => (
@@ -7416,6 +7652,7 @@ export function App() {
                         : true
                     }
                     key={document.id}
+                    pathLabel={getDocumentDisplayPath(document)}
                     onOpen={(recentDocument) =>
                       runTopMenuAction(() => void openRecentDocument(recentDocument))
                     }
@@ -8119,7 +8356,7 @@ export function App() {
           isRestoring={isDocumentHistoryRestoring}
           selectedVersion={selectedDocumentHistoryVersion}
           versions={documentHistoryVersions}
-          onCreateSnapshot={() => void createActiveDocumentHistorySnapshot()}
+          onClearHistory={() => void clearActiveDocumentHistory()}
           onRefresh={() => void refreshDocumentHistory(activeDocument.filePath)}
           onRestore={(version) => void restoreActiveDocumentHistoryVersion(version)}
           onSelectVersion={(version) => void selectDocumentHistoryVersion(version)}
@@ -8586,6 +8823,7 @@ export function App() {
                 }
               }}
               onOpenWorkspaceFolder={openWorkspaceFolder}
+              getDocumentPathLabel={getDocumentDisplayPath}
               recentDocuments={recentDocuments}
               showNotePanel={settings.homeShowNotePanel}
               showTodoPanel={settings.homeShowTodoPanel}
@@ -8830,6 +9068,7 @@ export function App() {
           <Suspense fallback={null}>
             <DocumentInspectorSidebar
               activeDocument={activeDocument}
+              historyPanel={inspectorHistoryPanel}
               isOpen={isDocumentInspectorOpen}
               knowledgePanel={inspectorKnowledgePanel}
               relationsPanel={renderKnowledgeRelationsPanel()}
@@ -9201,10 +9440,7 @@ export function App() {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Content
-              className="document-link-picker-dialog"
-              onInteractOutside={(event) => event.preventDefault()}
-            >
+            <Dialog.Content className="document-link-picker-dialog">
               <div className="create-file-header">
                 <div className="create-file-heading">
                   <span className="create-file-icon">
@@ -9464,23 +9700,130 @@ export function App() {
           <Dialog.Portal>
             <Dialog.Overlay className="document-history-dialog-overlay" />
             <Dialog.Content className="document-history-dialog">
-              <Dialog.Title className="document-history-dialog-title">
-                历史记录
-              </Dialog.Title>
-              <Dialog.Close asChild>
-                <button
-                  className="document-history-dialog-close"
-                  type="button"
-                  aria-label="关闭历史记录"
-                >
-                  <X size={18} />
-                </button>
-              </Dialog.Close>
-              {inspectorHistoryPanel ?? (
+              <div className="document-history-dialog-header">
+                <span className="document-history-dialog-icon" aria-hidden="true">
+                  <FileClock size={20} />
+                </span>
+                <div className="document-history-dialog-copy">
+                  <Dialog.Title className="document-history-dialog-title">
+                    历史记录
+                  </Dialog.Title>
+                  <Dialog.Description className="document-history-dialog-description">
+                    查看最近文档的历史版本，预览内容并恢复到指定时间点。
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    className="document-history-dialog-close"
+                    type="button"
+                    aria-label="关闭历史记录"
+                  >
+                    <X size={18} />
+                  </button>
+                </Dialog.Close>
+              </div>
+              {historyBrowserDocuments.length ? (
+                <div className="document-history-browser">
+                  <aside
+                    className="document-history-browser-documents"
+                    aria-label="最近文档"
+                  >
+                    <div className="document-history-browser-heading">
+                      <strong>最近文档</strong>
+                      <span>最近操作的 10 条</span>
+                    </div>
+                    <div className="document-history-browser-list">
+                      {historyBrowserDocuments.map((document) => {
+                        const isSelected =
+                          document.filePath &&
+                          historyBrowserDocument?.filePath &&
+                          normalizeFilePathKey(document.filePath) ===
+                            normalizeFilePathKey(historyBrowserDocument.filePath);
+                        const isCloudDocument = Boolean(
+                          document.filePath &&
+                            isCloudSidebarEntryPath(document.filePath),
+                        );
+
+                        return (
+                          <button
+                            className={[
+                              "document-history-browser-document",
+                              isCloudDocument
+                                ? "document-history-browser-document-cloud"
+                                : "",
+                              isSelected
+                                ? "document-history-browser-document-active"
+                                : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                            key={document.id}
+                            type="button"
+                            onClick={() => {
+                              setHistoryBrowserDocumentPath(document.filePath ?? null);
+                              setSelectedHistoryBrowserVersion(null);
+                            }}
+                          >
+                            <span className="document-history-browser-document-icon">
+                              {isCloudDocument ? <Cloud size={16} /> : <FileText size={16} />}
+                            </span>
+                            <span className="document-history-browser-document-body">
+                              <strong>
+                                <span className="document-history-browser-document-name">
+                                  {getDocumentDisplayName(document)}
+                                </span>
+                                {isCloudDocument ? (
+                                  <em className="document-history-browser-cloud-badge">
+                                    <Cloud size={11} />
+                                    云端文档
+                                  </em>
+                                ) : null}
+                              </strong>
+                              {isCloudDocument ? (
+                                <small className="document-history-browser-cloud-path">
+                                  {getDocumentDisplayPath(document)}
+                                </small>
+                              ) : (
+                                <small>{getDocumentDisplayPath(document)}</small>
+                              )}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </aside>
+                  {historyBrowserDocument ? (
+                    <Suspense fallback={null}>
+                      <DocumentHistoryPanel
+                        activeDocument={historyBrowserDocument}
+                        isLoading={isHistoryBrowserLoading}
+                        isRestoring={isHistoryBrowserRestoring}
+                        selectedVersion={selectedHistoryBrowserVersion}
+                        versions={historyBrowserVersions}
+                        onClearHistory={() =>
+                          void clearHistoryBrowserDocumentHistory()
+                        }
+                        onRefresh={() =>
+                          void refreshHistoryBrowser(historyBrowserDocument.filePath)
+                        }
+                        onRestore={(version) =>
+                          void restoreHistoryBrowserVersion(version)
+                        }
+                        onSelectVersion={(version) =>
+                          void selectHistoryBrowserVersion(
+                            version,
+                            historyBrowserDocument.filePath,
+                          )
+                        }
+                      />
+                    </Suspense>
+                  ) : null}
+                </div>
+              ) : (
                 <div className="document-history-empty">
                   <FileClock size={18} />
                   <strong>暂无可查看的历史记录</strong>
-                  <span>请先打开 Markdown 文档。</span>
+                  <span>最近打开或编辑 Markdown 文档后，这里会显示历史。</span>
                 </div>
               )}
             </Dialog.Content>

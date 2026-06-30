@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Check,
   ChevronRight,
+  Cloud,
   FileText,
   X,
 } from "lucide-react";
@@ -386,18 +387,23 @@ export function RecentFileMenuItem({
   document,
   exists,
   onOpen,
+  pathLabel,
 }: {
   document: MarkdownDocument;
   exists?: boolean;
   onOpen: (document: MarkdownDocument) => void;
+  pathLabel?: string;
 }) {
   const isMissing = exists === false;
   const displayName = getDocumentDisplayName(document);
-  const pathLabel = isMissing
+  const displayPathLabel = isMissing
     ? "文件不存在"
-    : document.filePath
-      ? getDocumentPathPreview(document)
+    : pathLabel
+      ? pathLabel
+      : document.filePath
+        ? getDocumentPathPreview(document)
       : "未保存到本地";
+  const isCloudDocument = !isMissing && displayPathLabel.startsWith("云端文档/");
   const timeLabel = isMissing
     ? "不存在"
     : formatRecentTimestamp(getRecentDocumentTimestamp(document));
@@ -408,19 +414,29 @@ export function RecentFileMenuItem({
         "menubar-dropdown-item",
         "recent-file-menu-button",
         isMissing ? "recent-file-menu-button-missing" : "",
+        isCloudDocument ? "recent-file-menu-button-cloud" : "",
       ]
         .filter(Boolean)
         .join(" ")}
       disabled={isMissing}
       onClick={() => onOpen(document)}
       role="menuitem"
-      title={`${displayName}\n${pathLabel}`}
+      title={`${displayName}\n${displayPathLabel}`}
       type="button"
     >
-      <FileText className="recent-file-menu-icon" size={16} />
+      {isCloudDocument ? (
+        <Cloud className="recent-file-menu-icon" size={16} />
+      ) : (
+        <FileText className="recent-file-menu-icon" size={16} />
+      )}
       <span className="recent-file-menu-entry">
-        <strong>{displayName}</strong>
-        <small>{pathLabel}</small>
+        <strong>
+          <span className="recent-file-menu-name">{displayName}</span>
+          {isCloudDocument ? (
+            <em className="recent-file-menu-cloud-badge">云端</em>
+          ) : null}
+        </strong>
+        <small>{displayPathLabel}</small>
       </span>
       <span className="recent-file-menu-time">{timeLabel}</span>
     </button>

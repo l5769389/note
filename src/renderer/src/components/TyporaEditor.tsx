@@ -125,6 +125,7 @@ import type {
 } from "../editorCommands";
 import {
   clampImageWidth,
+  getDefaultImageFitMode,
   getExcalidrawDrawingId,
   getExcalidrawSceneReference,
   minImageWidth,
@@ -3153,7 +3154,7 @@ function createEditableImageDecoration(
               }
 
               if (meta.width) {
-                attrs.style = `width: ${meta.width}px;`;
+                attrs.style = `--typora-image-width: ${meta.width}px; width: ${meta.width}px;`;
                 attrs["data-image-width"] = String(meta.width);
               }
 
@@ -3164,6 +3165,29 @@ function createEditableImageDecoration(
           },
         },
       }),
+  );
+}
+
+function applyDefaultEditableImageFit(imageElement: HTMLImageElement) {
+  if (imageElement.dataset.imageFit !== "auto") {
+    return;
+  }
+
+  const fit = getDefaultImageFitMode(
+    imageElement.naturalWidth || imageElement.clientWidth,
+    imageElement.naturalHeight || imageElement.clientHeight,
+  );
+
+  imageElement.classList.remove(
+    "typora-editable-image-fit-auto",
+    "typora-editable-image-fit-contain",
+    "typora-editable-image-fit-cover",
+    "typora-editable-image-fit-compact",
+  );
+  imageElement.classList.add(
+    fit === "cover"
+      ? "typora-editable-image-fit-compact"
+      : "typora-editable-image-fit-contain",
   );
 }
 
@@ -3902,6 +3926,7 @@ function MilkdownRuntime({
     pos: number;
     source: "html" | "markdown";
   } | null>(null);
+  const imageNameEditorRequestPosRef = useRef<number | null>(null);
   const contextDocumentReferenceTargetRef = useRef<{
     pos: number;
   } | null>(null);
@@ -3924,6 +3949,35 @@ function MilkdownRuntime({
   useEffect(() => {
     filePathRef.current = filePath;
   }, [filePath]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+
+    if (!root) {
+      return undefined;
+    }
+
+    const handleImageLoad = (event: Event) => {
+      const imageElement =
+        event.target instanceof HTMLImageElement ? event.target : null;
+
+      if (
+        imageElement?.classList.contains("typora-editable-image") &&
+        root.contains(imageElement)
+      ) {
+        applyDefaultEditableImageFit(imageElement);
+      }
+    };
+
+    root.addEventListener("load", handleImageLoad, true);
+    root
+      .querySelectorAll<HTMLImageElement>("img.typora-editable-image")
+      .forEach(applyDefaultEditableImageFit);
+
+    return () => {
+      root.removeEventListener("load", handleImageLoad, true);
+    };
+  }, [rootRef]);
 
   useEffect(() => {
     onEditUniverSheetRef.current = onEditUniverSheet;
@@ -4011,6 +4065,28 @@ function MilkdownRuntime({
     pendingWidth: number | null;
     frameId: number | null;
   } | null>(null);
+
+  function applyImageElementResizeStyle(
+    imageElement: HTMLImageElement,
+    width: number,
+  ) {
+    imageElement.style.width = `${width}px`;
+    imageElement.style.maxWidth = "100%";
+
+    if (imageElement.classList.contains("typora-editable-image-fit-compact")) {
+      imageElement.style.height = `${width}px`;
+      imageElement.style.objectFit = "contain";
+      imageElement.style.objectPosition = "center";
+    } else if (imageElement.classList.contains("typora-editable-image-fit-cover")) {
+      imageElement.style.height = `${Math.max(1, Math.round(width * 0.5625))}px`;
+      imageElement.style.objectFit = "cover";
+      imageElement.style.objectPosition = "center";
+    } else {
+      imageElement.style.height = "auto";
+      imageElement.style.removeProperty("object-fit");
+      imageElement.style.removeProperty("object-position");
+    }
+  }
 
   function clearClickedHeadingLock() {
     clickedHeadingRef.current = null;
@@ -4392,10 +4468,36 @@ function MilkdownRuntime({
     return nearbyImage;
   }
 
+  function requestImageNameEditorForClick(
+    imageElement: HTMLImageElement | undefined,
+    event: ReactMouseEvent<HTMLElement>,
+  ) {
+    if (!imageElement || event.button !== 0) {
+      imageNameEditorRequestPosRef.current = null;
+      return;
+    }
+
+    const editor = get();
+
+    if (!editor) {
+      imageNameEditorRequestPosRef.current = null;
+      return;
+    }
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      imageNameEditorRequestPosRef.current = findEditableImagePosition(view, imageElement, {
+        left: event.clientX,
+        top: event.clientY,
+      });
+    });
+  }
+
   function updateImageToolbarFromView(view?: EditorView) {
     const root = rootRef.current;
 
     if (!root || !view) {
+      imageNameEditorRequestPosRef.current = null;
       setImageToolbar({ visible: false });
       return;
     }
@@ -4403,6 +4505,7 @@ function MilkdownRuntime({
     const image = getSelectedImage(view);
 
     if (!image) {
+      imageNameEditorRequestPosRef.current = null;
       setImageToolbar({ visible: false });
       return;
     }
@@ -4416,6 +4519,7 @@ function MilkdownRuntime({
           : null;
 
     if (!imageDom || !root.contains(imageDom)) {
+      imageNameEditorRequestPosRef.current = null;
       setImageToolbar({ visible: false });
       return;
     }
@@ -4445,6 +4549,7 @@ function MilkdownRuntime({
       left,
       name: getImageDisplayName(image.node),
       pos: image.pos,
+      showNameEditor: imageNameEditorRequestPosRef.current === image.pos,
       top,
       visible: true,
       width: meta.width,
@@ -4555,6 +4660,7 @@ function MilkdownRuntime({
         left,
         name,
         pos,
+        showNameEditor: false,
         source: "html",
         top,
         visible: true,
@@ -5067,9 +5173,7 @@ function MilkdownRuntime({
         return;
       }
 
-      imageElement.style.width = `${nextWidth}px`;
-      imageElement.style.height = "auto";
-      imageElement.style.maxWidth = "100%";
+      applyImageElementResizeStyle(imageElement, nextWidth);
 
       const root = rootRef.current;
       const overlay = getOverlayContainer(root);
@@ -5109,9 +5213,7 @@ function MilkdownRuntime({
     resizeState.pendingWidth = null;
 
     if (resizeState.imageElement && rootRef.current?.contains(resizeState.imageElement)) {
-      resizeState.imageElement.style.width = `${nextWidth}px`;
-      resizeState.imageElement.style.height = "auto";
-      resizeState.imageElement.style.maxWidth = "100%";
+      applyImageElementResizeStyle(resizeState.imageElement, nextWidth);
     }
 
     if (nextWidth !== resizeState.startWidth) {
@@ -6350,6 +6452,8 @@ function MilkdownRuntime({
           ".typora-raw-html-preview img",
         );
 
+        requestImageNameEditorForClick(editableImageElement ?? undefined, event);
+
         if (!editableImageElement && !rawHtmlImageElement) {
           contextImageTargetRef.current = null;
         }
@@ -6394,7 +6498,9 @@ function MilkdownRuntime({
           });
 
           if (didFocus) {
-            event.preventDefault();
+            if (editableImageElement) {
+              event.preventDefault();
+            }
             return;
           }
         }
@@ -6420,7 +6526,10 @@ function MilkdownRuntime({
         requestAnimationFrame(refreshTableToolbar);
         requestAnimationFrame(refreshVideoToolbar);
       }}
-      onKeyDownCapture={handleSlashCommandKeyDownCapture}
+      onKeyDownCapture={(event) => {
+        imageNameEditorRequestPosRef.current = null;
+        handleSlashCommandKeyDownCapture(event);
+      }}
     >
       <ImageNameEditor state={imageToolbar} onRename={renameImage} />
       <ImageResizeHandle state={imageToolbar} onResizeStart={startImageResize} />

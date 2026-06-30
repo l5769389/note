@@ -32,7 +32,7 @@ import {
   getMarkdownAlertByPrefix,
   stripMarkdownAlertMarker,
 } from "../markdownAlerts";
-import { parseImageMeta } from "../imageMeta";
+import { getDefaultImageFitMode, parseImageMeta } from "../imageMeta";
 import { resolveDocumentResourceUrl } from "../localPreviewUrls";
 import { isMindMapLanguage } from "../mindMapDocument";
 import { isReactFlowLanguage } from "../reactFlowDocument";
@@ -450,6 +450,8 @@ function MarkdownImageRenderer({
 }: ComponentPropsWithoutRef<"img"> & Pick<MarkdownRendererProps, "filePath" | "onPreviewImage">) {
   const meta = parseImageMeta(title);
   const renderedSrc = getRenderedResourceUrl(src, filePath) || "";
+  const explicitFitClass =
+    meta.fit === "auto" ? "" : `markdown-image-fit-${meta.fit}`;
   const imageStyle = {
     ...style,
     ...(meta.width ? { width: `${meta.width}px` } : {}),
@@ -460,7 +462,7 @@ function MarkdownImageRenderer({
       className={[
         "markdown-image-frame",
         `markdown-image-${meta.align}`,
-        `markdown-image-fit-${meta.fit}`,
+        explicitFitClass,
         meta.hasExplicitAlign
           ? "markdown-image-explicit-align"
           : "markdown-image-inline",
@@ -475,6 +477,32 @@ function MarkdownImageRenderer({
         src={renderedSrc || undefined}
         style={imageStyle}
         title={meta.titleText || undefined}
+        onLoad={(event) => {
+          props.onLoad?.(event);
+
+          if (meta.fit !== "auto") {
+            return;
+          }
+
+          const image = event.currentTarget;
+          const frame = image.closest<HTMLElement>(".markdown-image-frame");
+          const fit = getDefaultImageFitMode(
+            image.naturalWidth || image.clientWidth,
+            image.naturalHeight || image.clientHeight,
+          );
+
+          frame?.classList.remove(
+            "markdown-image-fit-auto",
+            "markdown-image-fit-contain",
+            "markdown-image-fit-cover",
+            "markdown-image-fit-compact",
+          );
+          frame?.classList.add(
+            fit === "cover"
+              ? "markdown-image-fit-compact"
+              : "markdown-image-fit-contain",
+          );
+        }}
         onDoubleClick={(event) => {
           props.onDoubleClick?.(event);
 

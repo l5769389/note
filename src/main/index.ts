@@ -33,6 +33,7 @@ import {
   splitWorkspaceEntryNameForRename,
 } from "../shared/workspaceRename";
 import {
+  clearDocumentHistoryVersions,
   createDocumentHistoryVersion,
   listDocumentHistoryVersions,
   maybeCreateDocumentHistoryVersion,
@@ -2686,6 +2687,16 @@ function registerFileIpc() {
         historyRootPath: getDocumentHistoryRootPath(),
         reason: payload.reason ?? "manual",
       }),
+  );
+
+  ipcMain.handle(
+    "workspace:clear-document-history",
+    async (_, filePath: string) => {
+      await clearDocumentHistoryVersions({
+        filePath,
+        historyRootPath: getDocumentHistoryRootPath(),
+      });
+    },
   );
 
   ipcMain.handle(

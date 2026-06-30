@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  clearDocumentHistoryVersions,
   createDocumentHistoryVersion,
   listDocumentHistoryVersions,
   maybeCreateDocumentHistoryVersion,
@@ -132,6 +133,31 @@ describe("document history", () => {
 
     expect(result?.content).toBe(content);
     expect(result?.reason).toBe("manual");
+  });
+
+  it("clears all versions for a markdown document", async () => {
+    const root = await makeTempDir();
+    const historyRootPath = join(root, "history");
+    const filePath = join(root, "note.md");
+
+    await createDocumentHistoryVersion({
+      content: "first",
+      filePath,
+      historyRootPath,
+      reason: "manual",
+    });
+    await createDocumentHistoryVersion({
+      content: "second",
+      filePath,
+      historyRootPath,
+      reason: "manual",
+    });
+
+    await clearDocumentHistoryVersions({ filePath, historyRootPath });
+
+    await expect(
+      listDocumentHistoryVersions({ filePath, historyRootPath }),
+    ).resolves.toEqual([]);
   });
 
   it("ignores unsupported file types", async () => {

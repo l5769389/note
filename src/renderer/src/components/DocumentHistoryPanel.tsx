@@ -1,4 +1,4 @@
-import { Clock3, FileClock, RefreshCw, RotateCcw, Save } from "lucide-react";
+import { Clock3, FileClock, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import type {
   DocumentHistoryVersion,
   DocumentHistoryVersionWithContent,
@@ -12,9 +12,9 @@ type DocumentHistoryPanelProps = {
   isRestoring: boolean;
   selectedVersion: DocumentHistoryVersionWithContent | null;
   versions: DocumentHistoryVersion[];
-  onCreateSnapshot: () => void;
+  onClearHistory?: () => void;
   onRefresh: () => void;
-  onRestore: (version: DocumentHistoryVersionWithContent) => void;
+  onRestore?: (version: DocumentHistoryVersionWithContent) => void;
   onSelectVersion: (version: DocumentHistoryVersion) => void;
 };
 
@@ -58,7 +58,7 @@ export function DocumentHistoryPanel({
   isRestoring,
   selectedVersion,
   versions,
-  onCreateSnapshot,
+  onClearHistory,
   onRefresh,
   onRestore,
   onSelectVersion,
@@ -79,15 +79,6 @@ export function DocumentHistoryPanel({
         <div className="document-history-actions">
           <button
             type="button"
-            title="记录当前版本"
-            aria-label="记录当前版本"
-            disabled={isLoading || !activeDocument.filePath}
-            onClick={onCreateSnapshot}
-          >
-            <Save size={14} />
-          </button>
-          <button
-            type="button"
             title="刷新历史版本"
             aria-label="刷新历史版本"
             disabled={isLoading}
@@ -95,6 +86,17 @@ export function DocumentHistoryPanel({
           >
             <RefreshCw size={14} />
           </button>
+          {onClearHistory ? (
+            <button
+              type="button"
+              title="清空历史版本"
+              aria-label="清空历史版本"
+              disabled={isLoading || !versions.length}
+              onClick={onClearHistory}
+            >
+              <Trash2 size={14} />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -126,7 +128,7 @@ export function DocumentHistoryPanel({
                     <span>{reasonLabels[version.reason]}</span>
                   </span>
                   <span className="document-history-item-preview">
-                    {version.preview}
+                    {version.preview || "空白版本"}
                   </span>
                   <span className="document-history-item-meta">
                     {version.lineCount} 行 · {version.wordCount} 词 ·{" "}
@@ -141,7 +143,7 @@ export function DocumentHistoryPanel({
         <div className="document-history-empty">
           <Clock3 size={18} />
           <strong>还没有历史记录</strong>
-          <span>自动保存产生有效修改后会记录，也可以手动记录当前版本。</span>
+          <span>自动保存产生有效修改后会记录关键版本。</span>
         </div>
       )}
 
@@ -152,14 +154,16 @@ export function DocumentHistoryPanel({
               <strong>版本内容</strong>
               <span>{formatHistoryTime(selectedVersion.createdAt)}</span>
             </div>
-            <button
-              type="button"
-              disabled={isRestoring}
-              onClick={() => onRestore(selectedVersion)}
-            >
-              <RotateCcw size={14} />
-              恢复
-            </button>
+            {onRestore ? (
+              <button
+                type="button"
+                disabled={isRestoring}
+                onClick={() => onRestore(selectedVersion)}
+              >
+                <RotateCcw size={14} />
+                恢复
+              </button>
+            ) : null}
           </div>
           <div className="document-history-preview-markdown">
             <MarkdownRenderer filePath={activeDocument.filePath}>
@@ -167,7 +171,13 @@ export function DocumentHistoryPanel({
             </MarkdownRenderer>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="document-history-preview document-history-preview-empty">
+          <Clock3 size={20} />
+          <strong>选择一个版本查看内容</strong>
+          <span>这里会显示该历史版本保存时的完整文档。</span>
+        </div>
+      )}
     </section>
   );
 }

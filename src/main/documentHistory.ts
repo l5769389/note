@@ -212,6 +212,19 @@ export async function readDocumentHistoryVersion({
   }
 }
 
+export async function clearDocumentHistoryVersions({
+  filePath,
+  historyRootPath,
+}: {
+  filePath: string;
+  historyRootPath: string;
+}) {
+  await rm(getHistoryDirectoryPath(historyRootPath, filePath), {
+    force: true,
+    recursive: true,
+  });
+}
+
 async function pruneDocumentHistoryVersions({
   filePath,
   historyRootPath,

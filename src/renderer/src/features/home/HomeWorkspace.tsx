@@ -24,6 +24,7 @@ type HomeWorkspaceProps = {
   ) => void;
   onOpenWorkspaceFolder: () => void | Promise<void>;
   recentDocuments: MarkdownDocument[];
+  getDocumentPathLabel?: (document: MarkdownDocument) => string;
   showNotePanel?: boolean;
   showTodoPanel?: boolean;
   workspacePath?: string;
@@ -39,6 +40,7 @@ export function HomeWorkspace({
   onOpenRecentDocumentContextMenu,
   onOpenWorkspaceFolder,
   recentDocuments,
+  getDocumentPathLabel,
   showNotePanel = true,
   showTodoPanel = true,
   workspacePath,
@@ -67,6 +69,7 @@ export function HomeWorkspace({
         onOpenRecentDocument={onOpenRecentDocument}
         onOpenRecentDocumentContextMenu={onOpenRecentDocumentContextMenu}
         onOpenWorkspaceFolder={onOpenWorkspaceFolder}
+        getDocumentPathLabel={getDocumentPathLabel}
         showNotePanel={showNotePanel}
         showTodoPanel={showTodoPanel}
         workspacePath={workspacePath}

@@ -19,6 +19,19 @@ export function clampImageWidth(width: number) {
   return Math.max(minImageWidth, Math.min(maxImageWidth, Math.round(width)));
 }
 
+export function getDefaultImageFitMode(
+  width: number | null | undefined,
+  height: number | null | undefined,
+): Exclude<ImageFitMode, "auto"> {
+  if (!width || !height || !Number.isFinite(width) || !Number.isFinite(height)) {
+    return "contain";
+  }
+
+  const ratio = width / height;
+
+  return ratio >= 1.8 || ratio <= 0.56 ? "cover" : "contain";
+}
+
 export function parseImageMeta(title?: string): ImageMeta {
   let titleText = title?.trim() ?? "";
   const widthMatch = titleText.match(/(?:^|\s)width=(\d{2,4})(?:px)?(?=\s|$)/i);

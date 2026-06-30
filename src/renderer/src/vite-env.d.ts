@@ -172,6 +172,7 @@ type DesktopApi = {
     filePath: string;
     reason?: "auto" | "manual" | "restore";
   }) => Promise<DocumentHistoryVersion | null>;
+  clearDocumentHistory: (filePath: string) => Promise<void>;
   restoreDocumentHistoryVersion: (payload: {
     filePath: string;
     versionId: string;

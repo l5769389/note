@@ -1,4 +1,4 @@
-import { Minimize2, Minus, Square, X } from "lucide-react";
+import { Maximize2, Minimize2, Minus, X } from "lucide-react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 
 import {
@@ -125,7 +125,7 @@ export function AppMenubar({
           title={sizeControlLabel}
           onClick={toggleWindowSize}
         >
-          {isWindowRestorable ? <Minimize2 size={13} /> : <Square size={12} />}
+          {isWindowRestorable ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
         </button>
         <button
           className="window-control-button window-control-close"

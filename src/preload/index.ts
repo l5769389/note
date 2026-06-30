@@ -174,6 +174,8 @@ contextBridge.exposeInMainWorld("desktop", {
     filePath: string;
     reason?: "auto" | "manual" | "restore";
   }) => ipcRenderer.invoke("workspace:create-document-history-version", payload),
+  clearDocumentHistory: (filePath: string) =>
+    ipcRenderer.invoke("workspace:clear-document-history", filePath),
   restoreDocumentHistoryVersion: (payload: { filePath: string; versionId: string }) =>
     ipcRenderer.invoke("workspace:restore-document-history-version", payload),
   readAssetAsDataUrl: (payload: { documentFilePath: string; reference: string }) =>
