@@ -499,7 +499,7 @@ function MarkdownImageRenderer({
           );
           frame?.classList.add(
             fit === "cover"
-              ? "markdown-image-fit-compact"
+              ? "markdown-image-fit-cover"
               : "markdown-image-fit-contain",
           );
         }}

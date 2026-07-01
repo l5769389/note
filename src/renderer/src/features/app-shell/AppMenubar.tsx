@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2, Minus, X } from "lucide-react";
+import { Copy, Maximize2, Minimize2, Minus, X } from "lucide-react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 
 import {
@@ -30,7 +30,6 @@ export function AppMenubar({
   setTopMenu,
   topMenu,
 }: AppMenubarProps) {
-  const isWindowRestorable = isFullScreen || isMaximized;
   const sizeControlLabel = isFullScreen
     ? "退出全屏"
     : isMaximized
@@ -125,7 +124,13 @@ export function AppMenubar({
           title={sizeControlLabel}
           onClick={toggleWindowSize}
         >
-          {isWindowRestorable ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          {isFullScreen ? (
+            <Copy size={13} />
+          ) : isMaximized ? (
+            <Minimize2 size={13} />
+          ) : (
+            <Maximize2 size={13} />
+          )}
         </button>
         <button
           className="window-control-button window-control-close"

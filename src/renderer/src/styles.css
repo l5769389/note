@@ -1532,7 +1532,7 @@ textarea,
 }
 
 .markdown-preview > * {
-  max-width: min(var(--editor-content-width), 100%);
+  max-width: 100%;
   margin-right: auto;
   margin-left: auto;
 }
@@ -2031,8 +2031,9 @@ textarea,
 
 .typora-raw-html-preview {
   position: relative;
-  width: min(var(--editor-content-width), 100%);
-  margin: 1em auto;
+  width: 100%;
+  max-width: 100%;
+  margin: 1em 0;
   color: #111827;
   cursor: text;
   font-size: 1rem;
@@ -2266,9 +2267,10 @@ textarea,
 .typora-code-block,
 .typora-table-block,
 .typora-blank-line {
-  width: min(var(--editor-content-width), 100%);
-  margin-right: auto;
-  margin-left: auto;
+  width: 100%;
+  max-width: 100%;
+  margin-right: 0;
+  margin-left: 0;
 }
 
 .typora-heading-line {
@@ -2368,9 +2370,10 @@ textarea,
 }
 
 .typora-milkdown-content .ProseMirror {
-  width: min(var(--editor-content-width), 100%);
+  width: 100%;
+  max-width: 100%;
   min-height: 100%;
-  margin: 0 auto;
+  margin: 0;
   outline: 0;
   color: #2d3748;
 }
@@ -3776,9 +3779,11 @@ textarea,
 
 .markdown-preview .markdown-image-fit-cover img,
 .typora-milkdown-content .ProseMirror img.typora-editable-image-fit-cover {
-  width: min(100%, 760px);
-  height: min(42vh, 420px);
+  width: min(100%, var(--typora-image-width, 760px));
+  aspect-ratio: 16 / 10;
+  height: auto;
   object-fit: cover;
+  object-position: center;
 }
 
 .markdown-preview .markdown-image-fit-compact img,
@@ -3800,7 +3805,7 @@ textarea,
 }
 
 .typora-milkdown-content .ProseMirror img.typora-editable-image-fit-cover[data-image-width] {
-  height: min(calc(var(--typora-image-width, 760px) * 0.5625), 420px);
+  height: auto;
 }
 
 .typora-milkdown-content .ProseMirror img.typora-editable-image-left:not(.typora-editable-image-explicit-align) {
@@ -9864,14 +9869,20 @@ textarea,
 }
 
 .document-history-preview-markdown .markdown-preview {
-  width: min(100%, 780px);
+  width: 100%;
+  max-width: none;
   min-height: 100%;
   border: 1px solid #e2e8f0;
   border-radius: 18px;
   padding: 34px 38px 52px;
+  box-sizing: border-box;
   box-shadow:
     0 16px 42px rgba(15, 23, 42, 0.08),
     0 0 0 1px rgba(255, 255, 255, 0.72) inset;
+}
+
+.document-history-preview-markdown .markdown-preview > * {
+  max-width: 100%;
 }
 
 .document-history-preview-empty {
@@ -17234,7 +17245,7 @@ body.home-todo-global-dragging * {
 :root[data-theme] .typora-blank-line,
 :root[data-theme] .typora-milkdown-content .ProseMirror,
 :root[data-theme] .typora-mdx-content {
-  max-width: min(var(--editor-content-width), 100%);
+  max-width: 100%;
 }
 
 :root[data-theme] .editor-layout .markdown-preview > *,

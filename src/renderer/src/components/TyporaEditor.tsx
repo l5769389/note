@@ -2147,7 +2147,7 @@ function shouldRecoverEditorFocusOnMouseDown(
     return true;
   }
 
-  return target === proseMirror || isTrailingTextBlockWhitespaceClick(event);
+  return target === proseMirror;
 }
 
 function shouldFocusDocumentEndOnMouseDown(
@@ -3186,7 +3186,7 @@ function applyDefaultEditableImageFit(imageElement: HTMLImageElement) {
   );
   imageElement.classList.add(
     fit === "cover"
-      ? "typora-editable-image-fit-compact"
+      ? "typora-editable-image-fit-cover"
       : "typora-editable-image-fit-contain",
   );
 }
@@ -4056,6 +4056,10 @@ function MilkdownRuntime({
     pendingWidth: number | null;
     frameId: number | null;
   } | null>(null);
+  const pendingTrailingWhitespaceClickRef = useRef<{
+    clientX: number;
+    clientY: number;
+  } | null>(null);
   const videoResizeRef = useRef<{
     aspectRatio: number;
     pos: number;
@@ -4078,7 +4082,7 @@ function MilkdownRuntime({
       imageElement.style.objectFit = "contain";
       imageElement.style.objectPosition = "center";
     } else if (imageElement.classList.contains("typora-editable-image-fit-cover")) {
-      imageElement.style.height = `${Math.max(1, Math.round(width * 0.5625))}px`;
+      imageElement.style.height = `${Math.max(1, Math.round(width * 0.625))}px`;
       imageElement.style.objectFit = "cover";
       imageElement.style.objectPosition = "center";
     } else {
@@ -6421,6 +6425,7 @@ function MilkdownRuntime({
       onMouseDown={(event) => {
         const editor = get();
         let toggledTaskCheckbox = false;
+        pendingTrailingWhitespaceClickRef.current = null;
 
         if (editor) {
           editor.action((ctx) => {
@@ -6477,6 +6482,19 @@ function MilkdownRuntime({
           }
         }
 
+        if (
+          root &&
+          editor &&
+          event.button === 0 &&
+          isTrailingTextBlockWhitespaceClick(event)
+        ) {
+          pendingTrailingWhitespaceClickRef.current = {
+            clientX: event.clientX,
+            clientY: event.clientY,
+          };
+          return;
+        }
+
         if (rawHtmlImageElement) {
           event.preventDefault();
           setVideoToolbar({ visible: false });
@@ -6518,6 +6536,38 @@ function MilkdownRuntime({
 
         event.preventDefault();
         editor.action((ctx) => focusDocumentEnd(ctx.get(editorViewCtx), false));
+      }}
+      onMouseUp={(event) => {
+        const pending = pendingTrailingWhitespaceClickRef.current;
+
+        pendingTrailingWhitespaceClickRef.current = null;
+
+        if (!pending || event.button !== 0) {
+          return;
+        }
+
+        if (
+          Math.abs(event.clientX - pending.clientX) > 4 ||
+          Math.abs(event.clientY - pending.clientY) > 4
+        ) {
+          return;
+        }
+
+        const selection = window.getSelection();
+
+        if (selection && !selection.isCollapsed) {
+          return;
+        }
+
+        const editor = get();
+
+        if (!editor) {
+          return;
+        }
+
+        editor.action((ctx) => {
+          focusEditorAtMousePosition(ctx.get(editorViewCtx), event);
+        });
       }}
       onKeyUp={() => {
         clearClickedHeadingLock();

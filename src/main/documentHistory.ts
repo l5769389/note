@@ -23,7 +23,6 @@ export type DocumentHistoryVersionWithContent = DocumentHistoryVersion & {
 
 const markdownHistoryExtensions = new Set([".md", ".markdown", ".mdown"]);
 const documentHistoryMinIntervalMs = 5 * 60 * 1000;
-const documentHistoryLargeChangeThreshold = 640;
 const documentHistoryMaxVersions = 80;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -87,23 +86,6 @@ function getLineCount(content: string) {
   }
 
   return content.split(/\r?\n/).length;
-}
-
-function estimateContentChangeSize(previousContent: string, nextContent: string) {
-  const maxComparableLength = Math.min(previousContent.length, nextContent.length);
-  let changedCharacters = Math.abs(previousContent.length - nextContent.length);
-
-  for (let index = 0; index < maxComparableLength; index += 1) {
-    if (previousContent[index] !== nextContent[index]) {
-      changedCharacters += 1;
-    }
-
-    if (changedCharacters >= documentHistoryLargeChangeThreshold) {
-      return changedCharacters;
-    }
-  }
-
-  return changedCharacters;
 }
 
 function normalizeHistoryMetadata(value: unknown): DocumentHistoryVersion | null {
@@ -335,11 +317,8 @@ export async function maybeCreateDocumentHistoryVersion({
     !latestCreatedAt ||
     Number.isNaN(latestCreatedAt) ||
     Date.now() - latestCreatedAt >= documentHistoryMinIntervalMs;
-  const isLargeChange =
-    estimateContentChangeSize(previousContent, nextContent) >=
-    documentHistoryLargeChangeThreshold;
 
-  if (!latestVersion || isPastMinimumInterval || isLargeChange) {
+  if (!latestVersion || isPastMinimumInterval) {
     return createDocumentHistoryVersion({
       content: previousContent,
       filePath,

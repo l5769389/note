@@ -1022,15 +1022,6 @@ export function App() {
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isDocumentInspectorOpen, setIsDocumentInspectorOpen] = useState(false);
-  const [documentHistoryVersions, setDocumentHistoryVersions] = useState<
-    DocumentHistoryVersion[]
-  >([]);
-  const [selectedDocumentHistoryVersion, setSelectedDocumentHistoryVersion] =
-    useState<DocumentHistoryVersionWithContent | null>(null);
-  const [isDocumentHistoryLoading, setIsDocumentHistoryLoading] =
-    useState(false);
-  const [isDocumentHistoryRestoring, setIsDocumentHistoryRestoring] =
-    useState(false);
   const [isDocumentHistoryDialogOpen, setIsDocumentHistoryDialogOpen] =
     useState(false);
   const [historyBrowserDocumentPath, setHistoryBrowserDocumentPath] =
@@ -1930,145 +1921,6 @@ export function App() {
     });
   }
 
-  async function refreshDocumentHistory(filePath = activeDocument?.filePath) {
-    if (
-      !filePath ||
-      !activeDocument ||
-      activeDocument.filePath !== filePath ||
-      !isMarkdownDocument(activeDocument) ||
-      !window.desktop?.listDocumentHistory
-    ) {
-      setDocumentHistoryVersions([]);
-      setSelectedDocumentHistoryVersion(null);
-      return;
-    }
-
-    setIsDocumentHistoryLoading(true);
-
-    try {
-      const versions = await window.desktop.listDocumentHistory(filePath);
-
-      setDocumentHistoryVersions(versions);
-      setSelectedDocumentHistoryVersion((current) => {
-        if (!current) {
-          return null;
-        }
-
-        return versions.some((version) => version.id === current.id) ? current : null;
-      });
-
-      if (!selectedDocumentHistoryVersion && versions[0]) {
-        void selectDocumentHistoryVersion(versions[0], filePath);
-      }
-    } catch {
-      setDocumentHistoryVersions([]);
-      setSelectedDocumentHistoryVersion(null);
-    } finally {
-      setIsDocumentHistoryLoading(false);
-    }
-  }
-
-  async function selectDocumentHistoryVersion(
-    version: DocumentHistoryVersion,
-    filePath = activeDocument?.filePath,
-  ) {
-    if (!filePath || !window.desktop?.readDocumentHistoryVersion) {
-      return;
-    }
-
-    setIsDocumentHistoryLoading(true);
-
-    try {
-      const versionWithContent = await window.desktop.readDocumentHistoryVersion({
-        filePath,
-        versionId: version.id,
-      });
-
-      if (versionWithContent) {
-        setSelectedDocumentHistoryVersion(versionWithContent);
-      }
-    } finally {
-      setIsDocumentHistoryLoading(false);
-    }
-  }
-
-  async function clearActiveDocumentHistory() {
-    if (!activeDocument?.filePath || !window.desktop?.clearDocumentHistory) {
-      return;
-    }
-
-    const confirmed = await showAppConfirm({
-      cancelLabel: "取消",
-      confirmLabel: "清空历史",
-      description: "只会清空当前文档的历史版本，不会删除文档本身。",
-      title: "清空当前文档历史？",
-      tone: "warning",
-    });
-
-    if (!confirmed) {
-      return;
-    }
-
-    await window.desktop.clearDocumentHistory(activeDocument.filePath);
-    setDocumentHistoryVersions([]);
-    setSelectedDocumentHistoryVersion(null);
-  }
-
-  async function restoreActiveDocumentHistoryVersion(
-    version: DocumentHistoryVersionWithContent,
-  ) {
-    if (
-      !activeDocument?.filePath ||
-      !window.desktop?.restoreDocumentHistoryVersion
-    ) {
-      return;
-    }
-
-    const confirmed = await showAppConfirm({
-      cancelLabel: "取消",
-      confirmLabel: "恢复版本",
-      description: "当前内容会先保存为一条“恢复前”历史记录，然后替换为所选版本。",
-      title: "恢复到这个历史版本？",
-      tone: "warning",
-    });
-
-    if (!confirmed) {
-      return;
-    }
-
-    setIsDocumentHistoryRestoring(true);
-
-    try {
-      const savedFile = await window.desktop.restoreDocumentHistoryVersion({
-        filePath: activeDocument.filePath,
-        versionId: version.id,
-      });
-      const restoredDocument = createDocumentFromSavedFile(activeDocument, savedFile);
-
-      rememberInternalFileWrite(savedFile.filePath, savedFile.content);
-      acknowledgeSavedFileContent(savedFile.filePath, savedFile.content);
-      setWorkspace((current) =>
-        applySavedDocumentToWorkspace(current, restoredDocument),
-      );
-      setDocumentReloadTokens((current) => ({
-        ...current,
-        [activeDocument.id]: (current[activeDocument.id] ?? 0) + 1,
-      }));
-      setSaveState("saved");
-      await loadDirectoryTree(getDirectoryPath(savedFile.filePath));
-      await refreshDocumentHistory(savedFile.filePath);
-    } catch {
-      void showAppAlert({
-        confirmLabel: "知道了",
-        description: "恢复历史版本失败，请确认文档仍然可写。",
-        title: "恢复失败",
-        tone: "danger",
-      });
-    } finally {
-      setIsDocumentHistoryRestoring(false);
-    }
-  }
-
   async function refreshHistoryBrowser(filePath = historyBrowserDocument?.filePath) {
     if (!filePath || !window.desktop?.listDocumentHistory) {
       setHistoryBrowserVersions([]);
@@ -2631,36 +2483,6 @@ export function App() {
     workspace,
     writeMarkdownFile: window.desktop?.writeMarkdownFile,
   });
-
-  useEffect(() => {
-    setSelectedDocumentHistoryVersion(null);
-
-    if (!activeDocument?.filePath || !isMarkdownDocument(activeDocument)) {
-      setDocumentHistoryVersions([]);
-      return;
-    }
-
-    void refreshDocumentHistory(activeDocument.filePath);
-  }, [
-    activeDocument?.filePath,
-    activeDocument?.documentType,
-  ]);
-
-  useEffect(() => {
-    if (
-      saveState !== "saved" ||
-      !activeDocument?.filePath ||
-      !isMarkdownDocument(activeDocument)
-    ) {
-      return;
-    }
-
-    void refreshDocumentHistory(activeDocument.filePath);
-  }, [
-    saveState,
-    activeDocument?.filePath,
-    activeDocument?.documentType,
-  ]);
 
   useEffect(() => {
     if (
@@ -4604,28 +4426,6 @@ export function App() {
     };
   }
 
-  function createDocumentLinkReferenceFromFilePath(
-    filePath: string,
-  ): DocumentLinkReference {
-    const document = getDocumentByFilePath(filePath);
-
-    return (
-      (document && createDocumentLinkReference(document)) ?? {
-        createdAt: now(),
-        documentType: getDocumentTypeFromPath(filePath),
-        filePath,
-        title: getPathLabel(filePath),
-      }
-    );
-  }
-
-  function canRelateDocumentFile(filePath: string) {
-    return (
-      Boolean(activeDocument) &&
-      normalizeFilePathKey(activeDocument?.filePath) !== normalizeFilePathKey(filePath)
-    );
-  }
-
   function addDocumentLinkToDocument(
     sourceDocument: MarkdownDocument | null | undefined,
     reference: DocumentLinkReference,
@@ -4676,10 +4476,6 @@ export function App() {
     }));
   }
 
-  function addActiveDocumentLink(reference: DocumentLinkReference) {
-    addDocumentLinkToDocument(activeDocument, reference);
-  }
-
   function addPickerDocumentLink(reference: DocumentLinkReference) {
     addDocumentLinkToDocument(documentLinkPickerSourceDocument, reference);
   }
@@ -4693,14 +4489,6 @@ export function App() {
         (link) => normalizeFilePathKey(link.filePath) !== targetKey,
       ),
     }));
-  }
-
-  function relateDocumentFromFile(filePath: string) {
-    if (!canRelateDocumentFile(filePath)) {
-      return;
-    }
-
-    addActiveDocumentLink(createDocumentLinkReferenceFromFilePath(filePath));
   }
 
   function removeActiveDocumentLink(filePath: string) {
@@ -8223,7 +8011,6 @@ export function App() {
                 }
                 onCancelRename={cancelRenamingEntry}
                 onCommitRename={(entryPath) => void commitRenamingEntry(entryPath)}
-                onQuickLinkFile={relateDocumentFromFile}
                 onRenameDraftChange={setRenameDraft}
                 onToggleEntrySelection={toggleCloudEntrySelection}
                 onOpenFile={(filePath) => {
@@ -8255,7 +8042,6 @@ export function App() {
               }
               onCancelRename={cancelRenamingEntry}
               onCommitRename={(entryPath) => void commitRenamingEntry(entryPath)}
-              onQuickLinkFile={relateDocumentFromFile}
               onRenameDraftChange={setRenameDraft}
               onToggleEntrySelection={toggleCloudEntrySelection}
               onOpenFile={(filePath) => {
@@ -8347,23 +8133,6 @@ export function App() {
     showContentLinks: false,
     showMissingRelations: false,
   });
-  const inspectorHistoryPanel =
-    activeDocument?.filePath && isMarkdownDocument(activeDocument) ? (
-      <Suspense fallback={null}>
-        <DocumentHistoryPanel
-          activeDocument={activeDocument}
-          isLoading={isDocumentHistoryLoading}
-          isRestoring={isDocumentHistoryRestoring}
-          selectedVersion={selectedDocumentHistoryVersion}
-          versions={documentHistoryVersions}
-          onClearHistory={() => void clearActiveDocumentHistory()}
-          onRefresh={() => void refreshDocumentHistory(activeDocument.filePath)}
-          onRestore={(version) => void restoreActiveDocumentHistoryVersion(version)}
-          onSelectVersion={(version) => void selectDocumentHistoryVersion(version)}
-        />
-      </Suspense>
-    ) : null;
-
   return (
     <>
       <main
@@ -9068,7 +8837,6 @@ export function App() {
           <Suspense fallback={null}>
             <DocumentInspectorSidebar
               activeDocument={activeDocument}
-              historyPanel={inspectorHistoryPanel}
               isOpen={isDocumentInspectorOpen}
               knowledgePanel={inspectorKnowledgePanel}
               relationsPanel={renderKnowledgeRelationsPanel()}
@@ -9440,7 +9208,10 @@ export function App() {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Content className="document-link-picker-dialog">
+            <Dialog.Content
+              className="document-link-picker-dialog"
+              onPointerDownOutside={() => closeDocumentLinkPicker()}
+            >
               <div className="create-file-header">
                 <div className="create-file-heading">
                   <span className="create-file-icon">
@@ -9524,7 +9295,7 @@ export function App() {
                           <small>
                             {getDocumentTypeLabel(document)}
                             <span aria-hidden="true"> · </span>
-                            {getDocumentPathPreview(document, workspace.workspacePath)}
+                            {getDocumentDisplayPath(document)}
                           </small>
                         </span>
                         <span
