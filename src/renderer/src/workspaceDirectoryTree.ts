@@ -3,6 +3,7 @@ import type { DirectoryTreeItem } from "./types";
 
 export type ReadDirectoryTree = (
   directoryPath: string,
+  options?: { includeEmptyDirectories?: boolean },
 ) => Promise<DirectoryTreeItem>;
 
 export function collectDirectoryPaths(item: DirectoryTreeItem): string[] {
@@ -59,7 +60,9 @@ export function useWorkspaceDirectoryTree({
       }
 
       try {
-        const tree = await readDirectoryTree(directoryPath);
+        const tree = await readDirectoryTree(directoryPath, {
+          includeEmptyDirectories: true,
+        });
 
         setDirectoryTree(tree);
         setExpandedDirectoryPaths((current) => addLoadedDirectoryRoot(current, tree));

@@ -10,14 +10,20 @@
     "dev:local": "powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1",
     "dev:local:ab": "powershell -ExecutionPolicy Bypass -File scripts/dev-local-ab.ps1",
     "dev:local:app": "powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -AppOnly",
+    "dev:local:mac": "bash scripts/dev-local.sh",
+    "dev:local:mac:app": "bash scripts/dev-local.sh --app-only",
+    "dev:local:mac:app:debug": "bash scripts/dev-local.sh --app-only --devtools --fresh-user-data",
+    "dev:local:mac:server": "bash scripts/dev-local.sh --server-only",
     "dev:local:server": "powershell -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -ServerOnly",
     "predev": "npm run ensure:electron",
     "dev": "electron-vite dev",
     "build": "tsc -b && electron-vite build",
     "build:sync-server": "tsc -p tsconfig.server.json",
     "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win nsis",
     "icons": "powershell -ExecutionPolicy Bypass -File scripts/generate-icons.ps1",
+    "icons:mac": "swift scripts/generate-mac-icons.swift resources/logo-source.png resources",
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -50,6 +56,22 @@
     ],
     "extraResources": [
       {
+        "from": "resources/icon.icns",
+        "to": "icon.icns"
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "resources/icon-24.png",
+        "to": "icon-24.png"
+      },
+      {
+        "from": "resources/icon-32.png",
+        "to": "icon-32.png"
+      },
+      {
         "from": "resources/icon.ico",
         "to": "icon.ico"
       }
@@ -59,6 +81,9 @@
         "nsis"
       ],
       "icon": "resources/icon.ico"
+    },
+    "mac": {
+      "icon": "resources/icon.icns"
     },
     "nsis": {
       "oneClick": false,

@@ -26,7 +26,6 @@ import {
   ListTree,
   LogOut,
   Maximize2,
-  Minus,
   PencilLine,
   Plus,
   RefreshCw,
@@ -38,6 +37,7 @@ import {
   Table2,
   Trash2,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import {
   lazy,
@@ -91,8 +91,12 @@ import type {
 import { HomeWorkspace } from "./features/home/HomeWorkspace";
 import type { DocumentMetadataSuggestionField } from "./components/DocumentKnowledgeBar";
 import { WorkspaceStatusBar } from "./components/WorkspaceStatusBar";
+import { ZoomableImagePreview } from "./components/ZoomableImagePreview";
 import type { HtmlDocumentViewerHandle } from "./components/HtmlDocumentViewer";
-import type { TyporaEditorHandle } from "./components/TyporaEditor";
+import type {
+  TyporaClipboardImage,
+  TyporaEditorHandle,
+} from "./components/TyporaEditor";
 import appLogoUrl from "../../../resources/icon.png";
 import type {
   ImageAlignment,
@@ -106,6 +110,13 @@ import {
   createInitialSyncStatus,
   type SyncStatusSnapshot,
 } from "../../shared/sync";
+import { remoteSyncFeatureEnabled } from "../../shared/featureFlags";
+import {
+  getThemeFromAppMenuCommand,
+  type AppMenuCommand,
+  type AppMenuState,
+} from "../../shared/appMenu";
+import { getShortcutActionForAppMenuCommand } from "./appMenuCommands";
 import { useFindMatchStateMaintenance } from "./findMatchState";
 import {
   getEditorCssVariables,
@@ -114,6 +125,7 @@ import {
 import { useGlobalAppShortcuts } from "./globalAppShortcuts";
 import {
   collectClipboardImageTokens,
+  getSingleClipboardImageToken,
   writeMarkdownRichClipboard,
 } from "./richClipboard";
 import {
@@ -132,6 +144,10 @@ import {
 import {
   getLineColumnAtOffset,
 } from "./markdownEditing";
+import {
+  COMPACT_IMAGE_TITLE,
+  createMarkdownImageToken,
+} from "./markdownImages";
 import {
   createSourceEditCommandEdit,
   createSourceFormatCommandEdit,
@@ -660,6 +676,12 @@ function getRecentDocumentTime(document: MarkdownDocument) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function getRecentDocumentVisibilityKey(document: MarkdownDocument) {
+  return document.filePath
+    ? `file:${normalizeFilePathKey(document.filePath)}`
+    : `document:${document.id}`;
+}
+
 function markDocumentOpened(
   document: MarkdownDocument,
   openedAt = now(),
@@ -811,8 +833,10 @@ function createStartupWorkspace(): WorkspaceSnapshot {
   };
 }
 
-function isCloudWorkspaceSource(source?: WorkspaceSource) {
-  return source?.kind === "cloud";
+function isCloudWorkspaceSource(
+  source?: WorkspaceSource,
+): source is Extract<WorkspaceSource, { kind: "cloud" }> {
+  return remoteSyncFeatureEnabled && source?.kind === "cloud";
 }
 
 function getWorkspaceDisplayLabel(workspace: WorkspaceSnapshot) {
@@ -821,7 +845,14 @@ function getWorkspaceDisplayLabel(workspace: WorkspaceSnapshot) {
     : getPathLabel(workspace.workspacePath);
 }
 
-const settingsDirectoryItems = [
+type SettingsSectionId = "editor" | "home" | "sync";
+
+const settingsDirectoryItems: readonly {
+  description: string;
+  icon: LucideIcon;
+  id: SettingsSectionId;
+  label: string;
+}[] = [
   {
     description: "字号、行距与阅读预览",
     icon: BookOpenText,
@@ -834,15 +865,17 @@ const settingsDirectoryItems = [
     id: "home",
     label: "功能设置",
   },
-  {
-    description: "服务器与账号登录",
-    icon: Cloud,
-    id: "sync",
-    label: "云同步",
-  },
-] as const;
-
-type SettingsSectionId = (typeof settingsDirectoryItems)[number]["id"];
+  ...(remoteSyncFeatureEnabled
+    ? [
+        {
+          description: "服务器与账号登录",
+          icon: Cloud,
+          id: "sync" as const,
+          label: "云同步",
+        },
+      ]
+    : []),
+];
 
 type SyncLoginMessageTone = "error" | "info" | "success";
 type SidebarStorageKind = "local" | "cloud";
@@ -938,6 +971,12 @@ function normalizeSyncServerUrlInput(serverUrl: string): string {
 }
 
 export function App() {
+  const desktopPlatform = window.desktop?.platform ?? "web";
+  const isMac = desktopPlatform === "darwin";
+  const appMenuCommandHandlerRef = useRef<(command: AppMenuCommand) => void>(
+    () => {},
+  );
+
   useEffect(() => {
     const cancelPreviewPreload = scheduleRuntimePreload(
       preloadMarkdownPreviewRuntime,
@@ -1018,7 +1057,6 @@ export function App() {
     alt: string;
     src: string;
   } | null>(null);
-  const [documentImagePreviewZoom, setDocumentImagePreviewZoom] = useState(1);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isDocumentInspectorOpen, setIsDocumentInspectorOpen] = useState(false);
@@ -1165,6 +1203,9 @@ export function App() {
   const isSidebarHidden = isImmersiveMode
     ? !isImmersiveSidebarOpen
     : isSidebarCollapsed;
+  const [hiddenRecentDocumentKeys, setHiddenRecentDocumentKeys] = useState<
+    string[]
+  >([]);
   const [recentDirectoryPaths, setRecentDirectoryPaths] = useState<string[]>([]);
   const [activeEditorLineIndex, setActiveEditorLineIndex] = useState(0);
   const [activeHtmlOutlineId, setActiveHtmlOutlineId] = useState<string | null>(
@@ -1244,6 +1285,7 @@ export function App() {
       setMode(hydration.settings.editorMode);
       setTheme(hydration.theme);
       setSidebarWidth(hydration.sidebarWidth);
+      setHiddenRecentDocumentKeys(hydration.hiddenRecentDocumentKeys);
       setRecentDirectoryPaths(hydration.recentDirectories);
       setIsPersistenceReady(true);
 
@@ -1261,6 +1303,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!remoteSyncFeatureEnabled) {
+      setSyncStatus(createInitialSyncStatus(defaultSyncConfiguration));
+      setCloudSidebarWorkspace(null);
+      setIsCloudMultiSelectEnabled(false);
+      setSelectedCloudEntryPaths(new Set());
+      return;
+    }
+
     let isStale = false;
 
     void window.desktop?.getSyncStatus?.().then((status) => {
@@ -1280,7 +1330,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!isSettingsOpen) {
+    if (!remoteSyncFeatureEnabled || !isSettingsOpen) {
       return;
     }
 
@@ -1307,6 +1357,13 @@ export function App() {
   ]);
 
   useEffect(() => {
+    if (!remoteSyncFeatureEnabled) {
+      setCloudSidebarWorkspace(null);
+      setIsCloudMultiSelectEnabled(false);
+      setSelectedCloudEntryPaths(new Set());
+      return;
+    }
+
     if (
       !syncStatus.configuration.enabled ||
       !syncStatus.configuration.tokenConfigured
@@ -1648,7 +1705,7 @@ export function App() {
   );
   const isCloudWorkspace = isCloudWorkspaceSource(workspace.source);
   const workspaceLabel = getWorkspaceDisplayLabel(workspace);
-  const recentDocuments = useMemo(
+  const allRecentDocuments = useMemo(
     () =>
       [...workspace.documents]
         .sort(
@@ -1656,6 +1713,18 @@ export function App() {
             getRecentDocumentTime(second) - getRecentDocumentTime(first),
         ),
     [workspace.documents],
+  );
+  const hiddenRecentDocumentKeySet = useMemo(
+    () => new Set(hiddenRecentDocumentKeys),
+    [hiddenRecentDocumentKeys],
+  );
+  const recentDocuments = useMemo(
+    () =>
+      allRecentDocuments.filter(
+        (document) =>
+          !hiddenRecentDocumentKeySet.has(getRecentDocumentVisibilityKey(document)),
+      ),
+    [allRecentDocuments, hiddenRecentDocumentKeySet],
   );
   const historyBrowserDocuments = useMemo(
     () =>
@@ -1835,6 +1904,7 @@ export function App() {
   useEditorCssVariables(settings);
 
   usePersistedAppStateWriter({
+    hiddenRecentDocumentKeys,
     isReady: isPersistenceReady,
     recentDirectories: recentDirectoryPaths,
     settings,
@@ -1891,6 +1961,7 @@ export function App() {
   async function persistCurrentAppStateSnapshot() {
     await savePersistedAppState(
       createPersistedAppState({
+        hiddenRecentDocumentKeys,
         recentDirectories: recentDirectoryPaths,
         settings,
         sidebarWidth,
@@ -2045,11 +2116,17 @@ export function App() {
   }
 
   function openSettings(section: SettingsSectionId = "editor") {
-    setActiveSettingsSection(section);
+    setActiveSettingsSection(
+      section === "sync" && !remoteSyncFeatureEnabled ? "editor" : section,
+    );
     setIsSettingsOpen(true);
   }
 
   async function loginAndConfigureSync() {
+    if (!remoteSyncFeatureEnabled) {
+      return;
+    }
+
     if (isSyncLoginRunning) {
       return;
     }
@@ -2110,6 +2187,10 @@ export function App() {
   }
 
   async function syncNow() {
+    if (!remoteSyncFeatureEnabled) {
+      return;
+    }
+
     try {
       await flushWorkspaceBeforeSync();
       const status = await window.desktop?.syncNow?.();
@@ -2179,6 +2260,10 @@ export function App() {
   }
 
   async function logoutSync() {
+    if (!remoteSyncFeatureEnabled) {
+      return;
+    }
+
     const cloudRootPath = cloudSidebarWorkspace?.directoryPath;
     const status = await window.desktop?.syncConfigure?.({
       enabled: false,
@@ -2202,6 +2287,10 @@ export function App() {
   }
 
   function openSyncStatusMenu(event: ReactMouseEvent<HTMLButtonElement>) {
+    if (!remoteSyncFeatureEnabled) {
+      return;
+    }
+
     openContextMenu(
       event,
       [
@@ -2394,6 +2483,29 @@ export function App() {
     );
   }
 
+  function revealRecentDocument(document?: MarkdownDocument | null) {
+    if (!document) {
+      return;
+    }
+
+    const key = getRecentDocumentVisibilityKey(document);
+    setHiddenRecentDocumentKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : current,
+    );
+  }
+
+  function clearRecentDocuments() {
+    if (!recentDocuments.length) {
+      return;
+    }
+
+    const keys = recentDocuments.map(getRecentDocumentVisibilityKey);
+
+    setHiddenRecentDocumentKeys((current) =>
+      Array.from(new Set([...current, ...keys])),
+    );
+  }
+
   useEffect(() => {
     if (
       !isPersistenceReady ||
@@ -2451,6 +2563,16 @@ export function App() {
     isSettingsOpen,
     onAction: runAppShortcutAction,
   });
+
+  useEffect(() => {
+    appMenuCommandHandlerRef.current = runAppMenuCommand;
+  });
+
+  useEffect(() => {
+    return window.desktop?.onAppMenuCommand?.((command) => {
+      appMenuCommandHandlerRef.current(command);
+    });
+  }, []);
 
   useActiveDocumentUiReset({
     activeDocumentId: activeDocument?.id,
@@ -2510,6 +2632,9 @@ export function App() {
   ]);
 
   function setActiveDocument(documentId: string) {
+    revealRecentDocument(
+      workspace.documents.find((document) => document.id === documentId),
+    );
     setIsHomeOpen(false);
     setWorkspace((current) => markWorkspaceDocumentOpened(current, documentId));
   }
@@ -2605,8 +2730,53 @@ export function App() {
     }
   }
 
-  async function getCreationDirectory() {
+  async function createLocalDirectory(targetDirectoryPath?: string) {
+    const directoryPath =
+      targetDirectoryPath ||
+      workspace.workspacePath ||
+      (await window.desktop?.getDefaultWorkspaceDirectory?.()) ||
+      "";
+
+    if (!directoryPath || !window.desktop?.createWorkspaceDirectory) {
+      await showAppAlert({
+        confirmLabel: "知道了",
+        description: "需要先打开本地文档目录，才能新建文件夹。",
+        title: "无法新建文件夹",
+        tone: "warning",
+      });
+      return;
+    }
+
+    try {
+      const result = await window.desktop.createWorkspaceDirectory({
+        directoryPath,
+        name: "新建文件夹",
+      });
+
+      setFileExplorerView("tree");
+      setExpandedDirectoryPaths((current) => {
+        const next = new Set(current);
+        next.add(directoryPath);
+        next.add(result.directoryPath);
+        return next;
+      });
+      await loadDirectoryTree(workspace.workspacePath || directoryPath);
+      startRenamingEntry(result.directoryPath, "directory");
+    } catch (error) {
+      await showAppAlert({
+        confirmLabel: "知道了",
+        description:
+          error instanceof Error ? error.message : "新建本地文件夹失败。",
+        detail: directoryPath,
+        title: "新建失败",
+        tone: "danger",
+      });
+    }
+  }
+
+  async function getCreationDirectory(targetDirectoryPath?: string) {
     return (
+      targetDirectoryPath ||
       workspace.workspacePath ||
       (await window.desktop?.getDefaultWorkspaceDirectory?.()) ||
       ""
@@ -2630,13 +2800,13 @@ export function App() {
     setTopMenu(null);
   }
 
-  async function createStandaloneSheetDocument() {
+  async function createStandaloneSheetDocument(targetDirectoryPath?: string) {
     const data = createDefaultUniverSheetData();
     const title = data.title || "Online Sheet";
     const content = serializeUniverSheetData(data);
 
     try {
-      const directoryPath = await getCreationDirectory();
+      const directoryPath = await getCreationDirectory(targetDirectoryPath);
       const localFile =
         directoryPath && window.desktop?.createDocumentFile
           ? await window.desktop.createDocumentFile({
@@ -2654,19 +2824,24 @@ export function App() {
       void openUniverSheetEditor({ kind: "document" }, document.content);
 
       if (directoryPath) {
-        await loadDirectoryTree(directoryPath);
+        setExpandedDirectoryPaths((current) => {
+          const next = new Set(current);
+          next.add(directoryPath);
+          return next;
+        });
+        await loadDirectoryTree(workspace.workspacePath || directoryPath);
       }
     } catch {
       setSaveState("failed");
     }
   }
 
-  async function createStandaloneDrawingDocument() {
+  async function createStandaloneDrawingDocument(targetDirectoryPath?: string) {
     const title = "Excalidraw";
     const content = createDefaultExcalidrawScene();
 
     try {
-      const directoryPath = await getCreationDirectory();
+      const directoryPath = await getCreationDirectory(targetDirectoryPath);
       const localFile =
         directoryPath && window.desktop?.createDocumentFile
           ? await window.desktop.createDocumentFile({
@@ -2684,7 +2859,12 @@ export function App() {
       window.setTimeout(() => setDrawingDialogOpen(true), 0);
 
       if (directoryPath) {
-        await loadDirectoryTree(directoryPath);
+        setExpandedDirectoryPaths((current) => {
+          const next = new Set(current);
+          next.add(directoryPath);
+          return next;
+        });
+        await loadDirectoryTree(workspace.workspacePath || directoryPath);
       }
     } catch {
       setSaveState("failed");
@@ -2845,9 +3025,13 @@ export function App() {
   }
 
   function isCloudSidebarEntryPath(filePath: string) {
+    if (!remoteSyncFeatureEnabled) {
+      return false;
+    }
+
     const cloudRootPath =
       cloudSidebarWorkspace?.directoryPath ||
-      (workspace.source?.kind === "cloud" ? workspace.source.cachePath : "");
+      (isCloudWorkspaceSource(workspace.source) ? workspace.source.cachePath : "");
 
     if (!cloudRootPath) {
       return false;
@@ -2862,7 +3046,7 @@ export function App() {
   function getCloudDocumentDisplayPath(filePath?: string) {
     const cloudRootPath =
       cloudSidebarWorkspace?.directoryPath ||
-      (workspace.source?.kind === "cloud" ? workspace.source.cachePath : "");
+      (isCloudWorkspaceSource(workspace.source) ? workspace.source.cachePath : "");
 
     if (!filePath || !cloudRootPath) {
       return "云端文档/";
@@ -2890,7 +3074,7 @@ export function App() {
   function getDocumentDisplayPath(document: MarkdownDocument) {
     const cloudRootPath =
       cloudSidebarWorkspace?.directoryPath ||
-      (workspace.source?.kind === "cloud" ? workspace.source.cachePath : "");
+      (isCloudWorkspaceSource(workspace.source) ? workspace.source.cachePath : "");
     const normalizedRoot = cloudRootPath
       ? normalizeFilePathKey(cloudRootPath).replace(/\/+$/, "")
       : "";
@@ -3623,6 +3807,7 @@ export function App() {
       }
 
       const document = createDocumentFromLocalFile(localFile);
+      revealRecentDocument(document);
 
       if (document.filePath) {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
@@ -3651,6 +3836,7 @@ export function App() {
     try {
       const localFile = await window.desktop.duplicateDocumentFile(filePath);
       const document = createDocumentFromLocalFile(localFile);
+      revealRecentDocument(document);
 
       if (document.filePath) {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
@@ -4963,25 +5149,19 @@ export function App() {
       alt: image.alt?.trim() || "图片",
       src,
     });
-    setDocumentImagePreviewZoom(1);
   }
 
   function closeDocumentImagePreview() {
     setDocumentImagePreview(null);
-    setDocumentImagePreviewZoom(1);
   }
 
-  function changeDocumentImagePreviewZoom(delta: number) {
-    setDocumentImagePreviewZoom((currentZoom) =>
-      Math.min(4, Math.max(0.25, Number((currentZoom + delta).toFixed(2)))),
-    );
-  }
-
-  async function copyMediaResourceToClipboard(contextInfo: EditorContextMenuInfo) {
+  async function copyMediaResourceToClipboard(
+    contextInfo: Pick<EditorContextMenuInfo, "mediaKind" | "mediaSource">,
+  ) {
     const source = contextInfo.mediaSource;
 
     if (!source) {
-      return;
+      return false;
     }
 
     const localPath = getLocalFilePathFromPreviewUrl(source);
@@ -4994,7 +5174,7 @@ export function App() {
       const copied = await window.desktop.writeImageFileToClipboard(localPath);
 
       if (copied) {
-        return;
+        return true;
       }
     }
 
@@ -5009,13 +5189,21 @@ export function App() {
             [mimeType]: blob,
           }),
         ]);
-        return;
+        return true;
       } catch {
         // Fall back to copying the resource path below.
       }
     }
 
     await copyTextToClipboard(localPath ?? source);
+    return false;
+  }
+
+  async function copyTyporaImageToClipboard(image: TyporaClipboardImage) {
+    return copyMediaResourceToClipboard({
+      mediaKind: "image",
+      mediaSource: image.source,
+    });
   }
 
   function getEventTargetElement(target: EventTarget | null) {
@@ -5177,7 +5365,7 @@ export function App() {
     };
     const dataFit = imageElement.dataset.imageFit;
 
-    if (dataFit === "contain" || dataFit === "cover") {
+    if (dataFit === "contain" || dataFit === "cover" || dataFit === "compact") {
       return dataFit;
     }
 
@@ -5193,6 +5381,10 @@ export function App() {
 
     if (imageFrame?.classList.contains("markdown-image-fit-cover")) {
       return "cover";
+    }
+
+    if (imageFrame?.classList.contains("markdown-image-fit-compact")) {
+      return "compact";
     }
 
     const objectFit = imageElement.style.objectFit.trim().toLowerCase();
@@ -5598,6 +5790,35 @@ export function App() {
     );
   }
 
+  function getLocalCreationMenuItems(directoryPath: string): AppContextMenuItem[] {
+    return [
+      {
+        disabled: !directoryPath || !window.desktop?.createMarkdownFile,
+        icon: <FilePlus2 size={15} />,
+        label: "新建 Markdown 文件",
+        onSelect: () => void createLocalMarkdownDocument(directoryPath),
+      },
+      {
+        disabled: !directoryPath || !window.desktop?.createDocumentFile,
+        icon: <Table2 size={15} />,
+        label: "新建在线表格",
+        onSelect: () => void createStandaloneSheetDocument(directoryPath),
+      },
+      {
+        disabled: !directoryPath || !window.desktop?.createDocumentFile,
+        icon: <Square size={15} />,
+        label: "新建 Excalidraw 画板",
+        onSelect: () => void createStandaloneDrawingDocument(directoryPath),
+      },
+      {
+        disabled: !directoryPath || !window.desktop?.createWorkspaceDirectory,
+        icon: <FolderPlus size={15} />,
+        label: "新建文件夹",
+        onSelect: () => void createLocalDirectory(directoryPath),
+      },
+    ];
+  }
+
   function openFileContextMenu(
     event: ReactMouseEvent<HTMLElement>,
     filePath: string,
@@ -5605,6 +5826,7 @@ export function App() {
     const fileName = getPathLabel(filePath);
     const canUseFileIpc = Boolean(window.desktop);
     const isCloudEntry = isCloudSidebarEntryPath(filePath);
+    const parentDirectoryPath = getDirectoryPath(filePath);
     const canShowHistory =
       /\.(?:md|markdown|mdown)$/i.test(filePath) &&
       Boolean(window.desktop?.listDocumentHistory);
@@ -5675,6 +5897,8 @@ export function App() {
           ? []
           : [
               { type: "separator" as const },
+              ...getLocalCreationMenuItems(parentDirectoryPath),
+              { type: "separator" as const },
               {
                 disabled: !canUseFileIpc,
                 icon: <ExternalLink size={15} />,
@@ -5730,6 +5954,12 @@ export function App() {
               : refreshCurrentLocalWorkspace()),
         },
         ...(isCloudEntry
+          ? []
+          : [
+              { type: "separator" as const },
+              ...getLocalCreationMenuItems(directoryPath),
+            ]),
+        ...(isCloudEntry
           ? [
               { type: "separator" as const },
               {
@@ -5764,9 +5994,48 @@ export function App() {
                 onSelect: () => void deleteWorkspaceEntry(directoryPath, "directory"),
               },
             ]
-          : []),
+          : [
+              { type: "separator" as const },
+              {
+                danger: true,
+                disabled: !window.desktop?.deleteWorkspaceEntry,
+                icon: <Trash2 size={15} />,
+                label: "删除文件夹",
+                onSelect: () => void deleteWorkspaceEntry(directoryPath, "directory"),
+              },
+            ]),
       ],
       246,
+    );
+  }
+
+  function openLocalStorageContextMenu(
+    event: ReactMouseEvent<HTMLElement>,
+    targetDirectoryPath?: string,
+  ) {
+    const directoryPath = targetDirectoryPath || workspace.workspacePath || "";
+
+    openContextMenu(
+      event,
+      [
+        ...(directoryPath
+          ? getLocalCreationMenuItems(directoryPath)
+          : [
+              {
+                icon: <FolderOpen size={15} />,
+                label: "打开文件夹...",
+                onSelect: () => void openWorkspaceFolder(),
+              },
+            ]),
+        { type: "separator" as const },
+        {
+          disabled: !workspace.workspacePath,
+          icon: <RefreshCw size={15} />,
+          label: "刷新本地",
+          onSelect: () => void refreshCurrentLocalWorkspace(),
+        },
+      ],
+      258,
     );
   }
 
@@ -6323,6 +6592,100 @@ export function App() {
     }
   }
 
+  function runAppMenuCommand(command: AppMenuCommand) {
+    const shortcutAction = getShortcutActionForAppMenuCommand(command.id);
+
+    if (shortcutAction) {
+      runAppShortcutAction(shortcutAction);
+      return;
+    }
+
+    setTopMenu(null);
+    setIsActionsOpen(false);
+    setContextMenu(null);
+
+    const selectedTheme = getThemeFromAppMenuCommand(command.id);
+
+    if (selectedTheme) {
+      setTheme(selectedTheme);
+      return;
+    }
+
+    switch (command.id) {
+      case "app:about":
+        setIsAboutOpen(true);
+        break;
+      case "file:new-sheet":
+        void createStandaloneSheetDocument();
+        break;
+      case "file:new-drawing":
+        void createStandaloneDrawingDocument();
+        break;
+      case "file:open-folder":
+        void openWorkspaceFolder();
+        break;
+      case "file:history":
+        openDocumentHistoryDialog();
+        break;
+      case "file:open-recent": {
+        const document = recentDocuments.find((item) => item.id === command.documentId);
+
+        if (document) {
+          void openRecentDocument(document);
+        }
+        break;
+      }
+      case "file:export-pdf":
+        void exportActiveDocument("pdf");
+        break;
+      case "file:export-html":
+        void exportActiveDocument("html");
+        break;
+      case "file:show-in-folder":
+        void showWorkspaceInFolder();
+        break;
+      case "file:reveal-sidebar":
+        showSidebar();
+        setSidebarTab("files");
+        break;
+      case "edit:insert-drawing":
+        openNewDrawing();
+        break;
+      case "edit:insert-sheet":
+        openNewUniverSheet();
+        break;
+      case "paragraph:table":
+        insertTable({ columns: 3, rows: 3 });
+        break;
+      case "format:image-insert":
+        readFileInput(imageInputRef.current);
+        break;
+      case "view:knowledge-relations":
+        openKnowledgeRelationsPanel();
+        break;
+      case "view:settings":
+        openSettings("editor");
+        break;
+      case "view:mode-typora":
+        updateEditorMode("typora");
+        break;
+      case "view:mode-source":
+        updateEditorMode("source");
+        break;
+      case "view:mode-split":
+        updateEditorMode("split");
+        break;
+      case "view:mode-preview":
+        updateEditorMode("preview");
+        break;
+      case "view:toggle-always-on-top":
+        void toggleAlwaysOnTop();
+        break;
+      default:
+        break;
+    }
+  }
+
   async function refreshWorkspaceSearchDocuments() {
     if (!workspace.workspacePath || !window.desktop?.listMarkdownFiles) {
       return;
@@ -6573,6 +6936,7 @@ export function App() {
       showDocumentLoading("正在打开文档", localFile.title || getFileNameFromPath(localFile.filePath));
 
       const document = createDocumentFromLocalFile(localFile);
+      revealRecentDocument(document);
 
       if (document.filePath) {
         savedFileContentByPathRef.current.set(document.filePath, document.content);
@@ -6771,6 +7135,31 @@ export function App() {
     return { document, documentId, importId };
   }
 
+  function insertMarkdownImage(
+    alt: string,
+    source: string,
+    title = COMPACT_IMAGE_TITLE,
+  ) {
+
+    if (mode === "typora" && typoraEditorRef.current) {
+      typoraEditorRef.current.insertImage({ alt, source, title });
+      return;
+    }
+
+    insertMarkdown(createMarkdownImageToken({ alt, source, title }));
+  }
+
+  function insertSingleMarkdownImageToken(text: string) {
+    const token = getSingleClipboardImageToken(text);
+
+    if (!token) {
+      return false;
+    }
+
+    insertMarkdownImage(token.alt, token.source, token.title);
+    return true;
+  }
+
   function updateVideoImportPlaceholder(
     importId: string,
     fileName: string,
@@ -6798,7 +7187,7 @@ export function App() {
         fileName,
         dataUrl,
       );
-      insertMarkdown(`![${fileName}](${reference}) `);
+      insertMarkdownImage(fileName, reference);
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
     }
@@ -6833,7 +7222,7 @@ export function App() {
         file.filePath,
         "image.gif",
       );
-      insertMarkdown(`![${file.fileName}](${reference}) `);
+      insertMarkdownImage(file.fileName, reference);
       return true;
     } catch (error) {
       setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
@@ -7121,6 +7510,10 @@ export function App() {
     const text = await readClipboardTextFallback();
 
     if (text) {
+      if (insertSingleMarkdownImageToken(text)) {
+        return true;
+      }
+
       insertMarkdown(text);
       return true;
     }
@@ -7145,6 +7538,13 @@ export function App() {
       return;
     }
 
+    const text = event.clipboardData.getData("text/plain");
+
+    if (insertSingleMarkdownImageToken(text)) {
+      event.preventDefault();
+      return;
+    }
+
     if (!shouldTryClipboardMediaFallback(event.clipboardData)) {
       return;
     }
@@ -7153,8 +7553,6 @@ export function App() {
     if (await pasteClipboardMediaFallback()) {
       return;
     }
-
-    const text = event.clipboardData.getData("text/plain");
 
     if (text) {
       insertMarkdown(text);
@@ -7201,6 +7599,7 @@ export function App() {
     try {
       await savePersistedAppState(
         createPersistedAppState({
+          hiddenRecentDocumentKeys,
           recentDirectories: recentDirectoryPaths,
           settings,
           sidebarWidth,
@@ -7855,12 +8254,56 @@ export function App() {
   }
 
   const isCloudExplorerEnabled =
-    syncStatus.configuration.enabled && syncStatus.configuration.tokenConfigured;
+    remoteSyncFeatureEnabled &&
+    syncStatus.configuration.enabled &&
+    syncStatus.configuration.tokenConfigured;
   const localExplorerTree = isCloudWorkspace ? null : directoryTree;
   const localExplorerDocuments = isCloudWorkspace ? [] : workspace.documents;
   const windowZoomPercent = Math.round(windowZoomFactor * 100);
   const isDefaultWindowZoom =
     Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
+  const appMenuState = useMemo<AppMenuState>(
+    () => ({
+      activeDocument: Boolean(activeDocument),
+      alwaysOnTop: isAlwaysOnTop,
+      canOpenHistory: historyBrowserDocuments.length > 0,
+      defaultZoom: isDefaultWindowZoom,
+      editorMode: mode,
+      fullScreen: isFullScreen,
+      markdownDocument: isMarkdownDocument(activeDocument),
+      recentDocuments: recentDocuments.slice(0, 10).map((document) => ({
+        exists: document.filePath
+          ? recentFileAvailability[document.filePath] !== false
+          : true,
+        id: document.id,
+        label: getDocumentDisplayName(document),
+        pathLabel: getDocumentDisplayPath(document),
+      })),
+      theme,
+      windowZoomPercent,
+    }),
+    [
+      activeDocument,
+      historyBrowserDocuments.length,
+      isAlwaysOnTop,
+      isDefaultWindowZoom,
+      isFullScreen,
+      mode,
+      recentDocuments,
+      recentFileAvailability,
+      theme,
+      windowZoomPercent,
+    ],
+  );
+
+  useEffect(() => {
+    if (!isMac) {
+      return;
+    }
+
+    void window.desktop?.updateAppMenuState?.(appMenuState);
+  }, [appMenuState, isMac]);
+
   const isStorageSplitVisible = isCloudExplorerEnabled;
   const storageSectionsClassName = [
     "explorer-storage-sections",
@@ -7925,7 +8368,7 @@ export function App() {
         onDragOver={(event) => handleSidebarStorageDragOver(event, kind)}
         onDrop={(event) => void dropSidebarEntryToStorage(event, kind)}
         onContextMenu={(event) => {
-          if (kind !== "cloud" || event.defaultPrevented) {
+          if (event.defaultPrevented) {
             return;
           }
 
@@ -7939,7 +8382,12 @@ export function App() {
             return;
           }
 
-          openCloudStorageContextMenu(event, workspacePath);
+          if (kind === "cloud") {
+            openCloudStorageContextMenu(event, workspacePath);
+            return;
+          }
+
+          openLocalStorageContextMenu(event, workspacePath);
         }}
       >
         <div className="explorer-storage-heading">
@@ -8140,6 +8588,7 @@ export function App() {
         data-testid="app-shell"
         className={[
           "app-shell",
+          `app-shell-platform-${desktopPlatform}`,
           isSidebarHidden ? "app-shell-sidebar-collapsed" : "",
           isDocumentInspectorOpen ? "app-shell-inspector-open" : "",
           isImmersiveMode ? "app-shell-immersive" : "",
@@ -8167,6 +8616,7 @@ export function App() {
           onHideTop={() => hideImmersiveEdge("top")}
           onOpenHome={() => setIsHomeOpen(true)}
           onRevealTop={() => revealImmersiveEdge("top")}
+          platform={desktopPlatform}
           renderDropdown={renderMenubarDropdown}
           setTopMenu={setTopMenu}
           topMenu={topMenu}
@@ -8583,6 +9033,7 @@ export function App() {
               activeDocument={activeDocument}
               logoUrl={appLogoUrl}
               noteDialogRequestId={homeNoteDialogRequestId}
+              onClearRecentDocuments={clearRecentDocuments}
               onCreateDocument={createNewDocument}
               onOpenKnowledgeRelations={openKnowledgeRelationsPanel}
               onOpenRecentDocument={openRecentDocument}
@@ -8733,6 +9184,7 @@ export function App() {
                       value={activeMarkdownBody}
                       onChange={updateMarkdown}
                       onActiveLineChange={setActiveEditorLineIndex}
+                      onCopyImage={(image) => copyTyporaImageToClipboard(image)}
                       onEditDrawing={(drawingId) => void openDrawingEditor(drawingId)}
                       onEditUniverSheet={(code) =>
                         void openUniverSheetEditor({ code, kind: "markdown" }, code)
@@ -8806,13 +9258,17 @@ export function App() {
             isSidebarHidden={isSidebarHidden}
             missingAssetReferences={missingAssetReferences}
             saveState={saveState}
-            syncStatus={syncStatus}
+            syncStatus={remoteSyncFeatureEnabled ? syncStatus : undefined}
             wordCount={activeDocumentWordCount}
             onCloseDocument={closeActiveDocument}
-            onConfigureSync={() => openSettings("sync")}
+            onConfigureSync={
+              remoteSyncFeatureEnabled ? () => openSettings("sync") : undefined
+            }
             onOpenSettings={() => openSettings("editor")}
-            onOpenSyncMenu={openSyncStatusMenu}
-            onSyncNow={syncNow}
+            onOpenSyncMenu={
+              remoteSyncFeatureEnabled ? openSyncStatusMenu : undefined
+            }
+            onSyncNow={remoteSyncFeatureEnabled ? syncNow : undefined}
             onToggleInspector={toggleDocumentInspector}
             onToggleSidebar={toggleSidebarVisibility}
           />
@@ -9625,56 +10081,12 @@ export function App() {
               </Dialog.Close>
               {documentImagePreview ? (
                 <>
-                  <div
-                    className="document-image-preview-viewport"
-                    onMouseDown={(event) => {
-                      if (event.target === event.currentTarget) {
-                        closeDocumentImagePreview();
-                      }
-                    }}
-                    onWheel={(event) => {
-                      event.preventDefault();
-                      changeDocumentImagePreviewZoom(
-                        event.deltaY < 0 ? 0.1 : -0.1,
-                      );
-                    }}
-                  >
-                    <img
-                      alt={documentImagePreview.alt}
-                      draggable={false}
-                      src={documentImagePreview.src}
-                      onMouseDown={(event) => event.stopPropagation()}
-                      style={{
-                        transform: `scale(${documentImagePreviewZoom})`,
-                      }}
-                    />
-                  </div>
-                  <div
-                    className="document-image-preview-toolbar"
-                    aria-label="图片缩放"
-                  >
-                    <button
-                      type="button"
-                      aria-label="缩小图片"
-                      onClick={() => changeDocumentImagePreviewZoom(-0.1)}
-                    >
-                      <Minus size={16} />
-                    </button>
-                    <button
-                      className="document-image-preview-zoom-value"
-                      type="button"
-                      onClick={() => setDocumentImagePreviewZoom(1)}
-                    >
-                      {Math.round(documentImagePreviewZoom * 100)}%
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="放大图片"
-                      onClick={() => changeDocumentImagePreviewZoom(0.1)}
-                    >
-                      <Plus size={16} />
-                    </button>
-                  </div>
+                  <ZoomableImagePreview
+                    alt={documentImagePreview.alt}
+                    classNamePrefix="document-image-preview"
+                    src={documentImagePreview.src}
+                    onRequestClose={closeDocumentImagePreview}
+                  />
                 </>
               ) : null}
             </Dialog.Content>
@@ -9810,7 +10222,7 @@ export function App() {
                           <p>正文、列表和表格会跟随当前阅读密度。</p>
                           <ul>
                             <li>快速记录 Markdown 笔记</li>
-                            <li>阅读本地与云端文档</li>
+                            <li>阅读本地文档</li>
                           </ul>
                           <blockquote>合适的字号和行距可以减少长时间阅读的疲劳。</blockquote>
                         </div>
@@ -9860,7 +10272,7 @@ export function App() {
                     </section>
                   ) : null}
 
-                  {activeSettingsSection === "sync" ? (
+                  {remoteSyncFeatureEnabled && activeSettingsSection === "sync" ? (
                     <section className="settings-redesign-card settings-redesign-sync">
                       <div className="settings-redesign-sync-head">
                         <div>

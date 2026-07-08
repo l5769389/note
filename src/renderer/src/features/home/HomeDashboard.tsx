@@ -56,6 +56,7 @@ type HomeDashboardProps = {
   notes: HomeSavedNote[];
   onChangeTodoYear: (year: number) => void;
   onClearCompletedTodos: () => void;
+  onClearRecentDocuments: () => void;
   onCreateDocument: () => void;
   onDeleteNote: (noteId: string) => void;
   onDeleteTodo: (todoId: string) => void;
@@ -141,6 +142,7 @@ export function HomeDashboard({
   notes,
   onChangeTodoYear,
   onClearCompletedTodos,
+  onClearRecentDocuments,
   onCreateDocument,
   onDeleteNote,
   onDeleteTodo,
@@ -251,19 +253,31 @@ export function HomeDashboard({
           >
             <div className="recent-header">
               <h2>最近文档</h2>
-              {hasMoreRecentDocuments && (
-                <button
-                  type="button"
-                  aria-expanded={isRecentExpanded}
-                  onClick={onToggleRecentExpanded}
-                >
-                  {isRecentExpanded ? "收起" : "更多"}
-                  <ChevronRight
-                    className={isRecentExpanded ? "recent-more-icon-expanded" : undefined}
-                    size={16}
-                  />
-                </button>
-              )}
+              <div className="recent-header-actions">
+                {recentDocuments.length ? (
+                  <button
+                    className="recent-clear-button"
+                    type="button"
+                    onClick={onClearRecentDocuments}
+                  >
+                    <Trash2 size={14} />
+                    清除
+                  </button>
+                ) : null}
+                {hasMoreRecentDocuments && (
+                  <button
+                    type="button"
+                    aria-expanded={isRecentExpanded}
+                    onClick={onToggleRecentExpanded}
+                  >
+                    {isRecentExpanded ? "收起" : "更多"}
+                    <ChevronRight
+                      className={isRecentExpanded ? "recent-more-icon-expanded" : undefined}
+                      size={16}
+                    />
+                  </button>
+                )}
+              </div>
             </div>
             <div
               className={
@@ -348,7 +362,9 @@ export function HomeDashboard({
                   <span style={{ width: `${todoProgress}%` }} />
                 </div>
               </div>
-              <strong>{remainingTodoCount} 项未完成</strong>
+              {remainingTodoCount > 0 ? (
+                <strong>{remainingTodoCount} 项未完成</strong>
+              ) : null}
             </div>
 
             <div

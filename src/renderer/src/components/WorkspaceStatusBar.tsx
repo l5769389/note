@@ -31,12 +31,12 @@ const autoSaveStatus = {
   },
   idle: {
     icon: <Check size={14} />,
-    label: "自动保存待命",
-    title: "自动保存已启用",
+    label: "已保存",
+    title: "当前内容已保存",
   },
   saved: {
     icon: <Check size={14} />,
-    label: "已自动保存",
+    label: "已保存",
     title: "最近的修改已保存到本地文件",
   },
   saving: {
@@ -152,9 +152,16 @@ export function WorkspaceStatusBar({
   onToggleInspector,
   onToggleSidebar,
 }: WorkspaceStatusBarProps) {
-  const status = saveState === "idle" ? null : autoSaveStatus[saveState];
+  const status = autoSaveStatus[saveState];
   const syncDisplay = getSyncStatusDisplay(syncStatus);
   const syncState = syncStatus?.state ?? "disabled";
+  const isSyncConfigured = Boolean(
+    syncStatus?.configuration.enabled && syncStatus.configuration.tokenConfigured,
+  );
+  const shouldShowSyncStatus =
+    Boolean(syncStatus) &&
+    syncState !== "disabled" &&
+    (isSyncConfigured || syncState !== "idle");
   const canUseSyncStatus =
     syncState === "disabled"
       ? Boolean(onConfigureSync ?? onOpenSettings)
@@ -163,7 +170,7 @@ export function WorkspaceStatusBar({
         syncState !== "syncing";
   const inspectorTitle = isInspectorOpen ? "隐藏右侧栏" : "显示右侧栏";
   const shouldShowDocumentStatus = Boolean(activeDocument);
-  const shouldShowAutoSaveStatus = shouldShowDocumentStatus && status !== null;
+  const shouldShowAutoSaveStatus = shouldShowDocumentStatus;
 
   function handleSyncStatusClick(event: ReactMouseEvent<HTMLButtonElement>) {
     if (syncState === "disabled") {
@@ -201,20 +208,22 @@ export function WorkspaceStatusBar({
           <Settings size={15} />
         </button>
       ) : null}
-      <button
-        className={[
-          "workspace-sync-status",
-          `workspace-sync-status-${syncStatus?.state ?? "disabled"}`,
-        ].join(" ")}
-        type="button"
-        title={syncDisplay.title}
-        aria-label={syncDisplay.title}
-        disabled={!canUseSyncStatus}
-        onClick={handleSyncStatusClick}
-      >
-        {syncDisplay.icon}
-        {syncDisplay.label}
-      </button>
+      {shouldShowSyncStatus ? (
+        <button
+          className={[
+            "workspace-sync-status",
+            `workspace-sync-status-${syncStatus?.state ?? "disabled"}`,
+          ].join(" ")}
+          type="button"
+          title={syncDisplay.title}
+          aria-label={syncDisplay.title}
+          disabled={!canUseSyncStatus}
+          onClick={handleSyncStatusClick}
+        >
+          {syncDisplay.icon}
+          {syncDisplay.label}
+        </button>
+      ) : null}
       {shouldShowDocumentStatus && onCloseDocument ? (
         <button
           className="workspace-close-document-button"

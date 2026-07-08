@@ -33,7 +33,6 @@ export function useHomeState() {
   const [isHomeNoteDialogOpen, setIsHomeNoteDialogOpen] = useState(false);
   const [homeImagePreview, setHomeImagePreview] =
     useState<HomeImageAttachment | null>(null);
-  const [homeImagePreviewZoom, setHomeImagePreviewZoom] = useState(1);
   const [homeTodoItems, setHomeTodoItems] = useState<HomeTodoItem[]>([]);
   const [hasHydratedHomeCollections, setHasHydratedHomeCollections] = useState(false);
   const [homeTodoSelectedDate, setHomeTodoSelectedDate] = useState(formatHomeTodoDateKey);
@@ -112,7 +111,6 @@ export function useHomeState() {
   return {
     activeHomeSavedNoteId,
     homeImagePreview,
-    homeImagePreviewZoom,
     homeQuickNote,
     homeQuickNoteImages,
     homeSavedNotes,
@@ -127,7 +125,6 @@ export function useHomeState() {
     isRecentExpanded,
     setActiveHomeSavedNoteId,
     setHomeImagePreview,
-    setHomeImagePreviewZoom,
     setHomeQuickNote,
     setHomeQuickNoteImages,
     setHomeSavedNotes,

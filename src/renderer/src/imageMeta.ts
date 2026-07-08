@@ -27,16 +27,14 @@ export function getDefaultImageFitMode(
     return "contain";
   }
 
-  const ratio = width / height;
-
-  return ratio >= 1.8 || ratio <= 0.56 ? "cover" : "contain";
+  return "contain";
 }
 
 export function parseImageMeta(title?: string): ImageMeta {
   let titleText = title?.trim() ?? "";
   const widthMatch = titleText.match(/(?:^|\s)width=(\d{2,4})(?:px)?(?=\s|$)/i);
   const alignMatch = titleText.match(/(?:^|\s)align=(left|center|right)(?=\s|$)/i);
-  const fitMatch = titleText.match(/(?:^|\s)fit=(auto|contain|cover)(?=\s|$)/i);
+  const fitMatch = titleText.match(/(?:^|\s)fit=(auto|contain|cover|compact)(?=\s|$)/i);
   const width = widthMatch ? clampImageWidth(Number(widthMatch[1])) : undefined;
   const align = (alignMatch?.[1]?.toLowerCase() as ImageAlignment | undefined) ?? "left";
   const fit = (fitMatch?.[1]?.toLowerCase() as ImageFitMode | undefined) ?? "auto";
@@ -46,7 +44,7 @@ export function parseImageMeta(title?: string): ImageMeta {
   titleText = titleText
     .replace(/(?:^|\s)width=\d{2,4}(?:px)?(?=\s|$)/gi, " ")
     .replace(/(?:^|\s)align=(left|center|right)(?=\s|$)/gi, " ")
-    .replace(/(?:^|\s)fit=(auto|contain|cover)(?=\s|$)/gi, " ")
+    .replace(/(?:^|\s)fit=(auto|contain|cover|compact)(?=\s|$)/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 

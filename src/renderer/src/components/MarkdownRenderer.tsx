@@ -472,6 +472,7 @@ function MarkdownImageRenderer({
       <img
         {...props}
         data-image-fit={meta.fit}
+        data-image-width={meta.width ? String(meta.width) : undefined}
         decoding={props.decoding ?? "async"}
         loading={props.loading ?? "lazy"}
         src={renderedSrc || undefined}

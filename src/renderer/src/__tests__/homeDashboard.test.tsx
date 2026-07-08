@@ -75,6 +75,7 @@ function renderHomeDashboard(
       notes={[]}
       onChangeTodoYear={() => {}}
       onClearCompletedTodos={() => {}}
+      onClearRecentDocuments={() => {}}
       onCreateDocument={() => {}}
       onDeleteNote={() => {}}
       onDeleteTodo={() => {}}
@@ -127,6 +128,7 @@ describe("HomeDashboard", () => {
     expect(html).toContain("快捷操作");
     expect(html).toContain("还没有最近文档");
     expect(html).toContain("暂无待办");
+    expect(html).not.toContain("0 项未完成");
     expect(html).toContain("保存后的便签会显示在这里");
   });
 
@@ -141,6 +143,8 @@ describe("HomeDashboard", () => {
 
     expect(html).toContain("Example.md");
     expect(html).toContain("D:/notes/");
+    expect(html).toContain("清除");
+    expect(html).toContain("1 项未完成");
     expect(html).toContain("整理会议笔记");
     expect(html).toContain("一个临时想法");
     expect(html).toContain("home-saved-note-active");

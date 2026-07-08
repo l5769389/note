@@ -3,6 +3,7 @@ import {
   clampImageWidth,
   getExcalidrawDrawingId,
   getExcalidrawSceneReference,
+  getDefaultImageFitMode,
   parseImageMeta,
   patchExcalidrawSceneReference,
   patchImageMetaTitle,
@@ -10,6 +11,12 @@ import {
 } from "../imageMeta";
 
 describe("image metadata helpers", () => {
+  it("keeps auto images contained by default", () => {
+    expect(getDefaultImageFitMode(2400, 800)).toBe("contain");
+    expect(getDefaultImageFitMode(480, 1200)).toBe("contain");
+    expect(getDefaultImageFitMode(undefined, undefined)).toBe("contain");
+  });
+
   it("parses image titles, width, and alignment metadata", () => {
     expect(parseImageMeta("Cover image width=2048px align=Center")).toEqual({
       align: "center",
@@ -42,6 +49,14 @@ describe("image metadata helpers", () => {
       hasExplicitFit: true,
       titleText: "Preview",
       width: 500,
+    });
+    expect(parseImageMeta("Inline preview fit=compact")).toEqual({
+      align: "left",
+      fit: "compact",
+      hasExplicitAlign: false,
+      hasExplicitFit: true,
+      titleText: "Inline preview",
+      width: undefined,
     });
   });
 
@@ -80,6 +95,16 @@ describe("image metadata helpers", () => {
     expect(
       serializeImageMeta({
         align: "left",
+        fit: "compact",
+        hasExplicitAlign: false,
+        hasExplicitFit: true,
+        titleText: "",
+        width: undefined,
+      }),
+    ).toBe("fit=compact");
+    expect(
+      serializeImageMeta({
+        align: "left",
         fit: "contain",
         hasExplicitAlign: false,
         hasExplicitFit: true,
@@ -106,6 +131,9 @@ describe("image metadata helpers", () => {
       "Diagram width=320 fit=cover",
     );
     expect(patchImageMetaTitle("Diagram fit=cover", { fit: "auto" })).toBe("Diagram");
+    expect(patchImageMetaTitle("Screenshot fit=compact", { width: 240, fit: "auto" })).toBe(
+      "Screenshot width=240",
+    );
   });
 
   it("reads and updates Excalidraw scene references inside title text", () => {

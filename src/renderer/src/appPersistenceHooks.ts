@@ -9,6 +9,7 @@ import type { WorkspaceSnapshot } from "./types";
 export const persistedAppStateWriteDelayMs = 500;
 
 export function usePersistedAppStateWriter({
+  hiddenRecentDocumentKeys = [],
   isReady,
   recentDirectories,
   settings,
@@ -17,6 +18,7 @@ export function usePersistedAppStateWriter({
   workspace,
   writeDelayMs = persistedAppStateWriteDelayMs,
 }: {
+  hiddenRecentDocumentKeys?: string[];
   isReady: boolean;
   recentDirectories: string[];
   settings: AppSettings;
@@ -33,6 +35,7 @@ export function usePersistedAppStateWriter({
     const timer = window.setTimeout(() => {
       void savePersistedAppState(
         createPersistedAppState({
+          hiddenRecentDocumentKeys,
           recentDirectories,
           settings,
           sidebarWidth,
@@ -44,6 +47,7 @@ export function usePersistedAppStateWriter({
 
     return () => window.clearTimeout(timer);
   }, [
+    hiddenRecentDocumentKeys,
     isReady,
     recentDirectories,
     settings,

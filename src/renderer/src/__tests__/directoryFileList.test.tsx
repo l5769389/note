@@ -61,6 +61,7 @@ describe("DirectoryFileList", () => {
     expect(html).toContain('title="note.md"');
     expect(html).toContain('title="manual.pdf"');
     expect(html).toContain("project");
+    expect(html).toContain("directory-file-list-text");
     expect(html).toContain("A useful preview sentence.");
     expect(html).toContain("PDF");
   });
@@ -74,6 +75,15 @@ describe("DirectoryFileList", () => {
         }),
       ),
     ).toBe("正文摘要保留下来。");
+
+    expect(
+      getFileListPreview(
+        document({
+          content:
+            "/Users/jun/Library/Mobile Documents/com~apple~CloudDocs/笔记/.assets/screenshot-2026-07-08-01-39-39.png\nUsers\\jun\\Library\\Mobile Documents\\com~apple~CloudDocs\\笔记\\.assets\\capture 01.webp\n正文继续显示。",
+        }),
+      ),
+    ).toBe("正文继续显示。");
   });
 
   it("does not invent previews for non-text files", () => {

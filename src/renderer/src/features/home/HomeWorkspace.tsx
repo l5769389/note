@@ -1,8 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   ClipboardPaste,
-  Minus,
-  Plus,
   X,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
@@ -10,11 +8,13 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { HomeDashboard } from "./HomeDashboard";
 import { useHomeController } from "./useHomeController";
 import type { MarkdownDocument } from "../../types";
+import { ZoomableImagePreview } from "../../components/ZoomableImagePreview";
 
 type HomeWorkspaceProps = {
   activeDocument?: MarkdownDocument | null;
   logoUrl: string;
   noteDialogRequestId?: number;
+  onClearRecentDocuments: () => void;
   onCreateDocument: () => void;
   onOpenKnowledgeRelations: () => void;
   onOpenRecentDocument: (document: MarkdownDocument) => void | Promise<void>;
@@ -34,6 +34,7 @@ export function HomeWorkspace({
   activeDocument,
   logoUrl,
   noteDialogRequestId = 0,
+  onClearRecentDocuments,
   onCreateDocument,
   onOpenKnowledgeRelations,
   onOpenRecentDocument,
@@ -64,6 +65,7 @@ export function HomeWorkspace({
         {...home.dashboardState}
         activeDocument={activeDocument}
         logoUrl={logoUrl}
+        onClearRecentDocuments={onClearRecentDocuments}
         onCreateDocument={onCreateDocument}
         onOpenKnowledgeRelations={onOpenKnowledgeRelations}
         onOpenRecentDocument={onOpenRecentDocument}
@@ -191,45 +193,11 @@ export function HomeWorkspace({
                   <X size={18} />
                 </button>
               </Dialog.Close>
-              <div
-                className="home-image-preview-viewport"
-                onWheel={(event) => {
-                  event.preventDefault();
-                  home.imagePreview.setZoom(event.deltaY < 0 ? 0.1 : -0.1);
-                }}
-              >
-                <img
-                  alt={home.imagePreview.image.fileName}
-                  src={home.imagePreview.image.dataUrl}
-                  draggable={false}
-                  style={{
-                    transform: `scale(${home.imagePreview.zoom})`,
-                  }}
-                />
-              </div>
-              <div className="home-image-preview-toolbar" aria-label="图片缩放">
-                <button
-                  type="button"
-                  aria-label="缩小图片"
-                  onClick={() => home.imagePreview.setZoom(-0.1)}
-                >
-                  <Minus size={16} />
-                </button>
-                <button
-                  className="home-image-preview-zoom-value"
-                  type="button"
-                  onClick={home.imagePreview.resetZoom}
-                >
-                  {Math.round(home.imagePreview.zoom * 100)}%
-                </button>
-                <button
-                  type="button"
-                  aria-label="放大图片"
-                  onClick={() => home.imagePreview.setZoom(0.1)}
-                >
-                  <Plus size={16} />
-                </button>
-              </div>
+              <ZoomableImagePreview
+                alt={home.imagePreview.image.fileName}
+                classNamePrefix="home-image-preview"
+                src={home.imagePreview.image.dataUrl}
+              />
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>

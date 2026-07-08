@@ -362,15 +362,26 @@ export async function readClipboardMediaFallbackAction({
 
   onBeforeReadNativeMediaData?.();
 
-  const nativeMediaDataAction = getClipboardMediaDataImportAction(
-    await readMediaData?.(),
+  const nativeMediaData = await readMediaData?.();
+  const nativeVideoDataAction = getClipboardMediaDataImportAction(
+    toArray(nativeMediaData ?? []).filter((file) =>
+      file.mimeType.startsWith("video/"),
+    ),
   );
 
-  if (nativeMediaDataAction) {
-    return nativeMediaDataAction;
+  if (nativeVideoDataAction) {
+    return nativeVideoDataAction;
   }
 
-  return getClipboardImageDataImportAction(await readImageData?.());
+  const nativeImageDataAction = getClipboardImageDataImportAction(
+    await readImageData?.(),
+  );
+
+  if (nativeImageDataAction) {
+    return nativeImageDataAction;
+  }
+
+  return getClipboardMediaDataImportAction(nativeMediaData);
 }
 
 export function clipboardHtmlLooksLikeMedia(clipboardData: ClipboardDataLike) {
@@ -386,15 +397,13 @@ export function clipboardPlainTextLooksLikeMediaPath(plainText: string) {
     return false;
   }
 
-  if (/^file:\/\//i.test(normalizedText)) {
-    return Boolean(getClipboardMediaMimeType(normalizedText));
-  }
-
-  if (!/^(?:[a-zA-Z]:[\\/]|\/[a-zA-Z]:[\\/])/.test(normalizedText)) {
+  if (!getClipboardMediaMimeType(normalizedText)) {
     return false;
   }
 
-  return Boolean(getClipboardMediaMimeType(normalizedText));
+  return /^(?:file:\/\/|[a-zA-Z]:[\\/]|\/[a-zA-Z]:[\\/]|\\\\|\/|Users[\\/])/.test(
+    normalizedText,
+  );
 }
 
 export function shouldTryClipboardMediaFallback(

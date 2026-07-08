@@ -8,6 +8,7 @@ import type {
   LocalWorkspaceDirectory,
 } from "./types";
 import type { PersistedAppState } from "../../shared/appState";
+import type { AppMenuCommand, AppMenuState } from "../../shared/appMenu";
 import type {
   SyncConfigurationInput,
   SyncLoginInput,
@@ -133,6 +134,8 @@ type DesktopApi = {
     callback: (payload: WorkspaceFileChangePayload) => void,
   ) => () => void;
   onInspirationNote: (callback: () => void) => () => void;
+  onAppMenuCommand: (callback: (command: AppMenuCommand) => void) => () => void;
+  updateAppMenuState: (state: AppMenuState) => Promise<void>;
   onWindowStateChanged: (
     callback: (state: {
       alwaysOnTop: boolean;

@@ -1,8 +1,8 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, shell, Tray } from "electron";
-import type { IpcMainInvokeEvent, OpenDialogOptions, SaveDialogOptions } from "electron";
+import type { IpcMainInvokeEvent, MenuItemConstructorOptions, OpenDialogOptions, SaveDialogOptions } from "electron";
 import chokidar, { type FSWatcher } from "chokidar";
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { access, copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
@@ -18,11 +18,13 @@ import {
 } from "./syncService";
 import {
   createDefaultSyncConfiguration,
+  createInitialSyncStatus,
   getDefaultSyncServerUrl,
   type SyncConfigurationInput,
   type SyncLoginInput,
   type SyncStatusSnapshot,
 } from "../shared/sync";
+import { remoteSyncFeatureEnabled } from "../shared/featureFlags";
 import {
   getClipboardFormatMimeType,
   getMediaFileExtensionFromMimeType,
@@ -32,6 +34,19 @@ import {
   createWorkspaceRenamedEntryName,
   splitWorkspaceEntryNameForRename,
 } from "../shared/workspaceRename";
+import {
+  appMenuThemeValues,
+  defaultAppMenuState,
+  type AppMenuCommand,
+  type AppMenuCommandId,
+  type AppMenuState,
+  type AppMenuThemeValue,
+} from "../shared/appMenu";
+import {
+  getDockIconResourceCandidates,
+  getTrayIconResourceCandidates,
+  getWindowIconResourceCandidates,
+} from "../shared/platformIcons";
 import {
   clearDocumentHistoryVersions,
   createDocumentHistoryVersion,
@@ -52,9 +67,13 @@ const skipInitialSyncConfigurationRestore =
   process.env.NOTEDOCK_SKIP_INITIAL_SYNC_CONFIG_RESTORE === "1";
 const allowSelfSignedSyncCertificate =
   process.env.NOTEDOCK_ALLOW_SELF_SIGNED_SYNC_CERT === "1";
+const shouldOpenDevTools =
+  process.env.NOTEDOCK_OPEN_DEVTOOLS === "1" ||
+  (Boolean(devServerUrl) && process.env.NOTEDOCK_OPEN_DEVTOOLS !== "0");
 const defaultSyncServerUrl =
   process.env.NOTEDOCK_DEFAULT_SYNC_SERVER_URL?.trim() ||
   getDefaultSyncServerUrl(devServerUrl ? "development" : "production");
+const remoteSyncDisabledMessage = "远程同步功能已禁用。";
 const appName = "noteDock";
 const appUserModelId = "com.local.notedock";
 const appStateFileName = "notedock-state-v1.json";
@@ -64,6 +83,13 @@ const windowZoomMax = 2;
 const windowZoomMin = 0.5;
 const windowZoomStep = 0.1;
 type WindowZoomCommand = "reset" | "zoomIn" | "zoomOut";
+
+app.name = appName;
+app.setName(appName);
+
+if (process.platform === "darwin") {
+  app.setAboutPanelOptions({ applicationName: appName });
+}
 
 if (testUserDataDirectory) {
   app.setPath("userData", testUserDataDirectory);
@@ -108,6 +134,7 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let syncService: SyncService | null = null;
+let appMenuState: AppMenuState = defaultAppMenuState;
 const workspaceWatchers = new Map<number, FSWatcher>();
 const syncFileWrites = new Map<string, number>();
 const ignoredDirectoryNames = new Set([
@@ -153,6 +180,9 @@ function normalizeStringList(value: unknown) {
 
 function normalizePersistedAppState(value: unknown): PersistedAppState {
   const record = isRecord(value) ? value : {};
+  const hiddenRecentDocumentKeys = normalizeStringList(
+    record.hiddenRecentDocumentKeys,
+  );
   const recentDirectories = normalizeStringList(record.recentDirectories);
   const sidebarWidth =
     typeof record.sidebarWidth === "number" && Number.isFinite(record.sidebarWidth)
@@ -162,6 +192,7 @@ function normalizePersistedAppState(value: unknown): PersistedAppState {
   return {
     version: persistedAppStateVersion,
     ...(record.appSettings !== undefined ? { appSettings: record.appSettings } : {}),
+    ...(hiddenRecentDocumentKeys ? { hiddenRecentDocumentKeys } : {}),
     ...(recentDirectories ? { recentDirectories } : {}),
     ...(sidebarWidth !== undefined ? { sidebarWidth } : {}),
     ...(typeof record.theme === "string" ? { theme: record.theme } : {}),
@@ -987,6 +1018,10 @@ function consumeSyncFileWrite(filePath: string) {
 }
 
 function queueSync() {
+  if (!remoteSyncFeatureEnabled) {
+    return;
+  }
+
   syncService?.scheduleSync();
 }
 
@@ -1449,10 +1484,72 @@ function isSafeNavigation(url: string): boolean {
   return url.startsWith(devServerUrl);
 }
 
-function getAppIconPath() {
+function getResourcePath(fileName: string) {
   return app.isPackaged
-    ? join(process.resourcesPath, "icon.ico")
-    : join(process.cwd(), "resources", "icon.ico");
+    ? join(process.resourcesPath, fileName)
+    : join(process.cwd(), "resources", fileName);
+}
+
+function firstExistingResourcePath(fileNames: string[]) {
+  return fileNames.map(getResourcePath).find((filePath) => existsSync(filePath));
+}
+
+function getWindowIconPath() {
+  return firstExistingResourcePath(getWindowIconResourceCandidates(process.platform));
+}
+
+function getDockIconPath() {
+  return firstExistingResourcePath(getDockIconResourceCandidates(process.platform));
+}
+
+function setMacDockIcon() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const dock = app.dock;
+
+  if (!dock) {
+    return;
+  }
+
+  const iconPath = getDockIconPath();
+
+  if (!iconPath) {
+    console.warn("Dock icon resource was not found.");
+    return;
+  }
+
+  const image = nativeImage.createFromPath(iconPath);
+
+  if (image.isEmpty()) {
+    console.warn(`Dock icon resource could not be loaded: ${iconPath}`);
+    return;
+  }
+
+  dock.setIcon(image);
+}
+
+function getTrayIconPath() {
+  return firstExistingResourcePath(getTrayIconResourceCandidates(process.platform));
+}
+
+function getTrayIcon() {
+  const iconPath = getTrayIconPath();
+
+  if (!iconPath) {
+    console.warn("Tray icon resource was not found.");
+    return null;
+  }
+
+  const image = nativeImage.createFromPath(iconPath);
+
+  if (image.isEmpty()) {
+    console.warn(`Tray icon resource could not be loaded: ${iconPath}`);
+    return null;
+  }
+
+  return image;
 }
 
 function showMainWindow() {
@@ -1548,12 +1645,485 @@ function createTray() {
     return tray;
   }
 
-  tray = new Tray(getAppIconPath());
+  const trayIcon = getTrayIcon();
+
+  if (!trayIcon) {
+    return null;
+  }
+
+  tray = new Tray(trayIcon);
   tray.setToolTip("noteDock");
   tray.on("click", showMainWindow);
   tray.on("double-click", showMainWindow);
   updateTrayMenu();
   return tray;
+}
+
+function getAppMenuTargetWindow() {
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+
+  if (focusedWindow && !focusedWindow.isDestroyed()) {
+    return focusedWindow;
+  }
+
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
+function sendAppMenuCommand(command: AppMenuCommand) {
+  const targetWindow = getAppMenuTargetWindow();
+
+  if (!targetWindow) {
+    return;
+  }
+
+  targetWindow.webContents.send("app-menu:command", command);
+}
+
+function createAppMenuItem(
+  label: string,
+  id: AppMenuCommandId,
+  options: Omit<MenuItemConstructorOptions, "click" | "label"> = {},
+): MenuItemConstructorOptions {
+  return {
+    ...options,
+    label,
+    click: () => sendAppMenuCommand({ id }),
+  };
+}
+
+function createSeparator(): MenuItemConstructorOptions {
+  return { type: "separator" };
+}
+
+function createThemeMenuItem(
+  label: string,
+  theme: AppMenuThemeValue,
+  state: AppMenuState,
+): MenuItemConstructorOptions {
+  return createAppMenuItem(label, `theme:set:${theme}` as AppMenuCommandId, {
+    checked: state.theme === theme,
+    type: "checkbox",
+  });
+}
+
+function createRecentDocumentsSubmenu(state: AppMenuState): MenuItemConstructorOptions[] {
+  if (!state.recentDocuments.length) {
+    return [{ enabled: false, label: "没有最近文件" }];
+  }
+
+  return state.recentDocuments.slice(0, 10).map((document) => ({
+    enabled: document.exists !== false,
+    label: document.pathLabel
+      ? `${document.label} - ${document.pathLabel}`
+      : document.label,
+    click: () =>
+      sendAppMenuCommand({
+        documentId: document.id,
+        id: "file:open-recent",
+      }),
+  }));
+}
+
+function buildMacApplicationMenuTemplate(
+  state: AppMenuState,
+): MenuItemConstructorOptions[] {
+  const markdownEnabled = state.markdownDocument;
+  const activeDocumentEnabled = state.activeDocument;
+
+  return [
+    {
+      label: appName,
+      submenu: [
+        createAppMenuItem(`关于 ${appName}`, "app:about"),
+        createSeparator(),
+        { role: "services", label: "服务" },
+        createSeparator(),
+        { role: "hide", label: `隐藏 ${appName}` },
+        { role: "hideOthers", label: "隐藏其他" },
+        { role: "unhide", label: "全部显示" },
+        createSeparator(),
+        { role: "quit", label: `退出 ${appName}` },
+      ],
+    },
+    {
+      label: "文件",
+      submenu: [
+        {
+          label: "新建",
+          submenu: [
+            createAppMenuItem("Markdown 文件", "file:new-markdown", {
+              accelerator: "CommandOrControl+N",
+            }),
+            createAppMenuItem("在线表格文件", "file:new-sheet"),
+            createAppMenuItem("Excalidraw 文件", "file:new-drawing"),
+          ],
+        },
+        createAppMenuItem("新建窗口", "file:new-window", {
+          accelerator: "CommandOrControl+Shift+N",
+        }),
+        createAppMenuItem("灵感便签...", "file:inspiration-note", {
+          accelerator: "CommandOrControl+Alt+N",
+        }),
+        createSeparator(),
+        createAppMenuItem("打开...", "file:open", {
+          accelerator: "CommandOrControl+O",
+        }),
+        createAppMenuItem("打开文件夹...", "file:open-folder"),
+        createSeparator(),
+        createAppMenuItem("历史记录", "file:history", {
+          enabled: state.canOpenHistory,
+        }),
+        createSeparator(),
+        {
+          label: "打开最近文件",
+          submenu: createRecentDocumentsSubmenu(state),
+        },
+        createSeparator(),
+        createAppMenuItem("保存", "file:save", {
+          accelerator: "CommandOrControl+S",
+          enabled: activeDocumentEnabled,
+        }),
+        createAppMenuItem("关闭当前文档", "file:close-document", {
+          accelerator: "CommandOrControl+W",
+          enabled: activeDocumentEnabled,
+        }),
+        createAppMenuItem("另存为...", "file:save-as", {
+          accelerator: "CommandOrControl+Shift+S",
+          enabled: markdownEnabled,
+        }),
+        createSeparator(),
+        {
+          label: "导出",
+          submenu: [
+            createAppMenuItem("导出为 PDF...", "file:export-pdf", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("导出为 HTML...", "file:export-html", {
+              enabled: markdownEnabled,
+            }),
+          ],
+        },
+        createSeparator(),
+        createAppMenuItem("打开文件位置...", "file:show-in-folder", {
+          enabled: activeDocumentEnabled,
+        }),
+        createAppMenuItem("在侧边栏中显示", "file:reveal-sidebar"),
+      ],
+    },
+    {
+      label: "编辑",
+      submenu: [
+        createAppMenuItem("撤消", "edit:undo", {
+          accelerator: "CommandOrControl+Z",
+        }),
+        createAppMenuItem("重做", "edit:redo", {
+          accelerator: "CommandOrControl+Y",
+        }),
+        createSeparator(),
+        createAppMenuItem("剪切", "edit:cut", {
+          accelerator: "CommandOrControl+X",
+        }),
+        createAppMenuItem("复制", "edit:copy", {
+          accelerator: "CommandOrControl+C",
+        }),
+        createAppMenuItem("粘贴", "edit:paste", {
+          accelerator: "CommandOrControl+V",
+        }),
+        createSeparator(),
+        createAppMenuItem("插入 Excalidraw 流程图...", "edit:insert-drawing"),
+        createAppMenuItem("插入在线表格...", "edit:insert-sheet"),
+        createSeparator(),
+        createAppMenuItem("上移该行", "edit:move-line-up", {
+          accelerator: "Alt+Up",
+        }),
+        createAppMenuItem("下移该行", "edit:move-line-down", {
+          accelerator: "Alt+Down",
+        }),
+        createSeparator(),
+        createAppMenuItem("删除", "edit:delete"),
+        createSeparator(),
+        createAppMenuItem("查找", "edit:find", {
+          accelerator: "CommandOrControl+F",
+        }),
+        createAppMenuItem("替换", "edit:replace", {
+          accelerator: "CommandOrControl+H",
+        }),
+        createSeparator(),
+        { enabled: false, label: "表情与符号" },
+      ],
+    },
+    {
+      label: "段落",
+      submenu: [
+        createAppMenuItem("一级标题", "paragraph:heading-1", {
+          accelerator: "CommandOrControl+1",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("二级标题", "paragraph:heading-2", {
+          accelerator: "CommandOrControl+2",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("三级标题", "paragraph:heading-3", {
+          accelerator: "CommandOrControl+3",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("四级标题", "paragraph:heading-4", {
+          accelerator: "CommandOrControl+4",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("五级标题", "paragraph:heading-5", {
+          accelerator: "CommandOrControl+5",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("六级标题", "paragraph:heading-6", {
+          accelerator: "CommandOrControl+6",
+          enabled: markdownEnabled,
+        }),
+        createSeparator(),
+        createAppMenuItem("提升标题级别", "paragraph:promote-heading", {
+          accelerator: "CommandOrControl+=",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("降低标题级别", "paragraph:demote-heading", {
+          accelerator: "CommandOrControl+-",
+          enabled: markdownEnabled,
+        }),
+        createSeparator(),
+        createAppMenuItem("表格", "paragraph:table", {
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("公式块", "paragraph:math-block", {
+          accelerator: "CommandOrControl+Shift+M",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("代码块", "paragraph:code-block", {
+          accelerator: "CommandOrControl+Shift+K",
+          enabled: markdownEnabled,
+        }),
+        {
+          label: "警告框",
+          submenu: [
+            createAppMenuItem("提醒内容", "paragraph:alert-note", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("建议内容", "paragraph:alert-tip", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("重要内容", "paragraph:alert-important", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("警告内容", "paragraph:alert-warning", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("注意内容", "paragraph:alert-caution", {
+              enabled: markdownEnabled,
+            }),
+          ],
+        },
+        createSeparator(),
+        createAppMenuItem("引用", "paragraph:blockquote", {
+          accelerator: "CommandOrControl+Shift+Q",
+          enabled: markdownEnabled,
+        }),
+        createSeparator(),
+        createAppMenuItem("有序列表", "paragraph:ordered-list", {
+          accelerator: "CommandOrControl+Shift+[",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("无序列表", "paragraph:bullet-list", {
+          accelerator: "CommandOrControl+Shift+]",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("任务列表", "paragraph:task-list", {
+          accelerator: "CommandOrControl+Shift+X",
+          enabled: markdownEnabled,
+        }),
+        {
+          label: "任务状态",
+          submenu: [
+            createAppMenuItem("切换任务状态", "paragraph:task-toggle", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("标记已完成", "paragraph:task-completed", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("标记为未完成", "paragraph:task-incomplete", {
+              enabled: markdownEnabled,
+            }),
+          ],
+        },
+        createAppMenuItem("增加列表缩进", "paragraph:indent-list", {
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("减少列表缩进", "paragraph:outdent-list", {
+          enabled: markdownEnabled,
+        }),
+        createSeparator(),
+        createAppMenuItem("水平分割线", "paragraph:horizontal-rule", {
+          enabled: markdownEnabled,
+        }),
+      ],
+    },
+    {
+      label: "格式",
+      submenu: [
+        createAppMenuItem("加粗", "format:bold", {
+          accelerator: "CommandOrControl+B",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("斜体", "format:italic", {
+          accelerator: "CommandOrControl+I",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("下划线", "format:underline", {
+          accelerator: "CommandOrControl+U",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("代码", "format:inline-code", {
+          accelerator: "CommandOrControl+Shift+`",
+          enabled: markdownEnabled,
+        }),
+        createSeparator(),
+        createAppMenuItem("删除线", "format:strikethrough", {
+          accelerator: "Alt+Shift+5",
+          enabled: markdownEnabled,
+        }),
+        createAppMenuItem("注释", "format:comment", {
+          enabled: markdownEnabled,
+        }),
+        createSeparator(),
+        createAppMenuItem("超链接", "format:link", {
+          accelerator: "CommandOrControl+K",
+          enabled: markdownEnabled,
+        }),
+        {
+          label: "图像",
+          submenu: [
+            createAppMenuItem("插入本地图片...", "format:image-insert", {
+              enabled: markdownEnabled,
+            }),
+            createSeparator(),
+            createAppMenuItem("左对齐", "format:image-align-left", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("居中", "format:image-align-center", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("右对齐", "format:image-align-right", {
+              enabled: markdownEnabled,
+            }),
+            createAppMenuItem("恢复原始大小", "format:image-reset-size", {
+              enabled: markdownEnabled,
+            }),
+          ],
+        },
+      ],
+    },
+    {
+      label: "视图",
+      submenu: [
+        createAppMenuItem("显示 / 隐藏侧边栏", "view:toggle-sidebar", {
+          accelerator: "CommandOrControl+Shift+L",
+        }),
+        createAppMenuItem("搜索", "view:workspace-search", {
+          accelerator: "CommandOrControl+Shift+F",
+        }),
+        createAppMenuItem("链接总览", "view:knowledge-relations"),
+        createAppMenuItem("阅读设置...", "view:settings"),
+        {
+          label: "编辑模式",
+          submenu: [
+            createAppMenuItem("实时渲染", "view:mode-typora", {
+              checked: state.editorMode === "typora",
+              type: "checkbox",
+            }),
+            createAppMenuItem("源码", "view:mode-source", {
+              checked: state.editorMode === "source",
+              type: "checkbox",
+            }),
+            createAppMenuItem("分栏", "view:mode-split", {
+              checked: state.editorMode === "split",
+              type: "checkbox",
+            }),
+            createAppMenuItem("预览", "view:mode-preview", {
+              checked: state.editorMode === "preview",
+              type: "checkbox",
+            }),
+          ],
+        },
+        createSeparator(),
+        createAppMenuItem("沉浸浏览模式", "view:toggle-fullscreen", {
+          accelerator: "F11",
+          checked: state.fullScreen,
+          type: "checkbox",
+        }),
+        createAppMenuItem("保持窗口在最前端", "view:toggle-always-on-top", {
+          checked: state.alwaysOnTop,
+          type: "checkbox",
+        }),
+        createSeparator(),
+        createAppMenuItem(`实际大小 (${state.windowZoomPercent}%)`, "view:reset-zoom", {
+          accelerator: "CommandOrControl+Shift+9",
+          checked: state.defaultZoom,
+          type: "checkbox",
+        }),
+        createAppMenuItem("放大", "view:zoom-in", {
+          accelerator: "CommandOrControl+Plus",
+        }),
+        createAppMenuItem("缩小", "view:zoom-out", {
+          accelerator: "CommandOrControl+Shift+-",
+        }),
+      ],
+    },
+    {
+      label: "主题",
+      submenu: [
+        createThemeMenuItem("Paper", "paper", state),
+        createThemeMenuItem("Github", "github", state),
+        createThemeMenuItem("Newsprint", "newsprint", state),
+        createThemeMenuItem("Night", "night", state),
+        createThemeMenuItem("Pixyll", "pixyll", state),
+        createThemeMenuItem("Whitey", "whitey", state),
+        createThemeMenuItem("Dark", "dark", state),
+      ],
+    },
+    {
+      label: "帮助",
+      submenu: [
+        createAppMenuItem("关于 noteDock", "app:about"),
+      ],
+    },
+  ];
+}
+
+function normalizeAppMenuState(state: AppMenuState): AppMenuState {
+  return {
+    ...defaultAppMenuState,
+    ...state,
+    editorMode: ["preview", "source", "split", "typora"].includes(state.editorMode)
+      ? state.editorMode
+      : defaultAppMenuState.editorMode,
+    recentDocuments: Array.isArray(state.recentDocuments)
+      ? state.recentDocuments.slice(0, 10)
+      : [],
+    theme: appMenuThemeValues.includes(state.theme)
+      ? state.theme
+      : defaultAppMenuState.theme,
+    windowZoomPercent: Number.isFinite(state.windowZoomPercent)
+      ? state.windowZoomPercent
+      : defaultAppMenuState.windowZoomPercent,
+  };
+}
+
+function updateApplicationMenu() {
+  if (process.platform !== "darwin" || isE2E) {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(buildMacApplicationMenuTemplate(appMenuState)),
+  );
 }
 
 function getSenderWindow(event: IpcMainInvokeEvent) {
@@ -1668,15 +2238,23 @@ function registerLocalPreviewProtocol() {
 }
 
 function createMainWindow(): BrowserWindow {
+  const windowIconPath = getWindowIconPath();
+  const isMac = process.platform === "darwin";
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
-    minWidth: 960,
+    minWidth: isMac ? 760 : 960,
     minHeight: 640,
     backgroundColor: "#f5f6f8",
-    autoHideMenuBar: true,
-    frame: false,
-    icon: getAppIconPath(),
+    autoHideMenuBar: !isMac,
+    frame: isMac,
+    ...(windowIconPath ? { icon: windowIconPath } : {}),
+    ...(isMac
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 14, y: 10 },
+        }
+      : {}),
     title: appName,
     webPreferences: {
       contextIsolation: true,
@@ -1728,6 +2306,25 @@ function createMainWindow(): BrowserWindow {
     return { action: "deny" };
   });
 
+  window.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) {
+        return;
+      }
+
+      console.error(
+        `Window failed to load ${validatedURL}: ${errorCode} ${errorDescription}`,
+      );
+    },
+  );
+
+  window.webContents.on("render-process-gone", (_event, details) => {
+    console.error(
+      `Renderer process gone: ${details.reason} (exitCode: ${details.exitCode})`,
+    );
+  });
+
   window.webContents.on("will-navigate", (event, url) => {
     if (isSafeNavigation(url)) {
       return;
@@ -1739,11 +2336,16 @@ function createMainWindow(): BrowserWindow {
 
   if (devServerUrl) {
     void window.loadURL(devServerUrl);
-    window.webContents.openDevTools({ mode: "detach" });
+    if (shouldOpenDevTools) {
+      window.webContents.openDevTools({ mode: "detach" });
+    }
     return window;
   }
 
   void window.loadFile(join(__dirname, "../renderer/index.html"));
+  if (shouldOpenDevTools) {
+    window.webContents.openDevTools({ mode: "detach" });
+  }
   return window;
 }
 
@@ -1775,6 +2377,11 @@ function sendSyncStatusChanged(status: SyncStatusSnapshot) {
 }
 
 async function initializeSyncService() {
+  if (!remoteSyncFeatureEnabled) {
+    syncService = null;
+    return;
+  }
+
   syncService = new SyncService({
     defaultConfiguration: createDefaultSyncConfiguration(defaultSyncServerUrl),
     getAppState: readPersistedAppState,
@@ -1788,6 +2395,33 @@ async function initializeSyncService() {
 }
 
 function registerSyncIpc() {
+  if (!remoteSyncFeatureEnabled) {
+    const createDisabledSyncStatus = () =>
+      createInitialSyncStatus(
+        createDefaultSyncConfiguration(defaultSyncServerUrl),
+      );
+
+    ipcMain.handle("sync:configure", () => createDisabledSyncStatus());
+
+    ipcMain.handle("sync:create-access-token", async () => {
+      throw new Error(remoteSyncDisabledMessage);
+    });
+
+    ipcMain.handle("sync:get-status", () => createDisabledSyncStatus());
+
+    ipcMain.handle("sync:open-cloud-workspace", () => null);
+
+    ipcMain.handle("sync:import-local-directory-to-cloud", () => null);
+
+    ipcMain.handle("sync:now", () => createDisabledSyncStatus());
+
+    ipcMain.handle("sync:export-cloud-entries", async () => {
+      throw new Error(remoteSyncDisabledMessage);
+    });
+
+    return;
+  }
+
   ipcMain.handle("sync:configure", async (_, input: SyncConfigurationInput) => {
     return syncService?.configure(input);
   });
@@ -2899,6 +3533,11 @@ function registerFileIpc() {
 function registerWindowIpc() {
   ipcMain.handle("app:get-version", () => app.getVersion());
 
+  ipcMain.handle("app-menu:update-state", (_, state: AppMenuState) => {
+    appMenuState = normalizeAppMenuState(state);
+    updateApplicationMenu();
+  });
+
   ipcMain.handle("window:new", () => {
     createMainWindow();
   });
@@ -2999,9 +3638,14 @@ if (!singleInstanceLock) {
   }
 
   app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null);
+    app.name = appName;
+    app.setName(appName);
+    setMacDockIcon();
+    updateApplicationMenu();
     registerLocalPreviewProtocol();
-    await initializeSyncService();
+    if (remoteSyncFeatureEnabled) {
+      await initializeSyncService();
+    }
     registerAppStateIpc();
     registerSyncIpc();
     registerFileIpc();

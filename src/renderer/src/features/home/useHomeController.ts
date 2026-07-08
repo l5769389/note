@@ -74,7 +74,6 @@ export function useHomeController({ recentDocuments }: UseHomeControllerOptions)
   const {
     activeHomeSavedNoteId,
     homeImagePreview,
-    homeImagePreviewZoom,
     homeQuickNote,
     homeQuickNoteImages,
     homeSavedNotes,
@@ -88,7 +87,6 @@ export function useHomeController({ recentDocuments }: UseHomeControllerOptions)
     isRecentExpanded,
     setActiveHomeSavedNoteId,
     setHomeImagePreview,
-    setHomeImagePreviewZoom,
     setHomeQuickNote,
     setHomeQuickNoteImages,
     setHomeSavedNotes,
@@ -392,19 +390,8 @@ export function useHomeController({ recentDocuments }: UseHomeControllerOptions)
     );
   }
 
-  function changeHomeImagePreviewZoom(delta: number) {
-    setHomeImagePreviewZoom((currentZoom) =>
-      Math.min(4, Math.max(0.25, Math.round((currentZoom + delta) * 100) / 100)),
-    );
-  }
-
-  function resetHomeImagePreviewZoom() {
-    setHomeImagePreviewZoom(1);
-  }
-
   function closeHomeImagePreview() {
     setHomeImagePreview(null);
-    resetHomeImagePreviewZoom();
   }
 
   function setHomeTodoRowRef(todoId: string, node: HTMLDivElement | null) {
@@ -620,10 +607,7 @@ export function useHomeController({ recentDocuments }: UseHomeControllerOptions)
     imagePreview: {
       close: closeHomeImagePreview,
       image: homeImagePreview,
-      resetZoom: resetHomeImagePreviewZoom,
       setImage: setHomeImagePreview,
-      setZoom: changeHomeImagePreviewZoom,
-      zoom: homeImagePreviewZoom,
     },
     noteDialog: {
       canSave: Boolean(homeQuickNote.trim() || homeQuickNoteImages.length),

@@ -1,5 +1,5 @@
 export type ImageAlignment = "left" | "center" | "right";
-export type ImageFitMode = "auto" | "contain" | "cover";
+export type ImageFitMode = "auto" | "contain" | "cover" | "compact";
 
 export type TyporaEditCommand =
   | "copy"

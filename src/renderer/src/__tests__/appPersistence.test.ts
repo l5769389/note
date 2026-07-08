@@ -5,6 +5,7 @@ import {
   defaultSidebarWidth,
   hasBrowserPersistedAppState,
   loadRecentDirectoryPaths,
+  normalizeHiddenRecentDocumentKeys,
   migrateLegacyPersistedAppHydration,
   maxSidebarWidth,
   minSidebarWidth,
@@ -65,6 +66,9 @@ describe("app persistence helpers", () => {
     expect(normalizePersistedDirectories(["D:/notes", 1, null])).toEqual([
       "D:/notes",
     ]);
+    expect(normalizeHiddenRecentDocumentKeys(["file:/a.md", "", 1])).toEqual([
+      "file:/a.md",
+    ]);
   });
 
   it("loads recent directories and detects stored state", () => {
@@ -78,6 +82,7 @@ describe("app persistence helpers", () => {
 
   it("creates a serialized app state snapshot", () => {
     const state = createPersistedAppState({
+      hiddenRecentDocumentKeys: ["file:/d:/notes/old.md"],
       recentDirectories: ["D:/notes"],
       settings: defaultAppSettings,
       sidebarWidth: 320,
@@ -86,6 +91,7 @@ describe("app persistence helpers", () => {
     });
 
     expect(state.version).toBe(1);
+    expect(state.hiddenRecentDocumentKeys).toEqual(["file:/d:/notes/old.md"]);
     expect(state.recentDirectories).toEqual(["D:/notes"]);
     expect((state.workspace as WorkspaceSnapshot).documents).toEqual([]);
   });
@@ -94,6 +100,7 @@ describe("app persistence helpers", () => {
     const hydration = createPersistedAppHydration(
       {
         appSettings: { editorMode: "source" },
+        hiddenRecentDocumentKeys: ["file:/d:/main.md"],
         recentDirectories: ["D:/main"],
         sidebarWidth: 380,
         theme: "paper",
@@ -115,6 +122,7 @@ describe("app persistence helpers", () => {
     );
 
     expect(hydration.recentDirectories).toEqual(["D:/main"]);
+    expect(hydration.hiddenRecentDocumentKeys).toEqual(["file:/d:/main.md"]);
     expect(hydration.settings.editorMode).toBe("source");
     expect(hydration.shouldMigrateLegacyState).toBe(false);
     expect(hydration.theme).toBe("paper");
@@ -149,6 +157,7 @@ describe("app persistence helpers", () => {
 
     const migrated = await migrateLegacyPersistedAppHydration(
       {
+        hiddenRecentDocumentKeys: ["file:/d:/legacy.md"],
         recentDirectories: ["D:/legacy"],
         settings: defaultAppSettings,
         shouldMigrateLegacyState: true,
@@ -170,5 +179,8 @@ describe("app persistence helpers", () => {
     expect((savedState as { recentDirectories: string[] }).recentDirectories).toEqual([
       "D:/legacy",
     ]);
+    expect(
+      (savedState as { hiddenRecentDocumentKeys: string[] }).hiddenRecentDocumentKeys,
+    ).toEqual(["file:/d:/legacy.md"]);
   });
 });

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { IpcRendererEvent } from "electron";
 import type { PersistedAppState } from "../shared/appState";
+import type { AppMenuCommand, AppMenuState } from "../shared/appMenu";
 import type {
   SyncConfigurationInput,
   SyncLoginInput,
@@ -120,6 +121,19 @@ contextBridge.exposeInMainWorld("desktop", {
       ipcRenderer.removeListener("inspiration-note:open", listener);
     };
   },
+  onAppMenuCommand: (callback: (command: AppMenuCommand) => void) => {
+    const listener = (_: IpcRendererEvent, command: AppMenuCommand) => {
+      callback(command);
+    };
+
+    ipcRenderer.on("app-menu:command", listener);
+
+    return () => {
+      ipcRenderer.removeListener("app-menu:command", listener);
+    };
+  },
+  updateAppMenuState: (state: AppMenuState) =>
+    ipcRenderer.invoke("app-menu:update-state", state),
   onZoomFactorChanged: (callback: (factor: number) => void) => {
     const listener = (_: IpcRendererEvent, factor: number) => {
       callback(factor);

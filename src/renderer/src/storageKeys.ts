@@ -1,5 +1,6 @@
 export const noteDockStorageKeys = {
   appSettings: "notedock:settings",
+  hiddenRecentDocumentKeys: "notedock:hidden-recent-documents:v1",
   recentDirectories: "notedock:recent-directories:v1",
   sidebarWidth: "notedock:sidebar-width",
   theme: "notedock:theme",
@@ -10,6 +11,7 @@ const previousBrandPrefix = `${["typo", "ra"].join("")}-like`;
 
 export const legacyNoteDockStorageKeys = {
   appSettings: `${previousBrandPrefix}-settings`,
+  hiddenRecentDocumentKeys: `${previousBrandPrefix}-editor:hidden-recent-documents:v1`,
   recentDirectories: `${previousBrandPrefix}-editor:recent-directories:v1`,
   sidebarWidth: `${previousBrandPrefix}-sidebar-width`,
   theme: `${previousBrandPrefix}-theme`,

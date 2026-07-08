@@ -31,6 +31,8 @@ export const maxSidebarWidth = 560;
 export const storedRecentDirectoryLimit = 12;
 
 const recentDirectoryStorageKey = noteDockStorageKeys.recentDirectories;
+const hiddenRecentDocumentKeysStorageKey =
+  noteDockStorageKeys.hiddenRecentDocumentKeys;
 
 function clampSidebarWidth(width: number) {
   return Math.min(maxSidebarWidth, Math.max(minSidebarWidth, width));
@@ -83,6 +85,7 @@ export function hasPersistedAppState(
         state.appSettings !== undefined ||
         state.theme !== undefined ||
         state.sidebarWidth !== undefined ||
+        (state.hiddenRecentDocumentKeys?.length ?? 0) > 0 ||
         (state.recentDirectories?.length ?? 0) > 0),
   );
 }
@@ -111,6 +114,7 @@ export function getLegacyPersistedAppState(
 
   return {
     appSettings: loadAppSettings(storage),
+    hiddenRecentDocumentKeys: loadHiddenRecentDocumentKeys(storage),
     recentDirectories: loadRecentDirectoryPaths(storage),
     sidebarWidth: normalizeSidebarWidth(
       getMigratedStorageItem(
@@ -131,13 +135,36 @@ export function normalizePersistedDirectories(value: unknown) {
     : [];
 }
 
+export function normalizeHiddenRecentDocumentKeys(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((key): key is string => typeof key === "string" && key.length > 0)
+    : [];
+}
+
+export function loadHiddenRecentDocumentKeys(storage = getBrowserStorage()) {
+  try {
+    const raw = getMigratedStorageItem(
+      storage,
+      hiddenRecentDocumentKeysStorageKey,
+      legacyNoteDockStorageKeys.hiddenRecentDocumentKeys,
+    );
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+
+    return normalizeHiddenRecentDocumentKeys(parsed);
+  } catch {
+    return [];
+  }
+}
+
 export function createPersistedAppState({
+  hiddenRecentDocumentKeys = [],
   recentDirectories,
   settings,
   sidebarWidth,
   theme,
   workspace,
 }: {
+  hiddenRecentDocumentKeys?: string[];
   recentDirectories: string[];
   settings: AppSettings;
   sidebarWidth: number;
@@ -146,6 +173,7 @@ export function createPersistedAppState({
 }): PersistedAppState {
   return {
     appSettings: settings,
+    hiddenRecentDocumentKeys,
     recentDirectories,
     sidebarWidth,
     theme,
@@ -156,6 +184,7 @@ export function createPersistedAppState({
 }
 
 export type PersistedAppHydration = {
+  hiddenRecentDocumentKeys: string[];
   recentDirectories: string[];
   settings: AppSettings;
   shouldMigrateLegacyState: boolean;
@@ -174,6 +203,9 @@ export function createPersistedAppHydration(
   return {
     recentDirectories: normalizePersistedDirectories(
       sourceState?.recentDirectories,
+    ),
+    hiddenRecentDocumentKeys: normalizeHiddenRecentDocumentKeys(
+      sourceState?.hiddenRecentDocumentKeys,
     ),
     settings: normalizeAppSettings(sourceState?.appSettings),
     shouldMigrateLegacyState: !hasMainState && Boolean(legacyState),
@@ -203,6 +235,7 @@ export async function migrateLegacyPersistedAppHydration(
 
   await saveAppState(
     createPersistedAppState({
+      hiddenRecentDocumentKeys: hydration.hiddenRecentDocumentKeys,
       recentDirectories: hydration.recentDirectories,
       settings: hydration.settings,
       sidebarWidth: hydration.sidebarWidth,
@@ -235,6 +268,10 @@ export function saveLegacyPersistedAppState(state: PersistedAppState) {
   storage.setItem(
     recentDirectoryStorageKey,
     JSON.stringify(normalizePersistedDirectories(state.recentDirectories)),
+  );
+  storage.setItem(
+    hiddenRecentDocumentKeysStorageKey,
+    JSON.stringify(normalizeHiddenRecentDocumentKeys(state.hiddenRecentDocumentKeys)),
   );
 }
 

@@ -74,6 +74,7 @@ import {
   centerEditorRangeInView,
   findVisibleSearchRange,
 } from "../editorSearch";
+import { createMarkdownImageToken } from "../markdownImages";
 import {
   isSelectAllShortcut,
   selectEntireDocument,
@@ -199,6 +200,7 @@ type TyporaEditorProps = {
   onEditDrawing?: (drawingId: string) => void;
   onEditUniverSheet?: (code: string) => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
+  onCopyImage?: (image: TyporaClipboardImage) => boolean | Promise<boolean>;
   onPaste: (event: ClipboardEvent<HTMLElement>) => void;
   onPreviewImage?: (image: { alt?: string; src: string }) => void;
   onRequestDocumentReference?: () => void;
@@ -279,8 +281,11 @@ export type TyporaEditorHandle = {
   clearDocumentReferenceInsertionPoint: () => void;
   clearSearchHighlight: () => void;
   deleteContextDocumentReference: () => void;
+  deleteSelectedImage: () => boolean;
   focusAtClientPoint: (clientX: number, clientY: number) => void;
+  getSelectedImageClipboardData: () => TyporaClipboardImage | null;
   insertDocumentReference: (target: string, display?: string) => void;
+  insertImage: (image: TyporaImageInsert) => void;
   insertMarkdown: (markdown: string) => void;
   rememberDocumentReferenceInsertionPoint: () => void;
   prepareContextMenuTarget: (
@@ -293,6 +298,19 @@ export type TyporaEditorHandle = {
   runFormatCommand: (command: TyporaFormatCommand) => void;
   runParagraphCommand: (command: TyporaParagraphCommand) => void;
   scrollToLine: (lineIndex: number) => void;
+};
+
+export type TyporaClipboardImage = {
+  alt: string;
+  markdown: string;
+  source: string;
+  title?: string;
+};
+
+export type TyporaImageInsert = {
+  alt: string;
+  source: string;
+  title?: string;
 };
 
 const typoraAlertIcons: Record<TyporaAlertKind, LucideIcon> = {
@@ -3598,10 +3616,50 @@ function getSelectedLinkHref(view: EditorView) {
   return typeof href === "string" ? href : "";
 }
 
+type ImageMetaPatchOptions = {
+  focusEditor?: boolean;
+  scrollIntoView?: boolean;
+};
+
+function insertInlineImageIntoView(view: EditorView, image: TyporaImageInsert) {
+  const imageType = view.state.schema.nodes.image;
+  const { selection } = view.state;
+
+  if (
+    !imageType ||
+    !selection.$from.parent.inlineContent ||
+    selection.$from.parent !== selection.$to.parent
+  ) {
+    return false;
+  }
+
+  try {
+    const imageNode = imageType.create({
+      alt: image.alt,
+      src: image.source,
+      title: image.title?.trim() ?? "",
+    });
+    const from = selection.from;
+    const tr = view.state.tr.replaceRangeWith(selection.from, selection.to, imageNode);
+    const nextPos = Math.min(from + imageNode.nodeSize, tr.doc.content.size);
+
+    view.dispatch(
+      tr
+        .setSelection(TextSelection.create(tr.doc, nextPos))
+        .scrollIntoView(),
+    );
+    view.focus();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function applyImageMetaPatch(
   view: EditorView,
   pos: number,
   patch: Partial<Pick<ImageMeta, "align" | "fit" | "width">>,
+  options: ImageMetaPatchOptions = {},
 ) {
   const node = view.state.doc.nodeAt(pos);
 
@@ -3609,15 +3667,21 @@ function applyImageMetaPatch(
     return false;
   }
 
+  const transaction = view.state.tr.setNodeMarkup(pos, undefined, {
+    ...node.attrs,
+    title: patchImageMetaTitle(node.attrs.title, patch),
+  });
+
   view.dispatch(
-    view.state.tr
-      .setNodeMarkup(pos, undefined, {
-        ...node.attrs,
-        title: patchImageMetaTitle(node.attrs.title, patch),
-      })
-      .scrollIntoView(),
+    options.scrollIntoView === false
+      ? transaction
+      : transaction.scrollIntoView(),
   );
-  view.focus();
+
+  if (options.focusEditor !== false) {
+    view.focus();
+  }
+
   return true;
 }
 
@@ -3889,6 +3953,95 @@ function deleteActiveBlockOrSelection(view: EditorView) {
   return true;
 }
 
+function getSelectedImageClipboardDataFromView(
+  view: EditorView,
+  filePath?: string,
+) {
+  const selection = view.state.selection;
+  const selectedNode = (selection as unknown as {
+    node?: ProseMirrorNode;
+  }).node;
+
+  if (!(selection instanceof NodeSelection) || selectedNode?.type.name !== "image") {
+    return null;
+  }
+
+  const source =
+    typeof selectedNode.attrs.src === "string"
+      ? selectedNode.attrs.src.trim()
+      : "";
+
+  if (!source) {
+    return null;
+  }
+
+  const alt =
+    typeof selectedNode.attrs.alt === "string" ? selectedNode.attrs.alt : "";
+  const title =
+    typeof selectedNode.attrs.title === "string"
+      ? selectedNode.attrs.title
+      : undefined;
+
+  return {
+    alt,
+    markdown: createMarkdownImageToken({ alt, source, title }),
+    source: resolveDocumentResourceUrl(source, filePath) || source,
+    title,
+  } satisfies TyporaClipboardImage;
+}
+
+function deleteSelectedImageFromView(view: EditorView) {
+  const selection = view.state.selection;
+  const selectedNode = (selection as unknown as {
+    node?: ProseMirrorNode;
+  }).node;
+
+  if (!(selection instanceof NodeSelection) || selectedNode?.type.name !== "image") {
+    return false;
+  }
+
+  const from = selection.from;
+  const tr = view.state.tr.delete(selection.from, selection.to);
+  const nextPos = Math.min(from, tr.doc.content.size);
+
+  view.dispatch(
+    tr
+      .setSelection(Selection.near(tr.doc.resolve(nextPos), -1))
+      .scrollIntoView(),
+  );
+  view.focus();
+  return true;
+}
+
+async function writeTyporaImageClipboardData({
+  filePath,
+  image,
+  onCopyImage,
+}: {
+  filePath?: string;
+  image: TyporaClipboardImage;
+  onCopyImage?: (image: TyporaClipboardImage) => boolean | Promise<boolean>;
+}) {
+  if (onCopyImage && await Promise.resolve(onCopyImage(image))) {
+    return true;
+  }
+
+  if (filePath && await writeMarkdownRichClipboard(image.markdown, filePath)) {
+    return true;
+  }
+
+  if (!navigator.clipboard?.writeText) {
+    return false;
+  }
+
+  try {
+    await navigator.clipboard.writeText(image.markdown);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type MilkdownRuntimeProps = TyporaEditorProps & {
   controllerRef: MutableRefObject<TyporaEditorHandle | null>;
   markdownRef: MutableRefObject<string>;
@@ -3904,6 +4057,7 @@ function MilkdownRuntime({
   markdownRef,
   onActiveLineChange,
   onChangeRef,
+  onCopyImage,
   onEditUniverSheet,
   onRequestDocumentReference,
   onRequestTableInsert,
@@ -4050,6 +4204,7 @@ function MilkdownRuntime({
   const imageResizeRef = useRef<{
     currentWidth: number;
     imageElement: HTMLImageElement | null;
+    isCompact: boolean;
     pos: number;
     startWidth: number;
     startX: number;
@@ -4078,9 +4233,9 @@ function MilkdownRuntime({
     imageElement.style.maxWidth = "100%";
 
     if (imageElement.classList.contains("typora-editable-image-fit-compact")) {
-      imageElement.style.height = `${width}px`;
-      imageElement.style.objectFit = "contain";
-      imageElement.style.objectPosition = "center";
+      imageElement.style.height = "auto";
+      imageElement.style.removeProperty("object-fit");
+      imageElement.style.removeProperty("object-position");
     } else if (imageElement.classList.contains("typora-editable-image-fit-cover")) {
       imageElement.style.height = `${Math.max(1, Math.round(width * 0.625))}px`;
       imageElement.style.objectFit = "cover";
@@ -4852,12 +5007,51 @@ function MilkdownRuntime({
     });
   }
 
-  function updateImageMeta(pos: number, patch: Partial<Pick<ImageMeta, "align" | "width">>) {
+  function getEditorScrollSnapshot() {
+    const root = rootRef.current;
+
+    return root
+      ? {
+          left: root.scrollLeft,
+          top: root.scrollTop,
+        }
+      : null;
+  }
+
+  function restoreEditorScrollSnapshot(
+    snapshot: ReturnType<typeof getEditorScrollSnapshot>,
+  ) {
+    const root = rootRef.current;
+
+    if (!root || !snapshot) {
+      return;
+    }
+
+    root.scrollLeft = snapshot.left;
+    root.scrollTop = snapshot.top;
+  }
+
+  function updateImageMeta(
+    pos: number,
+    patch: Partial<Pick<ImageMeta, "align" | "fit" | "width">>,
+    options: ImageMetaPatchOptions & { preserveScroll?: boolean } = {},
+  ) {
     const editor = get();
 
     if (!editor) {
       return;
     }
+
+    const scrollSnapshot = options.preserveScroll
+      ? getEditorScrollSnapshot()
+      : null;
+    const scheduleRefresh = (refresh: () => void) => {
+      restoreEditorScrollSnapshot(scrollSnapshot);
+      requestAnimationFrame(() => {
+        restoreEditorScrollSnapshot(scrollSnapshot);
+        refresh();
+      });
+    };
 
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
@@ -4868,7 +5062,7 @@ function MilkdownRuntime({
         const nextValue = patchRawHtmlImage(value, patch);
 
         if (nextValue === value) {
-          requestAnimationFrame(() => {
+          scheduleRefresh(() => {
             updateImageToolbarFromRawHtmlImageElement(getRawHtmlPreviewImageElement(pos));
           });
           return;
@@ -4879,18 +5073,18 @@ function MilkdownRuntime({
           return;
         }
 
-        requestAnimationFrame(() => {
+        scheduleRefresh(() => {
           updateImageToolbarFromRawHtmlImageElement(getRawHtmlPreviewImageElement(pos));
         });
         return;
       }
 
-      if (!applyImageMetaPatch(view, pos, patch)) {
+      if (!applyImageMetaPatch(view, pos, patch, options)) {
         setImageToolbar({ visible: false });
         return;
       }
 
-      requestAnimationFrame(() => updateImageToolbarFromView(view));
+      scheduleRefresh(() => updateImageToolbarFromView(view));
     });
   }
 
@@ -5221,7 +5415,18 @@ function MilkdownRuntime({
     }
 
     if (nextWidth !== resizeState.startWidth) {
-      updateImageMeta(resizeState.pos, { width: nextWidth });
+      updateImageMeta(
+        resizeState.pos,
+        {
+          width: nextWidth,
+          ...(resizeState.isCompact ? { fit: "auto" as const } : {}),
+        },
+        {
+          focusEditor: false,
+          preserveScroll: true,
+          scrollIntoView: false,
+        },
+      );
     }
   }
 
@@ -5254,9 +5459,14 @@ function MilkdownRuntime({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
+    const imageElement = getImageElementForResize(state);
+
     imageResizeRef.current = {
       currentWidth: clampImageWidth(state.displayWidth),
-      imageElement: getImageElementForResize(state),
+      imageElement,
+      isCompact:
+        imageElement?.classList.contains("typora-editable-image-fit-compact") ??
+        false,
       pos: state.pos,
       startWidth: clampImageWidth(state.displayWidth),
       startX: event.clientX,
@@ -5855,6 +6065,35 @@ function MilkdownRuntime({
           view.focus();
         });
       },
+      getSelectedImageClipboardData() {
+        const editor = get();
+        let imageData: TyporaClipboardImage | null = null;
+
+        if (!editor) {
+          return null;
+        }
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          imageData = getSelectedImageClipboardDataFromView(view, filePath);
+        });
+
+        return imageData;
+      },
+      deleteSelectedImage() {
+        const editor = get();
+        let didDelete = false;
+
+        if (!editor) {
+          return false;
+        }
+
+        editor.action((ctx) => {
+          didDelete = deleteSelectedImageFromView(ctx.get(editorViewCtx));
+        });
+
+        return didDelete;
+      },
       clearDocumentReferenceInsertionPoint() {
         resetDocumentReferenceInsertionPoint();
       },
@@ -5901,6 +6140,30 @@ function MilkdownRuntime({
 
         editor.action((ctx) => {
           ctx.get(editorViewCtx).focus();
+          insert(markdown)(ctx);
+        });
+      },
+      insertImage(image: TyporaImageInsert) {
+        const markdown = createMarkdownImageToken({
+          alt: image.alt,
+          source: image.source,
+          title: image.title,
+        });
+        const editor = get();
+
+        if (!editor) {
+          onChangeRef.current(appendMarkdown(valueRef.current, markdown));
+          return;
+        }
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+
+          if (insertInlineImageIntoView(view, image)) {
+            return;
+          }
+
+          view.focus();
           insert(markdown)(ctx);
         });
       },
@@ -6056,7 +6319,28 @@ function MilkdownRuntime({
               deleteActiveBlockOrSelection(view);
               break;
             case "copy":
-            case "cut":
+            case "cut": {
+              const selectedImage = getSelectedImageClipboardDataFromView(
+                view,
+                filePath,
+              );
+
+              if (selectedImage) {
+                void writeTyporaImageClipboardData({
+                  filePath,
+                  image: selectedImage,
+                  onCopyImage,
+                }).then((didWrite) => {
+                  if (didWrite && command === "cut") {
+                    deleteSelectedImageFromView(view);
+                  }
+                });
+                break;
+              }
+
+              runBrowserEditCommand(command);
+              break;
+            }
             case "paste":
               runBrowserEditCommand(command);
               break;
@@ -6642,6 +6926,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
       filePath,
       onActiveLineChange,
       onChange,
+      onCopyImage,
       onContextMenu,
       onEditDrawing,
       onEditUniverSheet,
@@ -6683,7 +6968,48 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
     }, []);
 
     function handleCopyCapture(event: ClipboardEvent<HTMLElement>) {
+      handleImageClipboardCapture(event, "copy");
+    }
+
+    function handleCutCapture(event: ClipboardEvent<HTMLElement>) {
+      handleImageClipboardCapture(event, "cut");
+    }
+
+    function handleImageClipboardCapture(
+      event: ClipboardEvent<HTMLElement>,
+      action: "copy" | "cut",
+    ) {
       const root = rootRef.current;
+      const selectedImage = controllerRef.current?.getSelectedImageClipboardData();
+
+      if (selectedImage) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.clipboardData.setData("text/plain", selectedImage.markdown);
+
+        if (action === "cut") {
+          controllerRef.current?.deleteSelectedImage();
+        }
+
+        void writeTyporaImageClipboardData({
+          filePath,
+          image: selectedImage,
+          onCopyImage,
+        });
+        return;
+      }
+
+      if (action === "cut") {
+        return;
+      }
+
+      handleRichTextCopyCapture(event, root);
+    }
+
+    function handleRichTextCopyCapture(
+      event: ClipboardEvent<HTMLElement>,
+      root: HTMLElement | null,
+    ) {
       const selection = window.getSelection();
 
       if (
@@ -6727,8 +7053,14 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
         deleteContextDocumentReference() {
           controllerRef.current?.deleteContextDocumentReference();
         },
+        deleteSelectedImage() {
+          return controllerRef.current?.deleteSelectedImage() ?? false;
+        },
         focusAtClientPoint(clientX: number, clientY: number) {
           controllerRef.current?.focusAtClientPoint(clientX, clientY);
+        },
+        getSelectedImageClipboardData() {
+          return controllerRef.current?.getSelectedImageClipboardData() ?? null;
         },
         insertDocumentReference(target: string, display?: string) {
           if (controllerRef.current) {
@@ -6741,6 +7073,23 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
             target: target.trim(),
           });
           onChangeRef.current(appendMarkdown(valueRef.current, markdown));
+        },
+        insertImage(image: TyporaImageInsert) {
+          if (controllerRef.current) {
+            controllerRef.current.insertImage(image);
+            return;
+          }
+
+          onChangeRef.current(
+            appendMarkdown(
+              valueRef.current,
+              `${createMarkdownImageToken({
+                alt: image.alt,
+                source: image.source,
+                title: image.title,
+              })}`,
+            ),
+          );
         },
         insertMarkdown(markdown: string) {
           if (controllerRef.current) {
@@ -6788,6 +7137,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
         autoCapitalize="off"
         autoCorrect="off"
         onCopyCapture={handleCopyCapture}
+        onCutCapture={handleCutCapture}
         onContextMenu={(event) => {
           controllerRef.current?.prepareContextMenuTarget(
             event.clientX,
@@ -6847,6 +7197,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
             onActiveLineChange={onActiveLineChange}
             onChange={onChange}
             onChangeRef={onChangeRef}
+            onCopyImage={onCopyImage}
             onEditDrawing={onEditDrawing}
             onEditUniverSheet={onEditUniverSheet}
             onPaste={onPaste}

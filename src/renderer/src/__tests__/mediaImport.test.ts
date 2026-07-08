@@ -309,12 +309,39 @@ describe("media import helpers", () => {
       }),
     ).resolves.toEqual({
       action: "imageDataUrl",
-      dataUrl: "data:image/png;base64,a",
-      fileName: "image.png",
+      dataUrl: "data:image/png;base64,c",
+      fileName: "fallback.png",
       mimeType: "image/png",
     });
     expect(beforeNativeRead).toHaveBeenCalledTimes(1);
-    expect(readImageData).not.toHaveBeenCalled();
+    expect(readImageData).toHaveBeenCalledTimes(1);
+
+    await expect(
+      readClipboardMediaFallbackAction({
+        onBeforeReadNativeMediaData: beforeNativeRead,
+        readBrowserMedia: async () => null,
+        readImageData,
+        readMediaData: async () => [
+          {
+            dataUrl: "data:image/png;base64,a",
+            fileName: "image.png",
+            mimeType: "image/png",
+          },
+          {
+            dataUrl: "data:video/mp4;base64,v",
+            fileName: "clip.mp4",
+            mimeType: "video/mp4",
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      action: "videoDataUrl",
+      dataUrl: "data:video/mp4;base64,v",
+      fileName: "clip.mp4",
+      mimeType: "video/mp4",
+    });
+    expect(beforeNativeRead).toHaveBeenCalledTimes(2);
+    expect(readImageData).toHaveBeenCalledTimes(1);
 
     await expect(
       readClipboardMediaFallbackAction({
@@ -333,7 +360,7 @@ describe("media import helpers", () => {
       fileName: "fallback.png",
       mimeType: "image/png",
     });
-    expect(beforeNativeRead).toHaveBeenCalledTimes(2);
+    expect(beforeNativeRead).toHaveBeenCalledTimes(3);
   });
 
   it("detects clipboard media fallback candidates", () => {
@@ -341,6 +368,21 @@ describe("media import helpers", () => {
       true,
     );
     expect(clipboardPlainTextLooksLikeMediaPath('"D:/capture.webp"')).toBe(true);
+    expect(
+      clipboardPlainTextLooksLikeMediaPath(
+        "/Users/jun/Library/Mobile Documents/com~apple~CloudDocs/笔记/.assets/screenshot.png",
+      ),
+    ).toBe(true);
+    expect(
+      clipboardPlainTextLooksLikeMediaPath(
+        "file:///Users/jun/Pictures/Screen%20Shot.png",
+      ),
+    ).toBe(true);
+    expect(
+      clipboardPlainTextLooksLikeMediaPath(
+        "Users\\jun\\Library\\Mobile Documents\\com~apple~CloudDocs\\笔记\\.assets\\capture.webp",
+      ),
+    ).toBe(true);
     expect(clipboardPlainTextLooksLikeMediaPath("plain text")).toBe(false);
     expect(
       shouldTryClipboardMediaFallback(clipboardData({ files: [new File([], "a.mov")] })),

@@ -27,6 +27,7 @@ import {
   formatRecentTimestamp,
   getRecentDocumentTimestamp,
 } from "../workspaceDisplay";
+import { remoteSyncFeatureEnabled } from "../../../shared/featureFlags";
 
 export function DocumentLoadingIndicator({
   detail,
@@ -403,7 +404,10 @@ export function RecentFileMenuItem({
       : document.filePath
         ? getDocumentPathPreview(document)
       : "未保存到本地";
-  const isCloudDocument = !isMissing && displayPathLabel.startsWith("云端文档/");
+  const isCloudDocument =
+    remoteSyncFeatureEnabled &&
+    !isMissing &&
+    displayPathLabel.startsWith("云端文档/");
   const timeLabel = isMissing
     ? "不存在"
     : formatRecentTimestamp(getRecentDocumentTimestamp(document));

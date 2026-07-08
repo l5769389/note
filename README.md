@@ -24,10 +24,41 @@ npm run dev
 
 `npm run dev` 会先执行 `ensure:electron`，如果本机缺少 Electron 二进制，会通过镜像补装后再启动开发服务。
 
+本地同步服务 + 桌面应用一键启动：
+
+```bash
+# macOS
+npm run dev:local:mac
+
+# Windows
+npm run dev:local
+```
+
+macOS 也可以只启动其中一部分：
+
+```bash
+npm run dev:local:mac:server
+npm run dev:local:mac:app
+npm run dev:local:mac:app:debug
+```
+
+`dev:local:mac:app:debug` 会打开 Electron DevTools，并使用临时用户数据目录，适合排查白屏或本地缓存问题。
+
+传参示例：
+
+```bash
+npm run dev:local:mac -- --port 47831 --admin-username admin --admin-password 123
+npm run dev:local:mac:app -- --devtools --fresh-user-data
+```
+
+启动后在应用的 Settings -> Cloud Sync 里使用脚本输出的本地同步地址、用户名和密码登录。
+
 生产构建：
 
 ```bash
 npm run build
+npm run dist:mac
+npm run dist:win
 ```
 
 构建后预览：

@@ -29,6 +29,27 @@ type DirectoryFileListItem = {
 };
 
 const textPreviewLimit = 80;
+const mediaResourceExtensionPattern =
+  "png|jpe?g|gif|webp|svg|bmp|heic|heif|tiff?|mp4|webm|mov|m4v|avi|excalidraw|univer";
+const mediaResourceAddressPattern = new RegExp(
+  [
+    "(?:",
+    "file:\\/\\/\\/",
+    "|[A-Za-z]:[\\\\/]",
+    "|\\\\\\\\",
+    "|\\/(?:Users|Volumes|private|var|tmp|home)\\/",
+    "|Users[\\\\/]",
+    "|(?:\\.{1,2}[\\\\/])?\\.assets[\\\\/]",
+    ")",
+    `[^<>"'()[\\]\\r\\n]*?\\.(?:${mediaResourceExtensionPattern})`,
+    "(?:[?#][^\\s<>\"'()[\\]\\r\\n]*)?",
+  ].join(""),
+  "gi",
+);
+const standaloneMediaResourcePattern = new RegExp(
+  `\\S+\\.(?:${mediaResourceExtensionPattern})(?:[?#][^\\s)]*)?`,
+  "gi",
+);
 
 function stripMarkdownForFilePreview(content: string) {
   return content
@@ -47,7 +68,8 @@ function stripMarkdownForFilePreview(content: string) {
     .replace(/^\s*[-*+]\s+/gm, "")
     .replace(/^\s*\d+[.)]\s+/gm, "")
     .replace(/^\s*\|?[-:| ]{3,}\|?\s*$/gm, " ")
-    .replace(/\S+\.(?:png|jpe?g|gif|webp|svg|mp4|webm|mov|m4v|avi|excalidraw|univer)(?:[?#][^\s)]*)?/gi, " ")
+    .replace(mediaResourceAddressPattern, " ")
+    .replace(standaloneMediaResourcePattern, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -59,7 +81,8 @@ function stripHtmlForFilePreview(content: string) {
     .replace(/<\s*(?:img|video|source|iframe|object|embed)\b[^>]*>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<[^>]+>/g, " ")
-    .replace(/\S+\.(?:png|jpe?g|gif|webp|svg|mp4|webm|mov|m4v|avi)(?:[?#][^\s)]*)?/gi, " ")
+    .replace(mediaResourceAddressPattern, " ")
+    .replace(standaloneMediaResourcePattern, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

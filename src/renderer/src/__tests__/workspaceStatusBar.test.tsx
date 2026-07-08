@@ -33,7 +33,7 @@ describe("WorkspaceStatusBar", () => {
     expect(html).toContain("12 ");
   });
 
-  it("hides the autosave pill while idle", () => {
+  it("shows idle autosave as saved", () => {
     const html = renderToStaticMarkup(
       <WorkspaceStatusBar
         activeDocument={document()}
@@ -45,7 +45,9 @@ describe("WorkspaceStatusBar", () => {
       />,
     );
 
-    expect(html).not.toContain("workspace-autosave-status");
+    expect(html).toContain("workspace-autosave-status-idle");
+    expect(html).toContain("已保存");
+    expect(html).not.toContain("自动保存待命");
     expect(html).toContain("workspace-word-count");
     expect(html).toContain("12 ");
   });
@@ -125,7 +127,7 @@ describe("WorkspaceStatusBar", () => {
     expect(html).not.toContain("workspace-word-count");
   });
 
-  it("renders settings and lets disabled sync open configuration", () => {
+  it("renders settings without disabled sync status when sync is not configured", () => {
     const html = renderToStaticMarkup(
       <WorkspaceStatusBar
         activeDocument={null}
@@ -149,9 +151,8 @@ describe("WorkspaceStatusBar", () => {
     );
 
     expect(html).toContain("workspace-settings-button");
-    expect(html).toContain("workspace-sync-status-disabled");
-    expect(html).toContain("配置同步信息");
-    expect(html).not.toContain("disabled=\"\"");
+    expect(html).not.toContain("workspace-sync-status-disabled");
+    expect(html).not.toContain("未同步");
   });
 
   it("renders an enabled sync status entry for the account menu", () => {

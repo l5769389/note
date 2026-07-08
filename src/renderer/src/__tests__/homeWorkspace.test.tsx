@@ -9,6 +9,7 @@ describe("HomeWorkspace", () => {
         activeDocument={null}
         logoUrl="/icon.png"
         noteDialogRequestId={0}
+        onClearRecentDocuments={() => {}}
         onCreateDocument={() => {}}
         onOpenKnowledgeRelations={() => {}}
         onOpenRecentDocument={() => {}}

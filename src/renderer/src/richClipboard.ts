@@ -115,6 +115,21 @@ export function collectClipboardImageTokens(markdown: string) {
     });
 }
 
+export function getSingleClipboardImageToken(markdown: string) {
+  const trimmed = markdown.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const tokens = collectClipboardImageTokens(trimmed);
+  const token = tokens[0];
+
+  return token && tokens.length === 1 && token.index === 0 && token.length === trimmed.length
+    ? token
+    : null;
+}
+
 function getClipboardAssetKey(source: string) {
   return normalizeAssetReference(source).toLowerCase();
 }

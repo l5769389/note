@@ -14,6 +14,7 @@ type AppMenubarProps = {
   onHideTop: () => void;
   onOpenHome: () => void;
   onRevealTop: () => void;
+  platform?: string;
   renderDropdown: (menu: MenubarMenu) => ReactNode;
   setTopMenu: Dispatch<SetStateAction<TopMenu>>;
   topMenu: TopMenu;
@@ -26,10 +27,12 @@ export function AppMenubar({
   onHideTop,
   onOpenHome,
   onRevealTop,
+  platform,
   renderDropdown,
   setTopMenu,
   topMenu,
 }: AppMenubarProps) {
+  const isMac = platform === "darwin";
   const sizeControlLabel = isFullScreen
     ? "退出全屏"
     : isMaximized
@@ -47,7 +50,7 @@ export function AppMenubar({
 
   return (
     <header
-      className="app-menubar"
+      className={isMac ? "app-menubar app-menubar-mac" : "app-menubar"}
       onPointerEnter={onRevealTop}
       onPointerLeave={onHideTop}
     >
@@ -60,87 +63,93 @@ export function AppMenubar({
         >
           <img className="app-logo-image" src={appLogoUrl} alt="" draggable={false} />
         </button>
-        <nav className="menubar-menu" aria-label="应用菜单">
-          {menubarItems.map((item) => (
-            <div className="menubar-item" key={item.key}>
-              <button
-                data-testid={`menu-${item.key}`}
-                className={
-                  topMenu === item.key
-                    ? "menubar-trigger menubar-trigger-active"
-                    : "menubar-trigger"
-                }
-                type="button"
-                aria-expanded={topMenu === item.key}
-                onMouseEnter={() => {
-                  if (topMenu) {
-                    setTopMenu(item.key);
+        {isMac ? (
+          <div className="mac-window-title">noteDock</div>
+        ) : (
+          <nav className="menubar-menu" aria-label="应用菜单">
+            {menubarItems.map((item) => (
+              <div className="menubar-item" key={item.key}>
+                <button
+                  data-testid={`menu-${item.key}`}
+                  className={
+                    topMenu === item.key
+                      ? "menubar-trigger menubar-trigger-active"
+                      : "menubar-trigger"
                   }
-                }}
-                onClick={() =>
-                  setTopMenu((current) => (current === item.key ? null : item.key))
-                }
-              >
-                {item.label}
-              </button>
-              {topMenu === item.key && (
-                <div
-                  className={`menubar-dropdown menubar-dropdown-${item.key}`}
-                  role="menu"
-                  aria-label={item.label}
-                  onPointerDown={(event) => {
-                    if (
-                      event.target instanceof Element &&
-                      !event.target.closest("button")
-                    ) {
-                      setTopMenu(null);
+                  type="button"
+                  aria-expanded={topMenu === item.key}
+                  onMouseEnter={() => {
+                    if (topMenu) {
+                      setTopMenu(item.key);
                     }
                   }}
+                  onClick={() =>
+                    setTopMenu((current) => (current === item.key ? null : item.key))
+                  }
                 >
+                  {item.label}
+                </button>
+                {topMenu === item.key && (
                   <div
-                    className={`menubar-dropdown-scroll menubar-dropdown-scroll-${item.key}`}
+                    className={`menubar-dropdown menubar-dropdown-${item.key}`}
+                    role="menu"
+                    aria-label={item.label}
+                    onPointerDown={(event) => {
+                      if (
+                        event.target instanceof Element &&
+                        !event.target.closest("button")
+                      ) {
+                        setTopMenu(null);
+                      }
+                    }}
                   >
-                    {renderDropdown(item.key)}
+                    <div
+                      className={`menubar-dropdown-scroll menubar-dropdown-scroll-${item.key}`}
+                    >
+                      {renderDropdown(item.key)}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </nav>
+                )}
+              </div>
+            ))}
+          </nav>
+        )}
       </div>
-      <div className="window-controls" aria-label="窗口控制">
-        <button
-          className="window-control-button"
-          type="button"
-          aria-label="最小化"
-          onClick={() => void window.desktop?.windowControl?.("minimize")}
-        >
-          <Minus size={15} />
-        </button>
-        <button
-          className="window-control-button"
-          type="button"
-          aria-label={sizeControlLabel}
-          title={sizeControlLabel}
-          onClick={toggleWindowSize}
-        >
-          {isFullScreen ? (
-            <Copy size={13} />
-          ) : isMaximized ? (
-            <Minimize2 size={13} />
-          ) : (
-            <Maximize2 size={13} />
-          )}
-        </button>
-        <button
-          className="window-control-button window-control-close"
-          type="button"
-          aria-label="关闭"
-          onClick={() => void window.desktop?.windowControl?.("close")}
-        >
-          <X size={15} />
-        </button>
-      </div>
+      {isMac ? null : (
+        <div className="window-controls" aria-label="窗口控制">
+          <button
+            className="window-control-button"
+            type="button"
+            aria-label="最小化"
+            onClick={() => void window.desktop?.windowControl?.("minimize")}
+          >
+            <Minus size={15} />
+          </button>
+          <button
+            className="window-control-button"
+            type="button"
+            aria-label={sizeControlLabel}
+            title={sizeControlLabel}
+            onClick={toggleWindowSize}
+          >
+            {isFullScreen ? (
+              <Copy size={13} />
+            ) : isMaximized ? (
+              <Minimize2 size={13} />
+            ) : (
+              <Maximize2 size={13} />
+            )}
+          </button>
+          <button
+            className="window-control-button window-control-close"
+            type="button"
+            aria-label="关闭"
+            onClick={() => void window.desktop?.windowControl?.("close")}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
     </header>
   );
 }

@@ -2,6 +2,7 @@ export const persistedAppStateVersion = 1;
 
 export type PersistedAppState = {
   appSettings?: unknown;
+  hiddenRecentDocumentKeys?: string[];
   recentDirectories?: string[];
   sidebarWidth?: number;
   theme?: string;

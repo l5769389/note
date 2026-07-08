@@ -3804,8 +3804,18 @@ textarea,
   vertical-align: middle;
 }
 
+.markdown-preview .markdown-image-fit-compact img[data-image-width],
+.typora-milkdown-content .ProseMirror img.typora-editable-image-fit-compact[data-image-width] {
+  height: auto;
+}
+
 .typora-milkdown-content .ProseMirror img.typora-editable-image-fit-cover[data-image-width] {
   height: auto;
+}
+
+.typora-milkdown-content .ProseMirror img.typora-editable-image-inline {
+  display: inline-block;
+  vertical-align: middle;
 }
 
 .typora-milkdown-content .ProseMirror img.typora-editable-image-left:not(.typora-editable-image-explicit-align) {
@@ -7226,6 +7236,10 @@ textarea,
     #ffffff;
 }
 
+.app-shell-platform-darwin {
+  grid-template-rows: 38px minmax(0, 1fr);
+}
+
 .app-shell-sidebar-collapsed {
   --sidebar-width: 0px;
 }
@@ -7234,6 +7248,10 @@ textarea,
   --immersive-menubar-height: 30px;
   grid-template-columns: var(--sidebar-width, 0px) minmax(0, 1fr) var(--inspector-width, 0px);
   grid-template-rows: minmax(0, 1fr);
+}
+
+.app-shell-platform-darwin.app-shell-immersive {
+  --immersive-menubar-height: 38px;
 }
 
 .app-menubar {
@@ -7254,11 +7272,22 @@ textarea,
   -webkit-app-region: drag;
 }
 
+.app-menubar-mac {
+  min-height: 38px;
+  justify-content: flex-start;
+  padding: 0 12px 0 84px;
+}
+
 .menubar-left {
   display: flex;
   align-items: center;
   gap: 0;
   -webkit-app-region: no-drag;
+}
+
+.app-menubar-mac .menubar-left {
+  gap: 8px;
+  -webkit-app-region: drag;
 }
 
 .app-menubar button {
@@ -7292,6 +7321,15 @@ textarea,
   height: 28px;
   object-fit: contain;
   pointer-events: none;
+}
+
+.mac-window-title {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
 }
 
 .menubar-menu {
@@ -8429,15 +8467,19 @@ textarea,
 .directory-file-list-item {
   position: relative;
   display: grid;
+  box-sizing: border-box;
   width: 100%;
+  height: 76px;
+  max-height: 76px;
   min-width: 0;
   grid-template-columns: 22px minmax(0, 1fr);
-  align-items: start;
+  align-items: center;
   gap: 10px;
+  overflow: hidden;
   border: 1px solid transparent;
   border-radius: 12px;
   background: transparent;
-  padding: 10px 11px;
+  padding: 8px 11px;
   color: #1f2937;
   text-align: left;
   transition:
@@ -8448,14 +8490,16 @@ textarea,
 
 .directory-file-list-item svg {
   flex: 0 0 auto;
-  margin-top: 2px;
   color: #6b7280;
 }
 
 .directory-file-list-text {
   display: grid;
+  height: 58px;
   min-width: 0;
-  gap: 4px;
+  grid-template-rows: 14px 19px 16px;
+  gap: 3px;
+  overflow: hidden;
 }
 
 .directory-file-list-item:has(> .directory-entry-checkbox) {
@@ -11680,6 +11724,12 @@ textarea,
   place-items: center;
   overflow: auto;
   overscroll-behavior: contain;
+  touch-action: none;
+  cursor: grab;
+}
+
+.home-image-preview-viewport:active {
+  cursor: grabbing;
 }
 
 .home-image-preview-viewport img {
@@ -11692,6 +11742,7 @@ textarea,
   background: #ffffff;
   object-fit: contain;
   transform-origin: center center;
+  will-change: transform;
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.24);
 }
 
@@ -11773,6 +11824,12 @@ textarea,
   place-items: center;
   overflow: hidden;
   overscroll-behavior: contain;
+  touch-action: none;
+  cursor: grab;
+}
+
+.document-image-preview-viewport:active {
+  cursor: grabbing;
 }
 
 .document-image-preview-viewport img {
@@ -11785,6 +11842,7 @@ textarea,
   background: #ffffff;
   object-fit: contain;
   transform-origin: center center;
+  will-change: transform;
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.24);
 }
 
@@ -12008,7 +12066,10 @@ textarea,
 .workspace-autosave-status {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  box-sizing: border-box;
+  min-width: 116px;
   min-height: 24px;
   margin-right: 10px;
   border: 1px solid #dce4ee;
@@ -12035,6 +12096,7 @@ textarea,
   animation: autosave-spin 0.9s linear infinite;
 }
 
+.workspace-autosave-status-idle,
 .workspace-autosave-status-saved {
   border-color: rgba(22, 163, 74, 0.22);
   background: #f0fdf4;
@@ -12175,6 +12237,7 @@ textarea,
 }
 
 .welcome-home {
+  container: welcome-home / inline-size;
   display: grid;
   height: 100%;
   min-height: 0;
@@ -12227,15 +12290,6 @@ textarea,
   box-shadow:
     0 22px 54px rgba(15, 23, 42, 0.06),
     inset 0 1px 0 rgba(255, 255, 255, 0.88);
-}
-
-.home-brand-panel::before {
-  position: absolute;
-  inset: 18px;
-  border: 1px solid rgba(226, 232, 240, 0.42);
-  border-radius: 20px;
-  content: "";
-  pointer-events: none;
 }
 
 .home-brand-logo {
@@ -12483,14 +12537,16 @@ textarea,
 
 .home-brand-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(148px, 180px));
   gap: 14px;
+  justify-content: start;
 }
 
 .home-brand-actions button {
   display: inline-flex;
   min-width: 0;
   min-height: 48px;
+  width: 100%;
   align-items: center;
   justify-content: center;
   gap: 9px;
@@ -13509,6 +13565,36 @@ body.home-todo-global-dragging * {
   }
 }
 
+@container welcome-home (max-width: 1300px) {
+  .home-brand-actions {
+    grid-template-columns: repeat(3, 54px);
+    gap: 12px;
+  }
+
+  .home-brand-actions button {
+    width: 54px;
+    min-width: 54px;
+    min-height: 54px;
+    gap: 0;
+    padding: 0;
+  }
+
+  .home-brand-actions button > span {
+    display: none;
+  }
+}
+
+@container welcome-home (max-width: 800px) {
+  .home-dashboard {
+    max-width: 1180px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-side-column {
+    display: none;
+  }
+}
+
 .welcome-hero {
   display: none;
   justify-items: center;
@@ -13676,6 +13762,13 @@ body.home-todo-global-dragging * {
   font-weight: 900;
 }
 
+.recent-header-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
 .recent-header button {
   display: inline-flex;
   align-items: center;
@@ -13684,6 +13777,10 @@ body.home-todo-global-dragging * {
   background: transparent;
   color: #7b8495;
   font-size: 13px;
+}
+
+.recent-header .recent-clear-button {
+  gap: 5px;
 }
 
 .recent-header button:hover {
@@ -15653,10 +15750,6 @@ body.home-todo-global-dragging * {
   box-shadow: 0 22px 54px rgba(0, 0, 0, 0.2);
 }
 
-:root[data-theme="dark"] .home-brand-panel::before {
-  border-color: rgba(148, 163, 184, 0.12);
-}
-
 :root[data-theme="dark"] .home-shortcut-panel {
   border-color: rgba(148, 163, 184, 0.18);
   background: rgba(20, 24, 31, 0.76);
@@ -16078,7 +16171,9 @@ body.home-todo-global-dragging * {
   color: #93c5fd;
 }
 
+:root[data-theme="night"] .workspace-autosave-status-idle,
 :root[data-theme="night"] .workspace-autosave-status-saved,
+:root[data-theme="dark"] .workspace-autosave-status-idle,
 :root[data-theme="dark"] .workspace-autosave-status-saved {
   border-color: rgba(74, 222, 128, 0.24);
   background: rgba(21, 128, 61, 0.16);
@@ -16150,6 +16245,11 @@ body.home-todo-global-dragging * {
 
 :root[data-theme="dark"] .window-control-button {
   color: #e5e7eb;
+}
+
+:root[data-theme="dark"] .mac-window-title,
+:root[data-theme="night"] .mac-window-title {
+  color: #e2e8f0;
 }
 
 :root[data-theme="dark"] .window-control-button:hover {
