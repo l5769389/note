@@ -1,0 +1,68 @@
+name: Release Windows
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows x64 installer
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: noteDock-windows-x64
+          path: release/*.exe
+          if-no-files-found: error
+
+      - name: Create GitHub Release and upload installer
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: noteDock ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+          files: release/*.exe
+          body: |
+            ## noteDock ${{ github.ref_name }}
+
+            noteDock 是一款接近 Typora 使用体验的本地 Markdown 笔记与文档工作台。
+
+            ### 主要功能
+
+            - Typora 风格的 Markdown 编辑、实时预览和源码模式
+            - 日记模块：日历、时间线、心情、标签、模板和历史记录
+            - 表格编辑：Cmd/Ctrl+T 插入表格、行列操作、对齐、复制粘贴和结构编辑
+            - 图片、视频及其他资源跟随当前文档目录保存，便于备份
+            - 图片预览、缩放、复制为原生图片和在文件夹中定位
+            - Mermaid、流程图、思维导图、Excalidraw 和在线表格
+            - 文档历史版本、预览、恢复和多窗口文件同步
+            - 最近文档、工作台、待办、便签和知识关系
+            - 可配置主题、阅读密度、字体、代码字体和日记排版
+
+            ### Windows 安装
+
+            下载下方的 `.exe` 安装程序，按向导完成安装即可。安装程序支持选择安装目录，并会创建开始菜单和桌面快捷方式。
+
+            当前 Release 提供 Windows x64 安装包。
