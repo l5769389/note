@@ -27,6 +27,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Download Electron runtime
+        run: npm run ensure:electron
+
       - name: Build Windows x64 installer
         run: npx electron-builder --win nsis --x64 --publish never
 
