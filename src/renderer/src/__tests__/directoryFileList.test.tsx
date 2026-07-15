@@ -62,6 +62,10 @@ describe("DirectoryFileList", () => {
     expect(html).toContain('title="manual.pdf"');
     expect(html).toContain("project");
     expect(html).toContain("directory-file-list-text");
+    expect(html).toMatch(
+      /directory-file-list-meta-row[\s\S]*directory-file-list-title[\s\S]*<time /,
+    );
+    expect(html).toContain("project · Title A useful preview sentence.");
     expect(html).toContain("A useful preview sentence.");
     expect(html).toContain("PDF");
   });

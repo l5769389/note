@@ -30,6 +30,8 @@ describe("WorkspaceStatusBar", () => {
     );
 
     expect(html).toContain("workspace-autosave-status-saving");
+    expect(html).toContain("保存中");
+    expect(html).not.toContain("自动保存中");
     expect(html).toContain("12 ");
   });
 
@@ -64,9 +66,10 @@ describe("WorkspaceStatusBar", () => {
       />,
     );
 
-    expect(html).toContain("PDF preview");
+    expect(html).toContain("PDF 阅读");
     expect(html).toContain("workspace-asset-warning");
     expect(html).toContain("workspace-autosave-status-failed");
+    expect(html).toContain("保存失败");
   });
 
   it("renders an icon-only inspector toggle", () => {
@@ -90,7 +93,7 @@ describe("WorkspaceStatusBar", () => {
     expect(html).toContain("workspace-autosave-status-saved");
   });
 
-  it("renders an icon-only close document action", () => {
+  it("does not render document close actions in the status bar", () => {
     const html = renderToStaticMarkup(
       <WorkspaceStatusBar
         activeDocument={document()}
@@ -98,13 +101,12 @@ describe("WorkspaceStatusBar", () => {
         missingAssetReferences={[]}
         saveState="saved"
         wordCount={12}
-        onCloseDocument={() => {}}
         onToggleSidebar={() => {}}
       />,
     );
 
-    expect(html).toContain("关闭当前文档");
-    expect(html).toContain("workspace-close-document-button");
+    expect(html).not.toContain("关闭当前文档");
+    expect(html).not.toContain("workspace-close-document-button");
   });
 
   it("hides document status content when no document is open", () => {
@@ -127,7 +129,7 @@ describe("WorkspaceStatusBar", () => {
     expect(html).not.toContain("workspace-word-count");
   });
 
-  it("renders settings without disabled sync status when sync is not configured", () => {
+  it("hides disabled sync status when sync is not configured", () => {
     const html = renderToStaticMarkup(
       <WorkspaceStatusBar
         activeDocument={null}
@@ -145,14 +147,32 @@ describe("WorkspaceStatusBar", () => {
         }}
         wordCount={0}
         onConfigureSync={() => {}}
-        onOpenSettings={() => {}}
         onToggleSidebar={() => {}}
       />,
     );
 
-    expect(html).toContain("workspace-settings-button");
     expect(html).not.toContain("workspace-sync-status-disabled");
     expect(html).not.toContain("未同步");
+  });
+
+  it("does not render zoom controls or the editor mode switcher", () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceStatusBar
+        activeDocument={document()}
+        isSidebarHidden={false}
+        missingAssetReferences={[]}
+        saveState="saved"
+        wordCount={18}
+        onToggleSidebar={() => {}}
+      />,
+    );
+
+    expect(html).not.toContain('aria-label="编辑模式"');
+    expect(html).not.toContain("实时预览");
+    expect(html).not.toContain("workspace-editor-mode");
+    expect(html).not.toContain("workspace-zoom-button");
+    expect(html).not.toContain("恢复 100%");
+    expect(html).not.toContain("workspace-settings-button");
   });
 
   it("renders an enabled sync status entry for the account menu", () => {

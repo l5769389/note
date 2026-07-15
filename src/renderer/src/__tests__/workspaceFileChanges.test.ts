@@ -67,7 +67,6 @@ describe("workspace file change helpers", () => {
         changedDocument,
         diskDocument: document({ content: "local" }),
         hasLocalChanges: true,
-        isCurrentDocument: true,
       }),
     ).toBe("same-content");
     expect(
@@ -75,7 +74,6 @@ describe("workspace file change helpers", () => {
         changedDocument,
         diskDocument,
         hasLocalChanges: false,
-        isCurrentDocument: false,
       }),
     ).toBe("apply-disk");
     expect(
@@ -83,17 +81,15 @@ describe("workspace file change helpers", () => {
         changedDocument,
         diskDocument,
         hasLocalChanges: true,
-        isCurrentDocument: true,
       }),
-    ).toBe("confirm-current-reload");
+    ).toBe("keep-local-dirty");
     expect(
       getDiskChangeDecision({
         changedDocument,
         diskDocument,
         hasLocalChanges: true,
-        isCurrentDocument: false,
       }),
-    ).toBe("keep-background-conflict");
+    ).toBe("keep-local-dirty");
   });
 
   it("identifies internal write echo updates", () => {

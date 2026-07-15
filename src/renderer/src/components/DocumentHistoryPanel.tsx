@@ -4,6 +4,7 @@ import type {
   DocumentHistoryVersionWithContent,
   MarkdownDocument,
 } from "../types";
+import { getMarkdownBodyWithoutFrontmatter } from "../noteKnowledge";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 type DocumentHistoryPanelProps = {
@@ -19,7 +20,7 @@ type DocumentHistoryPanelProps = {
 };
 
 const reasonLabels = {
-  auto: "自动记录",
+  auto: "自动检查点",
   manual: "手动记录",
   restore: "恢复前",
 } satisfies Record<DocumentHistoryVersion["reason"], string>;
@@ -50,6 +51,10 @@ function formatByteSize(byteSize: number) {
   }
 
   return `${byteSize} B`;
+}
+
+function getVersionContentTime(version: DocumentHistoryVersion) {
+  return version.contentUpdatedAt ?? version.createdAt;
 }
 
 export function DocumentHistoryPanel({
@@ -124,7 +129,7 @@ export function DocumentHistoryPanel({
                 </span>
                 <span className="document-history-item-main">
                   <span className="document-history-item-topline">
-                    <span>{formatHistoryTime(version.createdAt)}</span>
+                    <span>{formatHistoryTime(getVersionContentTime(version))}</span>
                     <span>{reasonLabels[version.reason]}</span>
                   </span>
                   <span className="document-history-item-preview">
@@ -143,7 +148,7 @@ export function DocumentHistoryPanel({
         <div className="document-history-empty">
           <Clock3 size={18} />
           <strong>还没有历史记录</strong>
-          <span>自动保存产生有效修改后会记录关键版本。</span>
+          <span>保存时会保留关键检查点，用于恢复较早的内容。</span>
         </div>
       )}
 
@@ -152,7 +157,9 @@ export function DocumentHistoryPanel({
           <div className="document-history-preview-header">
             <div>
               <strong>版本内容</strong>
-              <span>{formatHistoryTime(selectedVersion.createdAt)}</span>
+              <span>
+                保存于 {formatHistoryTime(getVersionContentTime(selectedVersion))}
+              </span>
             </div>
             {onRestore ? (
               <button
@@ -166,9 +173,14 @@ export function DocumentHistoryPanel({
             ) : null}
           </div>
           <div className="document-history-preview-markdown">
-            <MarkdownRenderer filePath={activeDocument.filePath}>
-              {selectedVersion.content}
-            </MarkdownRenderer>
+            <article
+              className="markdown-preview document-history-markdown-preview"
+              data-testid="document-history-markdown-preview"
+            >
+              <MarkdownRenderer filePath={activeDocument.filePath}>
+                {getMarkdownBodyWithoutFrontmatter(selectedVersion.content)}
+              </MarkdownRenderer>
+            </article>
           </div>
         </div>
       ) : (

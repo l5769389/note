@@ -18,8 +18,7 @@ export type WorkspaceFileChangeContext = {
 
 export type DiskChangeDecision =
   | "apply-disk"
-  | "confirm-current-reload"
-  | "keep-background-conflict"
+  | "keep-local-dirty"
   | "same-content";
 
 export type AppConfirmOptions = Omit<AppDialogState, "type">;
@@ -71,13 +70,11 @@ export function getDiskChangeDecision({
   changedDocument,
   diskDocument,
   hasLocalChanges,
-  isCurrentDocument,
   source,
 }: {
   changedDocument: MarkdownDocument;
   diskDocument: MarkdownDocument;
   hasLocalChanges: boolean;
-  isCurrentDocument: boolean;
   source?: WorkspaceFileChangePayload["source"];
 }): DiskChangeDecision {
   if (diskDocument.content === changedDocument.content) {
@@ -92,7 +89,7 @@ export function getDiskChangeDecision({
     return "apply-disk";
   }
 
-  return isCurrentDocument ? "confirm-current-reload" : "keep-background-conflict";
+  return "keep-local-dirty";
 }
 
 export function mergeDiskDocumentIntoWorkspace(

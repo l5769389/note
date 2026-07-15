@@ -1,5 +1,4 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import {
   AlignCenter,
   AlignLeft,
@@ -30,6 +29,7 @@ import {
   Plus,
   RefreshCw,
   Rows3,
+  Save,
   Search,
   Scissors,
   Settings2,
@@ -44,6 +44,7 @@ import {
   Suspense,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -56,10 +57,14 @@ import {
 } from "react";
 import {
   defaultAppSettings,
+  diaryFontOptions,
+  editorCodeFontOptions,
   editorContentDensityOptions,
+  editorFontOptions,
   themeOptions,
   type AppSettings,
   type AppTheme,
+  type SidebarTabOrderItem,
 } from "./appSettings";
 import {
   createPersistedAppState,
@@ -89,6 +94,7 @@ import type {
   WorkspaceRelationItem,
 } from "./components/KnowledgeRelationsPanel";
 import { HomeWorkspace } from "./features/home/HomeWorkspace";
+import type { DiaryWorkspaceHandle } from "./features/diary/DiaryWorkspace";
 import type { DocumentMetadataSuggestionField } from "./components/DocumentKnowledgeBar";
 import { WorkspaceStatusBar } from "./components/WorkspaceStatusBar";
 import { ZoomableImagePreview } from "./components/ZoomableImagePreview";
@@ -111,6 +117,10 @@ import {
   type SyncStatusSnapshot,
 } from "../../shared/sync";
 import { remoteSyncFeatureEnabled } from "../../shared/featureFlags";
+import {
+  parseTableClipboardPayload,
+  type TableClipboardPayload,
+} from "../../shared/tableClipboard";
 import {
   getThemeFromAppMenuCommand,
   type AppMenuCommand,
@@ -141,6 +151,7 @@ import {
   createMarkdownTable,
   type TableSize,
 } from "./markdownCommands";
+import { normalizeMarkdownHtmlBreaks } from "./markdownBreaks";
 import {
   getLineColumnAtOffset,
 } from "./markdownEditing";
@@ -148,6 +159,29 @@ import {
   COMPACT_IMAGE_TITLE,
   createMarkdownImageToken,
 } from "./markdownImages";
+import {
+  createDiaryDocument,
+  createDiaryInitialContent,
+  diaryMoodValues,
+  diaryTemplateOptions,
+  enrichDiaryEntryWithContent,
+  applyDiaryTemplateWithCarryover,
+  getDiaryBody,
+  getDiaryDateKey,
+  getDiaryEntriesFromTree,
+  getDiaryFilePath,
+  getDiaryMonthDirectoryPath,
+  getDiaryRootPath,
+  getDiaryMetadata,
+  isDiaryDocumentContent,
+  groupDiaryEntries,
+  isPathInsideDiaryRoot,
+  updateDiaryMetadata,
+  type DiaryMood,
+  removeDiaryRootFromDirectoryTree,
+  type DiaryEntry,
+  type DiaryTemplateId,
+} from "./diaryModel";
 import {
   createSourceEditCommandEdit,
   createSourceFormatCommandEdit,
@@ -203,7 +237,11 @@ import {
   writeExistingDocumentIfNeeded,
   type ExportDocumentFormat,
 } from "./documentFileActions";
-import { getDirectoryPath } from "./localPreviewUrls";
+import {
+  getDirectoryPath,
+  isRelativeResourceUrl,
+  resolveDocumentResourceUrl,
+} from "./localPreviewUrls";
 import { markdownAlertOptions } from "./markdownAlerts";
 import {
   createDefaultMindMapDiagram,
@@ -304,7 +342,6 @@ import { useMissingDocumentAssetReferences } from "./missingAssetReferences";
 import {
   consumeInternalFileDelete,
   getDiskChangeDecision,
-  getExternalChangeConfirm,
   getExternalDeleteAlert,
   getWorkspaceFileChangeContext,
   mergeDiskDocumentIntoWorkspace,
@@ -314,7 +351,12 @@ import {
 import {
   normalizeDirectoryKey,
   rememberRecentDirectoryPath,
+  shouldShowInRecentDirectories,
 } from "./recentDirectories";
+import {
+  getRecentDocumentVisibilityKey,
+  shouldShowInRecentDocuments,
+} from "./recentDocuments";
 import { useRecentFileAvailability } from "./recentFileAvailability";
 import { useWindowChromeState } from "./windowChromeState";
 import { useWorkspaceDirectoryWatcher } from "./workspaceDirectoryWatcher";
@@ -376,6 +418,16 @@ const MarkdownRenderer = lazy(() =>
 const TyporaEditor = lazy(() =>
   import("./components/TyporaEditor").then((module) => ({
     default: module.TyporaEditor,
+  })),
+);
+const DiaryWorkspace = lazy(() =>
+  import("./features/diary/DiaryWorkspace").then((module) => ({
+    default: module.DiaryWorkspace,
+  })),
+);
+const DiarySidebarPanel = lazy(() =>
+  import("./features/diary/DiaryWorkspace").then((module) => ({
+    default: module.DiarySidebarPanel,
   })),
 );
 
@@ -492,14 +544,14 @@ const WordDocumentViewer = lazy(() =>
 );
 
 type ImmersiveRevealEdge = "top";
-type SidebarTab = "files" | "current" | "search";
+type SidebarTab = SidebarTabOrderItem | "search";
 type FileExplorerView = "tree" | "list";
 type DocumentLinkPickerMode = "metadata" | "insertReference";
 
 const sidebarRecentDirectoryLimit = 5;
 const immersiveRevealHitSlop = 44;
 const defaultWindowZoomFactor = 1;
-const zoomIndicatorVisibleMs = 1500;
+const sidebarTabDragThreshold = 6;
 const storageSplitRatioStorageKey = "notedock.storageSplitRatio.v1";
 const defaultStorageSplitRatio = 0.55;
 const minStorageSectionHeight = 160;
@@ -557,6 +609,15 @@ type AppContextMenuState = {
   width: number;
   x: number;
   y: number;
+};
+
+type WorkspaceContentAction = {
+  disabled?: boolean;
+  group?: "document" | "export" | "location";
+  icon: ReactNode;
+  key: string;
+  label: string;
+  onSelect: () => void;
 };
 
 type EditorContextMenuInfo = {
@@ -674,12 +735,6 @@ function getRecentDocumentTime(document: MarkdownDocument) {
   const timestamp = new Date(getRecentDocumentTimestamp(document)).getTime();
 
   return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function getRecentDocumentVisibilityKey(document: MarkdownDocument) {
-  return document.filePath
-    ? `file:${normalizeFilePathKey(document.filePath)}`
-    : `document:${document.id}`;
 }
 
 function markDocumentOpened(
@@ -845,7 +900,7 @@ function getWorkspaceDisplayLabel(workspace: WorkspaceSnapshot) {
     : getPathLabel(workspace.workspacePath);
 }
 
-type SettingsSectionId = "editor" | "home" | "sync";
+type SettingsSectionId = "app" | "notes" | "code" | "diary" | "sync";
 
 const settingsDirectoryItems: readonly {
   description: string;
@@ -854,16 +909,28 @@ const settingsDirectoryItems: readonly {
   label: string;
 }[] = [
   {
-    description: "字号、行距与阅读预览",
-    icon: BookOpenText,
-    id: "editor",
-    label: "字体大小",
+    description: "主题与首页模块",
+    icon: Settings2,
+    id: "app",
+    label: "通用",
   },
   {
-    description: "首页模块显示",
-    icon: ListChecks,
-    id: "home",
-    label: "功能设置",
+    description: "阅读密度与字体",
+    icon: BookOpenText,
+    id: "notes",
+    label: "笔记",
+  },
+  {
+    description: "代码字体",
+    icon: Code2,
+    id: "code",
+    label: "代码",
+  },
+  {
+    description: "日记模板与字体",
+    icon: PencilLine,
+    id: "diary",
+    label: "日记",
   },
   ...(remoteSyncFeatureEnabled
     ? [
@@ -871,7 +938,7 @@ const settingsDirectoryItems: readonly {
           description: "服务器与账号登录",
           icon: Cloud,
           id: "sync" as const,
-          label: "云同步",
+          label: "同步",
         },
       ]
     : []),
@@ -955,6 +1022,54 @@ const defaultSyncConfiguration =
   createDefaultSyncConfiguration(defaultSyncServerUrl);
 const defaultSyncLoginUsername = "admin";
 const defaultSyncLoginPassword = "123";
+const editorModeOptions: Array<{ label: string; value: EditorMode }> = [
+  { label: "实时预览", value: "typora" },
+  { label: "源码", value: "source" },
+  { label: "分栏", value: "split" },
+  { label: "阅读", value: "preview" },
+];
+
+const diaryComfortOptions = [
+  {
+    description: "更接近普通笔记，适合短句快速记录。",
+    fontSize: "17px",
+    label: "标准",
+    lineHeight: "1.9",
+    value: "standard",
+  },
+  {
+    description: "默认推荐，给长段回顾留下更自然的呼吸感。",
+    fontSize: "18px",
+    label: "舒适",
+    lineHeight: "2",
+    value: "comfortable",
+  },
+  {
+    description: "更大字距与行距，适合慢写和复盘。",
+    fontSize: "19px",
+    label: "宽松",
+    lineHeight: "2.15",
+    value: "spacious",
+  },
+] as const;
+
+function getDiaryComfortValue(settings: AppSettings) {
+  return (
+    diaryComfortOptions.find(
+      (option) =>
+        option.fontSize === settings.diaryFontSize &&
+        option.lineHeight === settings.diaryLineHeight,
+    )?.value ?? ""
+  );
+}
+
+function getSettingsSliderProgress(index: number, optionCount: number) {
+  if (optionCount <= 1) {
+    return 0;
+  }
+
+  return (index / (optionCount - 1)) * 100;
+}
 
 function normalizeSyncServerUrlInput(serverUrl: string): string {
   const trimmedServerUrl = serverUrl.trim();
@@ -998,6 +1113,27 @@ export function App() {
   const [topMenu, setTopMenu] = useState<TopMenu>(null);
   const [theme, setTheme] = useState<AppTheme>("github");
   const [settings, setSettings] = useState<AppSettings>(defaultAppSettings);
+  const diaryComfortValue = getDiaryComfortValue(settings);
+  const editorContentDensityIndex = Math.max(
+    0,
+    editorContentDensityOptions.findIndex(
+      (option) => option.value === settings.editorContentDensity,
+    ),
+  );
+  const selectedEditorContentDensity =
+    editorContentDensityOptions[editorContentDensityIndex] ??
+    editorContentDensityOptions[0];
+  const rawDiaryComfortIndex = diaryComfortOptions.findIndex(
+    (option) => option.value === diaryComfortValue,
+  );
+  const diaryComfortIndex =
+    rawDiaryComfortIndex >= 0 ? rawDiaryComfortIndex : 1;
+  const selectedDiaryComfort =
+    diaryComfortOptions[diaryComfortIndex] ?? diaryComfortOptions[1];
+  const selectedDiaryTemplateOption =
+    diaryTemplateOptions.find(
+      (option) => option.value === settings.diaryDefaultTemplate,
+    ) ?? diaryTemplateOptions[0];
   const settingsPreviewStyle = useMemo(
     () => getEditorCssVariables(settings) as CSSProperties,
     [settings],
@@ -1023,10 +1159,13 @@ export function App() {
   const [isMaximized, setIsMaximized] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
   const [windowZoomFactor, setWindowZoomFactor] = useState(defaultWindowZoomFactor);
-  const [isZoomIndicatorVisible, setIsZoomIndicatorVisible] = useState(false);
   const [isHomeOpen, setIsHomeOpen] = useState(true);
   const [homeNoteDialogRequestId, setHomeNoteDialogRequestId] = useState(0);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [isDiaryOpen, setIsDiaryOpen] = useState(false);
+  const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
+  const [diaryDocument, setDiaryDocument] = useState<MarkdownDocument | null>(null);
+  const [diarySaveState, setDiarySaveState] = useState<SaveState>("saved");
   const [, setBackupMessage] = useState("本地自动保存已启用");
   const [isDrawingOpen, setIsDrawingOpen] = useState(false);
   const [editingDrawingId, setEditingDrawingId] = useState<string | null>(null);
@@ -1049,15 +1188,20 @@ export function App() {
     showAppConfirm,
   } = useAppDialog();
   const [isAboutOpen, setIsAboutOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState("1.0.1");
+  const [appVersion, setAppVersion] = useState("1.0.5");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDefaultDiaryTemplateDialogOpen, setIsDefaultDiaryTemplateDialogOpen] =
+    useState(false);
   const [activeSettingsSection, setActiveSettingsSection] =
-    useState<SettingsSectionId>("editor");
+    useState<SettingsSectionId>("app");
   const [documentImagePreview, setDocumentImagePreview] = useState<{
     alt: string;
     src: string;
   } | null>(null);
   const [isCreateFileOpen, setIsCreateFileOpen] = useState(false);
+  const [isTableInsertDialogOpen, setIsTableInsertDialogOpen] = useState(false);
+  const [tableInsertRows, setTableInsertRows] = useState("3");
+  const [tableInsertColumns, setTableInsertColumns] = useState("3");
   const [isFindReplaceOpen, setIsFindReplaceOpen] = useState(false);
   const [isDocumentInspectorOpen, setIsDocumentInspectorOpen] = useState(false);
   const [isDocumentHistoryDialogOpen, setIsDocumentHistoryDialogOpen] =
@@ -1095,11 +1239,15 @@ export function App() {
   const [documentLinkQuery, setDocumentLinkQuery] = useState("");
   const [documentLinkSourceDocumentId, setDocumentLinkSourceDocumentId] =
     useState<string | null>(null);
-  const [documentReloadTokens, setDocumentReloadTokens] = useState<
-    Record<string, number>
-  >({});
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
+  const [sidebarTabDrag, setSidebarTabDrag] = useState<{
+    draggedTab: SidebarTabOrderItem;
+    isDragging: boolean;
+    pointerId: number;
+    startX: number;
+    targetIndex: number;
+  } | null>(null);
   const [fileExplorerView, setFileExplorerView] =
     useState<FileExplorerView>("tree");
   const [cloudSidebarWorkspace, setCloudSidebarWorkspace] =
@@ -1212,12 +1360,25 @@ export function App() {
     null,
   );
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingSourceEditorViewportRef = useRef<{
+    documentId: string;
+    hadFocus: boolean;
+    selectionEnd: number;
+    selectionStart: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
   const typoraEditorRef = useRef<TyporaEditorHandle | null>(null);
+  const diaryWorkspaceRef = useRef<DiaryWorkspaceHandle | null>(null);
   const htmlDocumentViewerRef = useRef<HtmlDocumentViewerHandle | null>(null);
-  const zoomIndicatorTimerRef = useRef<number | null>(null);
+  const diarySaveTimerRef = useRef<number | null>(null);
   const mediaImportIdRef = useRef(0);
   const workspaceSearchInputRef = useRef<HTMLInputElement | null>(null);
   const wikiLinkInputRef = useRef<HTMLInputElement | null>(null);
+  const sidebarTabButtonRefs = useRef(
+    new Map<SidebarTabOrderItem, HTMLButtonElement>(),
+  );
+  const suppressNextSidebarTabClickRef = useRef(false);
   const pendingWorkspaceSearchRevealRef = useRef<WorkspaceSearchReveal | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const externalConflictPathsRef = useRef(new Set<string>());
@@ -1427,6 +1588,110 @@ export function App() {
     activeDocument && isMarkdownDocument(activeDocument)
       ? getMarkdownBodyWithoutFrontmatter(activeDocument.content)
       : "";
+  const diaryGroups = useMemo(
+    () => groupDiaryEntries(diaryEntries),
+    [diaryEntries],
+  );
+  const diaryMetadata = useMemo(
+    () =>
+      diaryDocument
+        ? getDiaryMetadata(diaryDocument.content, diaryDocument.title)
+        : null,
+    [diaryDocument?.content, diaryDocument?.title],
+  );
+  const shouldShowWorkspaceDocumentActions =
+    isDiaryOpen || (!isHomeOpen && Boolean(activeDocument));
+  const workspaceActionDocument = isDiaryOpen ? diaryDocument : activeDocument;
+  const workspaceActionFilePath = workspaceActionDocument?.filePath ?? "";
+  const canUseActiveMarkdownActions =
+    !isDiaryOpen && Boolean(activeDocument) && isMarkdownDocument(activeDocument);
+  const canShowWorkspaceDocumentHistory =
+    Boolean(workspaceActionFilePath && window.desktop?.listDocumentHistory) &&
+    /\.(?:md|markdown|mdown)$/i.test(workspaceActionFilePath);
+  const workspaceContentActions: WorkspaceContentAction[] = [
+    ...(canUseActiveMarkdownActions
+      ? [
+          {
+            group: "document" as const,
+            icon: <Save size={18} />,
+            key: "save",
+            label: "保存",
+            onSelect: () => void saveNow(),
+          },
+        ]
+      : []),
+    ...(canUseActiveMarkdownActions
+      ? [
+          {
+            group: "document" as const,
+            icon: <FileText size={18} />,
+            key: "save-as",
+            label: "另存为",
+            onSelect: () => void saveActiveDocumentAs(),
+          },
+        ]
+      : []),
+    ...(canShowWorkspaceDocumentHistory
+      ? [
+          {
+            group: "document" as const,
+            icon: <FileClock size={18} />,
+            key: "history",
+            label: "历史记录",
+            onSelect: () => openDocumentHistoryDialog(workspaceActionFilePath),
+          },
+        ]
+      : []),
+    ...(workspaceActionFilePath
+      ? [
+          {
+            disabled: !window.desktop?.showInFolder,
+            group: "location" as const,
+            icon: <FolderOpen size={18} />,
+            key: "show-in-folder",
+            label: "所在位置",
+            onSelect: () => void window.desktop?.showInFolder?.(workspaceActionFilePath),
+          },
+          {
+            group: "location" as const,
+            icon: <Copy size={18} />,
+            key: "copy-path",
+            label: "复制路径",
+            onSelect: () => void copyTextToClipboard(workspaceActionFilePath),
+          },
+        ]
+      : []),
+    ...(canUseActiveMarkdownActions
+      ? [
+          {
+            group: "export" as const,
+            icon: <Download size={18} />,
+            key: "export-pdf",
+            label: "导出 PDF",
+            onSelect: () => void exportActiveDocument("pdf"),
+          },
+        ]
+      : []),
+  ];
+  const workspaceContentDirty = Boolean(
+    workspaceActionDocument?.filePath &&
+      hasUnsavedFileContent(
+        workspaceActionDocument,
+        savedFileContentByPathRef.current,
+      ),
+  );
+  const menubarContentTitle = isDiaryOpen
+    ? diaryMetadata?.dateKey
+      ? `日记 · ${diaryMetadata.dateKey}`
+      : "日记"
+    : shouldShowWorkspaceDocumentActions && activeDocument
+      ? getDocumentDisplayName(activeDocument)
+      : undefined;
+  const menubarContentKind = isDiaryOpen
+    ? ("diary" as const)
+    : activeDocument && !isMarkdownDocument(activeDocument)
+      ? ("viewer" as const)
+      : ("document" as const);
   const activeOutgoingLinks = activeDocument
     ? workspaceKnowledge.outgoingLinksByDocumentId.get(activeDocument.id) ?? []
     : [];
@@ -1722,9 +1987,13 @@ export function App() {
     () =>
       allRecentDocuments.filter(
         (document) =>
-          !hiddenRecentDocumentKeySet.has(getRecentDocumentVisibilityKey(document)),
+          shouldShowInRecentDocuments(
+            document,
+            workspace.workspacePath,
+            hiddenRecentDocumentKeySet,
+          ),
       ),
-    [allRecentDocuments, hiddenRecentDocumentKeySet],
+    [allRecentDocuments, hiddenRecentDocumentKeySet, workspace.workspacePath],
   );
   const historyBrowserDocuments = useMemo(
     () =>
@@ -1769,7 +2038,12 @@ export function App() {
     const pushDirectory = (path?: string) => {
       const key = normalizeDirectoryKey(path);
 
-      if (!path || !key || seen.has(key)) {
+      if (
+        !path ||
+        !key ||
+        seen.has(key) ||
+        !shouldShowInRecentDirectories(path, workspace.workspacePath)
+      ) {
         return;
       }
 
@@ -1812,6 +2086,20 @@ export function App() {
         ? countMarkdownWords(activeDocument!.content)
         : 0,
     [activeDocument],
+  );
+  const diaryDocumentWordCount = useMemo(
+    () =>
+      isMarkdownDocument(diaryDocument)
+        ? countMarkdownWords(getDiaryBody(diaryDocument!.content))
+        : 0,
+    [diaryDocument],
+  );
+  const diaryMarkdownOutline = useMemo(
+    () =>
+      isMarkdownDocument(diaryDocument)
+        ? getMarkdownOutline(getDiaryBody(diaryDocument!.content))
+        : [],
+    [diaryDocument],
   );
   const deferredWorkspaceSearchQuery = useDeferredValue(workspaceSearchQuery);
   const workspaceSearchGroups = useMemo(
@@ -1864,6 +2152,32 @@ export function App() {
     });
   }, [activeDocument, workspace.documents, workspace.workspacePath]);
 
+  useLayoutEffect(() => {
+    const snapshot = pendingSourceEditorViewportRef.current;
+    const editor = editorRef.current;
+
+    if (!snapshot || !editor || snapshot.documentId !== activeDocument?.id) {
+      return;
+    }
+
+    pendingSourceEditorViewportRef.current = null;
+    const maxPosition = editor.value.length;
+    const selectionStart = Math.min(snapshot.selectionStart, maxPosition);
+    const selectionEnd = Math.min(
+      Math.max(snapshot.selectionEnd, selectionStart),
+      maxPosition,
+    );
+
+    editor.scrollTop = snapshot.scrollTop;
+    editor.scrollLeft = snapshot.scrollLeft;
+    editor.setSelectionRange(selectionStart, selectionEnd);
+    if (snapshot.hadFocus) {
+      editor.focus({ preventScroll: true });
+      editor.scrollTop = snapshot.scrollTop;
+      editor.scrollLeft = snapshot.scrollLeft;
+    }
+  }, [activeDocument?.content, activeDocument?.id]);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
@@ -1894,8 +2208,8 @@ export function App() {
 
   useEffect(
     () => () => {
-      if (zoomIndicatorTimerRef.current !== null) {
-        window.clearTimeout(zoomIndicatorTimerRef.current);
+      if (diarySaveTimerRef.current !== null) {
+        window.clearTimeout(diarySaveTimerRef.current);
       }
     },
     [],
@@ -1934,6 +2248,69 @@ export function App() {
     };
   }, [saveState]);
 
+  useEffect(() => {
+    void refreshDiaryEntries(workspace.workspacePath);
+  }, [workspace.workspacePath]);
+
+  useEffect(() => {
+    const filePath = diaryDocument?.filePath;
+
+    if (!filePath || !window.desktop?.writeMarkdownFile) {
+      return;
+    }
+
+    if (savedFileContentByPathRef.current.get(filePath) === diaryDocument.content) {
+      setDiarySaveState("saved");
+      return;
+    }
+
+    setDiarySaveState("saving");
+
+    if (diarySaveTimerRef.current !== null) {
+      window.clearTimeout(diarySaveTimerRef.current);
+    }
+
+    const content = diaryDocument.content;
+    diarySaveTimerRef.current = window.setTimeout(() => {
+      diarySaveTimerRef.current = null;
+      rememberInternalFileWrite(filePath, content);
+      window.desktop?.writeMarkdownFile?.({
+        content,
+        filePath,
+      })
+        .then((savedFile) => {
+          const savedContent =
+            typeof savedFile?.content === "string" ? savedFile.content : content;
+          acknowledgeSavedFileContent(filePath, savedContent);
+          setDiaryDocument((current) =>
+            current?.filePath === filePath
+              ? {
+                  ...current,
+                  content: savedContent,
+                  title: savedFile?.title || current.title,
+                  updatedAt: savedFile?.updatedAt || current.updatedAt,
+                }
+              : current,
+          );
+          setDiarySaveState("saved");
+          void refreshDiaryEntries(workspace.workspacePath);
+          if (workspace.workspacePath) {
+            void loadDirectoryTree(workspace.workspacePath);
+          }
+        })
+        .catch(() => {
+          setDiarySaveState("failed");
+        });
+    }, 700);
+
+    return () => {
+      if (diarySaveTimerRef.current !== null) {
+        window.clearTimeout(diarySaveTimerRef.current);
+        diarySaveTimerRef.current = null;
+      }
+    };
+  }, [diaryDocument?.content, diaryDocument?.filePath, workspace.workspacePath]);
+
   useFindMatchStateMaintenance({
     activeDocumentId: activeDocument?.id,
     clearFindHighlight,
@@ -1951,6 +2328,219 @@ export function App() {
       ...current,
       [key]: value,
     }));
+  }
+
+  function setDiaryFeatureEnabled(enabled: boolean) {
+    updateSetting("homeShowDiaryPanel", enabled);
+
+    if (enabled) {
+      return;
+    }
+
+    if (sidebarTab === "diary") {
+      setSidebarTab("files");
+    }
+
+    if (isDiaryOpen) {
+      setIsDiaryOpen(false);
+      setDiaryDocument(null);
+      setWorkspace((current) =>
+        current.activeDocumentId
+          ? { ...current, activeDocumentId: "" }
+          : current,
+      );
+      setIsHomeOpen(true);
+    }
+  }
+
+  function mergeVisibleSidebarTabOrder(
+    fullOrder: SidebarTabOrderItem[],
+    visibleOrder: SidebarTabOrderItem[],
+  ) {
+    const visibleTabs = new Set(visibleOrder);
+    let visibleIndex = 0;
+
+    return fullOrder.map((tab) =>
+      visibleTabs.has(tab) ? visibleOrder[visibleIndex++]! : tab,
+    );
+  }
+
+  function getReorderedSidebarTabOrder(
+    order: SidebarTabOrderItem[],
+    draggedTab: SidebarTabOrderItem,
+    targetIndex: number,
+  ) {
+    const remainingTabs = order.filter((tab) => tab !== draggedTab);
+    const safeIndex = clamp(targetIndex, 0, remainingTabs.length);
+
+    return [
+      ...remainingTabs.slice(0, safeIndex),
+      draggedTab,
+      ...remainingTabs.slice(safeIndex),
+    ];
+  }
+
+  function areSidebarTabOrdersEqual(
+    left: SidebarTabOrderItem[],
+    right: SidebarTabOrderItem[],
+  ) {
+    return (
+      left.length === right.length &&
+      left.every((tab, index) => tab === right[index])
+    );
+  }
+
+  function getSidebarTabDropIndex(
+    draggedTab: SidebarTabOrderItem,
+    pointerX: number,
+    renderOrder: SidebarTabOrderItem[],
+  ) {
+    const remainingTabs = renderOrder.filter((tab) => tab !== draggedTab);
+    let nextIndex = 0;
+
+    remainingTabs.forEach((tab) => {
+      const button = sidebarTabButtonRefs.current.get(tab);
+      const rect = button?.getBoundingClientRect();
+
+      if (rect && pointerX > rect.left + rect.width / 2) {
+        nextIndex += 1;
+      }
+    });
+
+    return nextIndex;
+  }
+
+  function setSidebarTabButtonRef(
+    tab: SidebarTabOrderItem,
+    node: HTMLButtonElement | null,
+  ) {
+    if (node) {
+      sidebarTabButtonRefs.current.set(tab, node);
+      return;
+    }
+
+    sidebarTabButtonRefs.current.delete(tab);
+  }
+
+  function getSidebarTabLabel(tab: SidebarTabOrderItem) {
+    if (tab === "diary") {
+      return "日记";
+    }
+
+    if (tab === "files") {
+      return "文件";
+    }
+
+    return isWorkspaceSearchTabVisible ? "查找" : "当前文件";
+  }
+
+  function activateSidebarTab(tab: SidebarTabOrderItem) {
+    if (suppressNextSidebarTabClickRef.current) {
+      suppressNextSidebarTabClickRef.current = false;
+      return;
+    }
+
+    if (tab === "diary") {
+      void openDiaryWorkspace();
+      return;
+    }
+
+    if (tab === "files") {
+      setSidebarTab("files");
+      return;
+    }
+
+    setSidebarTab(isWorkspaceSearchTabVisible ? "search" : "current");
+  }
+
+  function startSidebarTabDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    tab: SidebarTabOrderItem,
+  ) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSidebarTabDrag({
+      draggedTab: tab,
+      isDragging: false,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      targetIndex: sidebarTabRenderOrder.indexOf(tab),
+    });
+  }
+
+  function moveSidebarTabDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!sidebarTabDrag || event.pointerId !== sidebarTabDrag.pointerId) {
+      return;
+    }
+
+    const isDragging =
+      sidebarTabDrag.isDragging ||
+      Math.abs(event.clientX - sidebarTabDrag.startX) > sidebarTabDragThreshold;
+
+    if (!isDragging) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const renderOrder = sidebarTabDrag.isDragging
+      ? getReorderedSidebarTabOrder(
+          sidebarTabRenderOrder,
+          sidebarTabDrag.draggedTab,
+          sidebarTabDrag.targetIndex,
+        )
+      : sidebarTabRenderOrder;
+    const targetIndex = getSidebarTabDropIndex(
+      sidebarTabDrag.draggedTab,
+      event.clientX,
+      renderOrder,
+    );
+
+    setSidebarTabDrag({
+      ...sidebarTabDrag,
+      isDragging: true,
+      targetIndex,
+    });
+  }
+
+  function finishSidebarTabDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!sidebarTabDrag || event.pointerId !== sidebarTabDrag.pointerId) {
+      return;
+    }
+
+    if (sidebarTabDrag.isDragging) {
+      const nextVisibleOrder = getReorderedSidebarTabOrder(
+        sidebarTabRenderOrder,
+        sidebarTabDrag.draggedTab,
+        sidebarTabDrag.targetIndex,
+      );
+      const nextOrder = mergeVisibleSidebarTabOrder(
+        settings.sidebarTabOrder,
+        nextVisibleOrder,
+      );
+
+      suppressNextSidebarTabClickRef.current = true;
+      window.setTimeout(() => {
+        suppressNextSidebarTabClickRef.current = false;
+      }, 0);
+
+      if (!areSidebarTabOrdersEqual(settings.sidebarTabOrder, nextOrder)) {
+        updateSetting("sidebarTabOrder", nextOrder);
+      }
+    }
+
+    setSidebarTabDrag(null);
+  }
+
+  function cancelSidebarTabDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!sidebarTabDrag || event.pointerId !== sidebarTabDrag.pointerId) {
+      return;
+    }
+
+    setSidebarTabDrag(null);
   }
 
   function updateEditorMode(nextMode: EditorMode) {
@@ -2097,10 +2687,6 @@ export function App() {
       setWorkspace((current) =>
         applySavedDocumentToWorkspace(current, restoredDocument),
       );
-      setDocumentReloadTokens((current) => ({
-        ...current,
-        [restoredDocument.id]: (current[restoredDocument.id] ?? 0) + 1,
-      }));
       setSaveState("saved");
       await refreshHistoryBrowser(savedFile.filePath);
     } finally {
@@ -2115,9 +2701,9 @@ export function App() {
     setIsDocumentHistoryDialogOpen(true);
   }
 
-  function openSettings(section: SettingsSectionId = "editor") {
+  function openSettings(section: SettingsSectionId = "app") {
     setActiveSettingsSection(
-      section === "sync" && !remoteSyncFeatureEnabled ? "editor" : section,
+      section === "sync" && !remoteSyncFeatureEnabled ? "app" : section,
     );
     setIsSettingsOpen(true);
   }
@@ -2337,16 +2923,6 @@ export function App() {
 
   function revealZoomIndicator(nextFactor: number) {
     setWindowZoomFactor(nextFactor);
-    setIsZoomIndicatorVisible(true);
-
-    if (zoomIndicatorTimerRef.current !== null) {
-      window.clearTimeout(zoomIndicatorTimerRef.current);
-    }
-
-    zoomIndicatorTimerRef.current = window.setTimeout(() => {
-      setIsZoomIndicatorVisible(false);
-      zoomIndicatorTimerRef.current = null;
-    }, zoomIndicatorVisibleMs);
   }
 
   async function runWindowZoomCommand(command: "reset" | "zoomIn" | "zoomOut") {
@@ -2478,6 +3054,10 @@ export function App() {
   }
 
   function rememberRecentDirectory(path?: string) {
+    if (!shouldShowInRecentDirectories(path, workspace.workspacePath)) {
+      return;
+    }
+
     setRecentDirectoryPaths((current) =>
       rememberRecentDirectoryPath(current, path),
     );
@@ -2632,9 +3212,10 @@ export function App() {
   ]);
 
   function setActiveDocument(documentId: string) {
-    revealRecentDocument(
-      workspace.documents.find((document) => document.id === documentId),
-    );
+    const document = workspace.documents.find((item) => item.id === documentId);
+
+    revealRecentDocument(document);
+    setIsDiaryOpen(false);
     setIsHomeOpen(false);
     setWorkspace((current) => markWorkspaceDocumentOpened(current, documentId));
   }
@@ -2898,6 +3479,7 @@ export function App() {
       workspacePath: directoryPath,
     }));
     applyDirectoryTree(tree);
+    setIsDiaryOpen(false);
     setIsHomeOpen(true);
     setIsActionsOpen(false);
     setTopMenu(null);
@@ -3788,8 +4370,9 @@ export function App() {
       filePath,
     );
     const shouldShowLoading = getDocumentTypeFromPath(filePath) !== "markdown";
+    const isDiaryPath = isPathInsideDiaryRoot(filePath, workspace.workspacePath);
 
-    if (existingDocument) {
+    if (!isDiaryPath && existingDocument && !isDiaryDocumentContent(existingDocument.content)) {
       setActiveDocument(existingDocument.id);
       setIsHomeOpen(false);
       return;
@@ -3803,6 +4386,10 @@ export function App() {
       const localFile = await window.desktop?.readMarkdownFile?.(filePath);
 
       if (!localFile) {
+        return;
+      }
+
+      if (await openLocalFileAsDiaryIfNeeded(localFile)) {
         return;
       }
 
@@ -4333,13 +4920,19 @@ export function App() {
 
       const nextContent =
         mode === "typora"
-          ? replaceMarkdownBodyPreservingFrontmatter(currentDocument.content, content)
+          ? replaceMarkdownBodyPreservingFrontmatter(
+              currentDocument.content,
+              normalizeMarkdownHtmlBreaks(content),
+            )
           : content;
 
       return updateDocument(current, {
         ...currentDocument,
         content: nextContent,
-        title: renameFromMarkdown(nextContent, currentDocument.title),
+        title:
+          currentDocument.filePath
+            ? getDocumentTitleFromFilePath(currentDocument.filePath)
+            : renameFromMarkdown(nextContent, currentDocument.title),
         updatedAt: now(),
       });
     });
@@ -4773,6 +5366,7 @@ export function App() {
   }
 
   function openInspirationNote() {
+    setIsDiaryOpen(false);
     setIsHomeOpen(true);
     setHomeNoteDialogRequestId((requestId) => requestId + 1);
     setTopMenu(null);
@@ -4867,6 +5461,12 @@ export function App() {
     );
 
     if (cachedDocument) {
+      const cachedLocalFile = createLocalFileFromDocument(cachedDocument);
+
+      if (cachedLocalFile && (await openLocalFileAsDiaryIfNeeded(cachedLocalFile))) {
+        return;
+      }
+
       setActiveDocument(cachedDocument.id);
       rememberRecentDirectory(getDirectoryPath(cachedDocument.filePath));
       setIsHomeOpen(false);
@@ -4878,6 +5478,10 @@ export function App() {
 
       if (!localFile) {
         setActiveDocument(document.id);
+        return;
+      }
+
+      if (await openLocalFileAsDiaryIfNeeded(localFile)) {
         return;
       }
 
@@ -5093,22 +5697,43 @@ export function App() {
       const url = new URL(source);
 
       if (url.protocol === "file:") {
-        return decodeURIComponent(url.pathname)
-          .replace(/^\/([A-Za-z]:)/, "$1")
-          .replace(/\//g, "\\");
+        return decodeURIComponent(url.pathname).replace(/^\/([A-Za-z]:)/, "$1");
       }
 
       if (url.protocol === "typora-local:" && url.hostname === "file") {
-        return decodeURIComponent(url.pathname.replace(/^\/+/, "")).replace(
-          /\//g,
-          "\\",
-        );
+        const pathname = decodeURIComponent(url.pathname);
+
+        if (pathname.startsWith("//")) {
+          return pathname.slice(1);
+        }
+
+        return pathname.replace(/^\/([A-Za-z]:)/, "$1");
       }
     } catch {
       return undefined;
     }
 
     return undefined;
+  }
+
+  function getLocalMediaFilePath(source?: string, documentFilePath?: string) {
+    const localPath = getLocalFilePathFromPreviewUrl(source);
+
+    if (localPath) {
+      return localPath;
+    }
+
+    if (
+      !source ||
+      !documentFilePath ||
+      !isRelativeResourceUrl(source)
+    ) {
+      return undefined;
+    }
+
+    return getLocalFilePathFromPreviewUrl(
+      resolveDocumentResourceUrl(source, documentFilePath),
+    );
   }
 
   function getMediaSourceFromElement(
@@ -5157,6 +5782,7 @@ export function App() {
 
   async function copyMediaResourceToClipboard(
     contextInfo: Pick<EditorContextMenuInfo, "mediaKind" | "mediaSource">,
+    documentFilePath?: string,
   ) {
     const source = contextInfo.mediaSource;
 
@@ -5164,7 +5790,7 @@ export function App() {
       return false;
     }
 
-    const localPath = getLocalFilePathFromPreviewUrl(source);
+    const localPath = getLocalMediaFilePath(source, documentFilePath);
 
     if (
       contextInfo.mediaKind === "image" &&
@@ -5199,11 +5825,38 @@ export function App() {
     return false;
   }
 
+  async function showMediaResourceInFolder(
+    source?: string,
+    documentFilePath?: string,
+  ) {
+    const localPath = getLocalMediaFilePath(source, documentFilePath);
+
+    if (!localPath) {
+      return false;
+    }
+
+    await window.desktop?.showInFolder?.(localPath);
+    return true;
+  }
+
   async function copyTyporaImageToClipboard(image: TyporaClipboardImage) {
-    return copyMediaResourceToClipboard({
-      mediaKind: "image",
-      mediaSource: image.source,
-    });
+    return copyMediaResourceToClipboard(
+      {
+        mediaKind: "image",
+        mediaSource: image.source,
+      },
+      activeDocument?.filePath,
+    );
+  }
+
+  async function copyDiaryTyporaImageToClipboard(image: TyporaClipboardImage) {
+    return copyMediaResourceToClipboard(
+      {
+        mediaKind: "image",
+        mediaSource: image.source,
+      },
+      diaryDocument?.filePath,
+    );
   }
 
   function getEventTargetElement(target: EventTarget | null) {
@@ -5502,6 +6155,10 @@ export function App() {
 
     const { clientX, clientY } = event;
     const contextInfo = await getEditorContextMenuInfo(event);
+    const mediaLocalPath = getLocalMediaFilePath(
+      contextInfo.mediaSource,
+      activeDocument.filePath,
+    );
 
     if (contextInfo.documentReference) {
       const reference = contextInfo.documentReference;
@@ -5600,7 +6257,18 @@ export function App() {
                 contextInfo.mediaKind === "image"
                   ? "复制图片"
                   : "复制视频地址",
-              onSelect: () => copyMediaResourceToClipboard(contextInfo),
+              onSelect: () =>
+                copyMediaResourceToClipboard(contextInfo, activeDocument.filePath),
+            },
+            {
+              disabled: !mediaLocalPath || !window.desktop?.showInFolder,
+              icon: <ExternalLink size={15} />,
+              label: "在文件夹中显示",
+              onSelect: () =>
+                showMediaResourceInFolder(
+                  contextInfo.mediaSource,
+                  activeDocument.filePath,
+                ),
             },
             { type: "separator" as const },
           ]
@@ -5788,6 +6456,77 @@ export function App() {
       compactContextMenuItems(items),
       contextInfo.linkHref || contextInfo.isTaskListItem ? 272 : 246,
     );
+  }
+
+  async function openDiaryEditorMediaContextMenu(
+    event: ReactMouseEvent<HTMLElement>,
+  ) {
+    const target = getEventTargetElement(event.target);
+    const hasMediaTarget = Boolean(
+      target?.closest(
+        "img.typora-editable-image, .typora-raw-html-preview img, .markdown-preview img, .typora-raw-html-preview video, .markdown-preview video, video.markdown-video-player",
+      ),
+    );
+
+    if (!hasMediaTarget) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!diaryDocument?.filePath || !isMarkdownDocument(diaryDocument)) {
+      return;
+    }
+
+    const { clientX, clientY } = event;
+    const contextInfo = await getEditorContextMenuInfo(event);
+
+    if (!contextInfo.mediaKind) {
+      setContextMenu(null);
+      return;
+    }
+
+    const mediaLocalPath = getLocalMediaFilePath(
+      contextInfo.mediaSource,
+      diaryDocument.filePath,
+    );
+    const items: AppContextMenuItem[] = [
+      ...(contextInfo.mediaKind === "image"
+        ? [
+            {
+              disabled: !contextInfo.mediaSource,
+              icon: <Maximize2 size={15} />,
+              label: "全屏浏览",
+              onSelect: () =>
+                openDocumentImagePreview({
+                  alt: contextInfo.mediaAlt,
+                  src: contextInfo.mediaSource,
+                }),
+            },
+          ]
+        : []),
+      {
+        icon: <Copy size={15} />,
+        label: contextInfo.mediaKind === "image" ? "复制图片" : "复制视频地址",
+        onSelect: () => {
+          void copyMediaResourceToClipboard(contextInfo, diaryDocument.filePath);
+        },
+      },
+      {
+        disabled: !mediaLocalPath || !window.desktop?.showInFolder,
+        icon: <ExternalLink size={15} />,
+        label: "在文件夹中显示",
+        onSelect: () => {
+          void showMediaResourceInFolder(
+            contextInfo.mediaSource,
+            diaryDocument.filePath,
+          );
+        },
+      },
+    ];
+
+    openContextMenuAt(clientX, clientY, compactContextMenuItems(items), 240);
   }
 
   function getLocalCreationMenuItems(directoryPath: string): AppContextMenuItem[] {
@@ -6071,11 +6810,21 @@ export function App() {
     );
   }
 
-  function bumpDocumentReloadToken(documentId: string) {
-    setDocumentReloadTokens((current) => ({
-      ...current,
-      [documentId]: (current[documentId] ?? 0) + 1,
-    }));
+  function captureSourceEditorViewport(documentId: string) {
+    const editor = editorRef.current;
+
+    if (!editor) {
+      return;
+    }
+
+    pendingSourceEditorViewportRef.current = {
+      documentId,
+      hadFocus: document.activeElement === editor,
+      scrollLeft: editor.scrollLeft,
+      scrollTop: editor.scrollTop,
+      selectionEnd: editor.selectionEnd,
+      selectionStart: editor.selectionStart,
+    };
   }
 
   async function handleWorkspaceFileChange(payload: WorkspaceFileChangePayload) {
@@ -6166,36 +6915,27 @@ export function App() {
       changedDocument,
       diskDocument,
       hasLocalChanges,
-      isCurrentDocument,
       source: payload.source,
     });
 
     if (diskChangeDecision === "same-content") {
       acknowledgeSavedFileContent(payload.filePath, diskDocument.content);
+      externalConflictPathsRef.current.delete(fileKey);
       setWorkspace((current) => mergeDiskDocumentIntoWorkspace(current, diskDocument));
       return;
     }
 
-    if (diskChangeDecision === "keep-background-conflict") {
-      externalConflictPathsRef.current.add(fileKey);
+    if (diskChangeDecision === "keep-local-dirty") {
+      externalConflictPathsRef.current.delete(fileKey);
+      showWorkspaceToast("磁盘内容已更新，当前编辑会在下次保存时写入。");
       return;
     }
 
-    if (diskChangeDecision === "confirm-current-reload") {
-      externalConflictPathsRef.current.add(fileKey);
-
-      const shouldReload = await showAppConfirm(
-        getExternalChangeConfirm(payload.filePath),
-      );
-
-      if (!shouldReload) {
-        return;
-      }
-    }
-
     acknowledgeSavedFileContent(payload.filePath, diskDocument.content);
+    externalConflictPathsRef.current.delete(fileKey);
     if (isCurrentDocument) {
-      bumpDocumentReloadToken(changedDocument.id);
+      setSaveState("saved");
+      captureSourceEditorViewport(changedDocument.id);
     }
     setRecentFileAvailability((current) => ({
       ...current,
@@ -6481,12 +7221,13 @@ export function App() {
   }
 
   function closeActiveDocument() {
+    setIsDiaryOpen(false);
+    if (isDiaryOpen) {
+      setDiaryDocument(null);
+    }
     setWorkspace((current) =>
       current.activeDocumentId
-        ? {
-            ...current,
-            activeDocumentId: "",
-          }
+        ? { ...current, activeDocumentId: "" }
         : current,
     );
     setIsHomeOpen(true);
@@ -6521,6 +7262,9 @@ export function App() {
             break;
           case "insertDocumentReference":
             openDocumentReferencePicker();
+            break;
+          case "insertTable":
+            openTableInsertDialog();
             break;
           case "paragraph":
             runParagraphCommand(action.action.command);
@@ -6565,6 +7309,7 @@ export function App() {
             void runWindowZoomCommand("reset");
             break;
           case "showDocuments":
+            setIsDiaryOpen(false);
             setIsHomeOpen(true);
             break;
           case "showFiles":
@@ -6655,7 +7400,7 @@ export function App() {
         openNewUniverSheet();
         break;
       case "paragraph:table":
-        insertTable({ columns: 3, rows: 3 });
+        openTableInsertDialog();
         break;
       case "format:image-insert":
         readFileInput(imageInputRef.current);
@@ -6664,7 +7409,7 @@ export function App() {
         openKnowledgeRelationsPanel();
         break;
       case "view:settings":
-        openSettings("editor");
+        openSettings("notes");
         break;
       case "view:mode-typora":
         updateEditorMode("typora");
@@ -6935,6 +7680,10 @@ export function App() {
 
       showDocumentLoading("正在打开文档", localFile.title || getFileNameFromPath(localFile.filePath));
 
+      if (await openLocalFileAsDiaryIfNeeded(localFile)) {
+        return;
+      }
+
       const document = createDocumentFromLocalFile(localFile);
       revealRecentDocument(document);
 
@@ -7087,7 +7836,93 @@ export function App() {
   }
 
   function insertTable(size: TableSize) {
-    insertMarkdown(createMarkdownTable(size));
+    if (mode === "preview") {
+      return;
+    }
+
+    if (isDiaryOpen) {
+      diaryWorkspaceRef.current?.insertTable(size);
+      return;
+    }
+
+    if (mode === "typora" && typoraEditorRef.current) {
+      typoraEditorRef.current.insertTable(size);
+      return;
+    }
+
+    const markdown = createMarkdownTable(size);
+    const editor = editorRef.current;
+
+    if (!activeDocument || !editor) {
+      insertMarkdown(markdown);
+      return;
+    }
+
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const firstCellOffset = Math.max(0, markdown.indexOf("| ") + 2);
+    const nextContent =
+      activeDocument.content.slice(0, start) +
+      markdown +
+      activeDocument.content.slice(end);
+
+    updateMarkdown(nextContent);
+    requestAnimationFrame(() => {
+      editor.focus();
+      editor.setSelectionRange(
+        start + firstCellOffset,
+        start + firstCellOffset,
+      );
+    });
+  }
+
+  function openTableInsertDialog() {
+    const canInsert =
+      (isDiaryOpen && mode !== "preview") ||
+      (Boolean(activeDocument) &&
+        isMarkdownDocument(activeDocument) &&
+        mode !== "preview");
+
+    if (!canInsert) {
+      return;
+    }
+
+    setTableInsertRows("3");
+    setTableInsertColumns("3");
+    setIsTableInsertDialogOpen(true);
+    setTopMenu(null);
+    setIsActionsOpen(false);
+  }
+
+  function confirmTableInsert() {
+    const rows = Math.max(2, Math.min(20, Number(tableInsertRows) || 3));
+    const columns = Math.max(
+      1,
+      Math.min(20, Number(tableInsertColumns) || 3),
+    );
+
+    setIsTableInsertDialogOpen(false);
+    // Radix returns focus only after its close animation. Insert afterward so
+    // the selected first cell retains focus instead of the dismissed dialog.
+    window.setTimeout(() => {
+      insertTable({ columns, rows });
+      if (isDiaryOpen) {
+        diaryWorkspaceRef.current?.focusEditor();
+      } else if (mode === "typora") {
+        typoraEditorRef.current?.focusEditor();
+      }
+
+      // Let React finish the document update before restoring browser focus.
+      // Otherwise the dialog's focus scope can still win the same event loop.
+      if (mode === "typora") {
+        window.setTimeout(() => {
+          const editor = document.querySelector<HTMLElement>(
+            ".typora-milkdown-content .ProseMirror",
+          );
+          editor?.focus({ preventScroll: true });
+        }, 120);
+      }
+    }, 80);
   }
 
   function replaceMediaImportPlaceholder(
@@ -7118,7 +7953,10 @@ export function App() {
       return updateDocument(current, {
         ...currentDocument,
         content: result.content,
-        title: renameFromMarkdown(result.content, currentDocument.title),
+        title:
+          currentDocument.filePath
+            ? getDocumentTitleFromFilePath(currentDocument.filePath)
+            : renameFromMarkdown(result.content, currentDocument.title),
         updatedAt: now(),
       });
     });
@@ -7249,6 +8087,602 @@ export function App() {
     return savedAsset.reference;
   }
 
+  async function refreshDiaryEntries(workspacePath = workspace.workspacePath) {
+    if (!workspacePath || !window.desktop?.readDirectoryTree) {
+      setDiaryEntries([]);
+      return [];
+    }
+
+    try {
+      const tree = await window.desktop.readDirectoryTree(
+        getDiaryRootPath(workspacePath),
+        { includeEmptyDirectories: false },
+      );
+      const rawEntries = getDiaryEntriesFromTree(tree);
+      const entries = window.desktop?.readMarkdownFile
+        ? await Promise.all(
+            rawEntries.map(async (entry) => {
+              try {
+                const localFile = await window.desktop?.readMarkdownFile?.(
+                  entry.filePath,
+                );
+
+                return localFile
+                  ? enrichDiaryEntryWithContent(entry, localFile.content)
+                  : entry;
+              } catch {
+                return entry;
+              }
+            }),
+          )
+        : rawEntries;
+
+      setDiaryEntries(entries);
+      return entries;
+    } catch {
+      setDiaryEntries([]);
+      return [];
+    }
+  }
+
+  function getDiaryDateKeyFromLocalFile(localFile: LocalMarkdownFile) {
+    const titleDate = localFile.title.match(/^\d{4}-\d{2}-\d{2}$/)?.[0];
+    const pathDate = localFile.filePath.match(/(\d{4}-\d{2}-\d{2})\.md$/i)?.[1];
+
+    return titleDate ?? pathDate ?? getDiaryDateKey();
+  }
+
+  function shouldOpenLocalFileAsDiary(localFile: LocalMarkdownFile) {
+    return (
+      isPathInsideDiaryRoot(localFile.filePath, workspace.workspacePath) ||
+      isDiaryDocumentContent(localFile.content)
+    );
+  }
+
+  function createLocalFileFromDocument(
+    document: MarkdownDocument,
+  ): LocalMarkdownFile | null {
+    if (!document.filePath) {
+      return null;
+    }
+
+    return {
+      content: document.content,
+      createdAt: document.createdAt,
+      documentType: getDocumentType(document),
+      fileExtension: document.fileExtension ?? ".md",
+      filePath: document.filePath,
+      title: document.title,
+      updatedAt: document.updatedAt,
+    };
+  }
+
+  function normalizeDiaryLocalFile(localFile: LocalMarkdownFile) {
+    const fallbackDateKey = getDiaryDateKeyFromLocalFile(localFile);
+    const metadata = getDiaryMetadata(localFile.content, fallbackDateKey);
+    const content = updateDiaryMetadata(localFile.content, {
+      dateKey: metadata.dateKey,
+      mood: metadata.mood,
+      tags: metadata.tags,
+      templateId: metadata.templateId,
+    });
+
+    return {
+      ...localFile,
+      content,
+      title: metadata.dateKey,
+    };
+  }
+
+  function openDiaryDocumentFromFile(localFile: LocalMarkdownFile) {
+    const normalizedFile = normalizeDiaryLocalFile(localFile);
+    const document = createDiaryDocument(normalizedFile);
+
+    if (document.filePath) {
+      savedFileContentByPathRef.current.set(document.filePath, localFile.content);
+    }
+
+    setDiaryDocument(document);
+    setDiarySaveState(document.content === localFile.content ? "saved" : "saving");
+    setIsDiaryOpen(true);
+    setIsHomeOpen(false);
+    setIsDocumentInspectorOpen(false);
+    setSidebarTab("diary");
+    showSidebar();
+    setTopMenu(null);
+    setIsActionsOpen(false);
+  }
+
+  async function openLocalFileAsDiaryIfNeeded(localFile: LocalMarkdownFile) {
+    if (!shouldOpenLocalFileAsDiary(localFile)) {
+      return false;
+    }
+
+    openDiaryDocumentFromFile(localFile);
+    await refreshDiaryEntries(workspace.workspacePath);
+    return true;
+  }
+
+  async function openDiaryEntry(entry: DiaryEntry) {
+    if (!window.desktop?.readMarkdownFile) {
+      return;
+    }
+
+    try {
+      const localFile = await window.desktop.readMarkdownFile(entry.filePath);
+      openDiaryDocumentFromFile(localFile);
+    } catch {
+      setDiarySaveState("failed");
+    }
+  }
+
+  async function openDiaryWorkspace() {
+    setIsDiaryOpen(true);
+    setIsHomeOpen(false);
+    setIsDocumentInspectorOpen(false);
+    setSidebarTab("diary");
+    showSidebar();
+    setTopMenu(null);
+    setIsActionsOpen(false);
+
+    if (!diaryDocument && diaryEntries[0]) {
+      await openDiaryEntry(diaryEntries[0]);
+    }
+  }
+
+  async function createDiaryForDate(dateKey = getDiaryDateKey()) {
+    const workspacePath = workspace.workspacePath;
+
+    setSidebarTab("diary");
+    showSidebar();
+
+    if (!workspacePath) {
+      void showAppAlert({
+        confirmLabel: "选择工作区",
+        description: "日记会保存在当前工作区下，请先打开一个本地笔记目录。",
+        title: "先打开一个工作区",
+        tone: "info",
+      });
+      return;
+    }
+
+    const filePath = getDiaryFilePath(workspacePath, dateKey);
+
+    try {
+      const existingFile =
+        (await window.desktop?.pathExists?.(filePath)) &&
+        window.desktop?.readMarkdownFile
+          ? await window.desktop.readMarkdownFile(filePath)
+          : null;
+      const localFile =
+        existingFile ||
+        (await window.desktop?.createDocumentFile?.({
+          content: createDiaryInitialContent(
+            dateKey,
+            settings.diaryDefaultTemplate,
+          ),
+          directoryPath: getDiaryMonthDirectoryPath(workspacePath, dateKey),
+          extension: ".md",
+          title: dateKey,
+        }));
+
+      if (!localFile) {
+        setDiarySaveState("failed");
+        return;
+      }
+
+      openDiaryDocumentFromFile(localFile);
+      await refreshDiaryEntries(workspacePath);
+      await loadDirectoryTree(workspacePath);
+    } catch {
+      setDiarySaveState("failed");
+    }
+  }
+
+  async function createTodayDiary() {
+    await createDiaryForDate(getDiaryDateKey());
+  }
+
+  async function confirmCreateDiaryForDate(dateKey: string) {
+    const confirmed = await showAppConfirm({
+      cancelLabel: "取消",
+      confirmLabel: "创建日记",
+      description: `这会在当前工作区的日记目录下创建 ${dateKey}.md。`,
+      title: `补写 ${dateKey} 的日记？`,
+      tone: "info",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    await createDiaryForDate(dateKey);
+  }
+
+  async function deleteDiaryFile(filePath: string, dateKey: string) {
+    if (!window.desktop?.deleteDocumentFile) {
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description: "当前运行环境不支持删除本地文件。",
+        title: "无法删除日记",
+        tone: "warning",
+      });
+      return;
+    }
+
+    const confirmed = await showAppConfirm({
+      cancelLabel: "取消",
+      confirmLabel: "删除日记",
+      description: "这会删除本地日记文件，此操作无法撤销。",
+      detail: filePath,
+      title: `删除 ${dateKey} 的日记？`,
+      tone: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    const fileKey = normalizeFilePathKey(filePath);
+    const isDeletingCurrentDiary =
+      diaryDocument?.filePath &&
+      normalizeFilePathKey(diaryDocument.filePath) === fileKey;
+
+    try {
+      internalFileDeletesRef.current.add(fileKey);
+      await window.desktop.deleteDocumentFile(filePath);
+
+      for (const savedPath of savedFileContentByPathRef.current.keys()) {
+        if (normalizeFilePathKey(savedPath) === fileKey) {
+          savedFileContentByPathRef.current.delete(savedPath);
+        }
+      }
+
+      externalConflictPathsRef.current.delete(fileKey);
+
+      if (isDeletingCurrentDiary) {
+        setDiaryDocument(null);
+        setDiarySaveState("saved");
+      }
+
+      const refreshedEntries = await refreshDiaryEntries(workspace.workspacePath);
+
+      if (workspace.workspacePath) {
+        await loadDirectoryTree(workspace.workspacePath);
+      }
+
+      if (isDeletingCurrentDiary && refreshedEntries[0]) {
+        await openDiaryEntry(refreshedEntries[0]);
+      } else if (isDeletingCurrentDiary) {
+        setIsDiaryOpen(true);
+        setIsHomeOpen(false);
+        setSidebarTab("diary");
+      }
+
+      showWorkspaceToast("日记已删除");
+    } catch (error) {
+      internalFileDeletesRef.current.delete(fileKey);
+      void showAppAlert({
+        confirmLabel: "知道了",
+        description:
+          error instanceof Error
+            ? error.message
+            : "删除日记时发生错误，请确认文件仍然存在且当前目录可写。",
+        detail: filePath,
+        title: "删除失败",
+        tone: "danger",
+      });
+    }
+  }
+
+  async function deleteDiaryEntry(entry: DiaryEntry) {
+    await deleteDiaryFile(entry.filePath, entry.dateKey);
+  }
+
+  function updateDiaryMarkdown(content: string) {
+    const nextContent =
+      mode === "typora" ? normalizeMarkdownHtmlBreaks(content) : content;
+
+    setDiaryDocument((current) => {
+      if (!current || current.content === nextContent) {
+        return current;
+      }
+
+      setDiarySaveState("saving");
+
+      return {
+        ...current,
+        content: nextContent,
+        title: current.title.match(/^\d{4}-\d{2}-\d{2}$/)
+          ? current.title
+          : renameFromMarkdown(nextContent, current.title),
+        updatedAt: now(),
+      };
+    });
+  }
+
+  function updateDiaryMetadataFields(
+    updates: Parameters<typeof updateDiaryMetadata>[1],
+  ) {
+    setDiaryDocument((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const currentMetadata = getDiaryMetadata(current.content, current.title);
+      const nextContent = updateDiaryMetadata(current.content, {
+        dateKey: currentMetadata.dateKey,
+        ...updates,
+      });
+
+      if (nextContent === current.content) {
+        return current;
+      }
+
+      setDiarySaveState("saving");
+
+      return {
+        ...current,
+        content: nextContent,
+        updatedAt: now(),
+      };
+    });
+  }
+
+  function updateDiaryMood(mood?: DiaryMood) {
+    updateDiaryMetadataFields({ mood });
+  }
+
+  function updateDiaryTags(tags: string[]) {
+    updateDiaryMetadataFields({ tags });
+  }
+
+  function updateDiaryTemplate(templateId: DiaryTemplateId) {
+    setDiaryDocument((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const nextContent = applyDiaryTemplateWithCarryover(
+        current.content,
+        templateId,
+      );
+
+      if (nextContent === current.content) {
+        return current;
+      }
+
+      setDiarySaveState("saving");
+
+      return {
+        ...current,
+        content: nextContent,
+        updatedAt: now(),
+      };
+    });
+  }
+
+  function insertDiaryMarkdown(markdown: string) {
+    diaryWorkspaceRef.current?.insertMarkdown(markdown);
+  }
+
+  function insertDiaryMarkdownImage(
+    alt: string,
+    source: string,
+    title = COMPACT_IMAGE_TITLE,
+  ) {
+    diaryWorkspaceRef.current?.insertImage({ alt, source, title });
+  }
+
+  function insertSingleDiaryMarkdownImageToken(text: string) {
+    const token = getSingleClipboardImageToken(text);
+
+    if (!token) {
+      return false;
+    }
+
+    insertDiaryMarkdownImage(token.alt, token.source, token.title);
+    return true;
+  }
+
+  async function handleDiaryImageDataUrl(fileName: string, dataUrl: string) {
+    const document = diaryDocument;
+
+    if (!document || !isMarkdownDocument(document)) {
+      return;
+    }
+
+    try {
+      const reference = await saveDataUrlAssetForDocument(
+        document,
+        fileName,
+        dataUrl,
+      );
+      insertDiaryMarkdownImage(fileName, reference);
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
+    }
+  }
+
+  async function handleDiaryImageFile(file: File) {
+    const fileName = file.name || createTimestampedImageName(file.type);
+    const mimeType =
+      file.type || getClipboardMediaMimeType(fileName) || "image/png";
+
+    await handleDiaryImageDataUrl(
+      fileName,
+      normalizeDataUrlMimeType(await fileToDataUrl(file), mimeType),
+    );
+  }
+
+  async function handleDiaryImageFilePath(file: {
+    fileName: string;
+    filePath: string;
+    mimeType: string;
+  }) {
+    const document = diaryDocument;
+
+    if (!document || !isMarkdownDocument(document)) {
+      return false;
+    }
+
+    try {
+      const reference = await saveFileAssetForDocument(
+        document,
+        file.fileName,
+        file.filePath,
+        "image.gif",
+      );
+      insertDiaryMarkdownImage(file.fileName, reference);
+      return true;
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "图片处理失败");
+      return false;
+    }
+  }
+
+  async function handleDiaryVideoDataUrl(fileName: string, dataUrl: string) {
+    const document = diaryDocument;
+
+    if (!document || !isMarkdownDocument(document)) {
+      return false;
+    }
+
+    try {
+      const reference = await saveDataUrlAssetForDocument(
+        document,
+        fileName,
+        dataUrl,
+      );
+      insertDiaryMarkdown(createVideoMarkdown(fileName, reference));
+      return true;
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "视频处理失败");
+      return false;
+    }
+  }
+
+  async function handleDiaryVideoFile(file: File) {
+    const fileName = file.name || createTimestampedVideoName(file.type);
+    const mimeType = file.type || getClipboardMediaMimeType(fileName) || "video/webm";
+
+    try {
+      const dataUrl = normalizeDataUrlMimeType(
+        await fileToDataUrl(file),
+        mimeType,
+      );
+
+      return handleDiaryVideoDataUrl(fileName, dataUrl);
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "视频处理失败");
+      return false;
+    }
+  }
+
+  async function handleDiaryVideoFilePath(file: {
+    fileName: string;
+    filePath: string;
+    mimeType: string;
+  }) {
+    const document = diaryDocument;
+
+    if (!document || !isMarkdownDocument(document)) {
+      return false;
+    }
+
+    try {
+      const reference = await saveFileAssetForDocument(
+        document,
+        file.fileName,
+        file.filePath,
+        "recording.webm",
+      );
+      insertDiaryMarkdown(createVideoMarkdown(file.fileName, reference));
+      return true;
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : "视频处理失败");
+      return false;
+    }
+  }
+
+  async function handleDiaryMediaImportAction(action: MediaImportAction) {
+    switch (action.action) {
+      case "imageFile":
+        await handleDiaryImageFile(action.file);
+        return;
+      case "imageFilePath":
+        await handleDiaryImageFilePath(action);
+        return;
+      case "videoFile":
+        await handleDiaryVideoFile(action.file);
+        return;
+      case "videoFilePath":
+        await handleDiaryVideoFilePath(action);
+        return;
+      case "imageDataUrl":
+        await handleDiaryImageDataUrl(action.fileName, action.dataUrl);
+        return;
+      case "videoDataUrl":
+        await handleDiaryVideoDataUrl(action.fileName, action.dataUrl);
+        return;
+    }
+  }
+
+  async function pasteDiaryClipboardMediaFallback() {
+    const action = await readClipboardMediaFallbackAction({
+      listMediaFileRefs: window.desktop?.listClipboardMediaFiles,
+      onBeforeReadNativeMediaData: () =>
+        setBackupMessage("正在读取剪贴板媒体"),
+      readBrowserMedia: readBrowserClipboardMedia,
+      readImageData: window.desktop?.readClipboardImage,
+      readMediaData: window.desktop?.readClipboardMediaFiles,
+    });
+
+    if (!action) {
+      return false;
+    }
+
+    await handleDiaryMediaImportAction(action);
+    return true;
+  }
+
+  async function handleDiaryPaste(event: ClipboardEvent<HTMLElement>) {
+    if (event.defaultPrevented || !diaryDocument || !isMarkdownDocument(diaryDocument)) {
+      return;
+    }
+
+    const directMediaAction = getClipboardDirectMediaAction(event.clipboardData);
+
+    if (directMediaAction) {
+      event.preventDefault();
+      await handleDiaryMediaImportAction(directMediaAction);
+      return;
+    }
+
+    const text = event.clipboardData.getData("text/plain");
+
+    if (insertSingleDiaryMarkdownImageToken(text)) {
+      event.preventDefault();
+      return;
+    }
+
+    if (!shouldTryClipboardMediaFallback(event.clipboardData)) {
+      return;
+    }
+
+    event.preventDefault();
+    if (await pasteDiaryClipboardMediaFallback()) {
+      return;
+    }
+
+    if (text) {
+      insertDiaryMarkdown(text);
+      return;
+    }
+
+    setBackupMessage("未能读取剪贴板中的媒体内容");
+  }
+
   async function handleVideoDataUrl(
     fileName: string,
     dataUrl: string,
@@ -7269,7 +8703,7 @@ export function App() {
         updateVideoImportPlaceholder(
           importTarget.importId,
           fileName,
-          "正在写入 .assets",
+          "正在写入当前文件夹的 .assets",
           undefined,
           importTarget.documentId,
         );
@@ -7352,7 +8786,7 @@ export function App() {
       updateVideoImportPlaceholder(
         importTarget.importId,
         file.fileName,
-        "正在复制到 .assets",
+        "正在复制到当前文件夹的 .assets",
         undefined,
         importTarget.documentId,
       );
@@ -7498,7 +8932,58 @@ export function App() {
     }
   }
 
+  async function readTableClipboardPayload() {
+    try {
+      return parseTableClipboardPayload(
+        await window.desktop?.readClipboardTablePayload?.(),
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function pasteTableClipboardPayload(payload: TableClipboardPayload) {
+    if (isDiaryOpen) {
+      return diaryWorkspaceRef.current?.pasteTableClipboardPayload(payload) ?? false;
+    }
+
+    if (mode === "preview") {
+      return false;
+    }
+
+    return typoraEditorRef.current?.pasteTableClipboardPayload(payload) ?? false;
+  }
+
   async function pasteFromClipboardShortcut(options: { showEmptyFeedback?: boolean } = {}) {
+    const tablePayload = await readTableClipboardPayload();
+
+    if (tablePayload && pasteTableClipboardPayload(tablePayload)) {
+      return true;
+    }
+
+    if (isDiaryOpen && diaryDocument && isMarkdownDocument(diaryDocument)) {
+      if (await pasteDiaryClipboardMediaFallback()) {
+        return true;
+      }
+
+      const text = await readClipboardTextFallback();
+
+      if (text) {
+        if (insertSingleDiaryMarkdownImageToken(text)) {
+          return true;
+        }
+
+        insertDiaryMarkdown(text);
+        return true;
+      }
+
+      if (options.showEmptyFeedback) {
+        setBackupMessage("剪贴板中没有可粘贴的内容");
+      }
+
+      return false;
+    }
+
     if (!activeDocument || !isMarkdownDocument(activeDocument)) {
       return false;
     }
@@ -7709,6 +9194,16 @@ export function App() {
   }
 
   async function runEditCommand(command: TyporaEditCommand) {
+    if (isDiaryOpen && command === "paste") {
+      await pasteFromClipboardShortcut({ showEmptyFeedback: true });
+      return;
+    }
+
+    if (isDiaryOpen) {
+      diaryWorkspaceRef.current?.runEditCommand(command);
+      return;
+    }
+
     if (!activeDocument && command !== "copy") {
       return;
     }
@@ -7933,7 +9428,7 @@ export function App() {
             <MenuItem label="提升标题级别" shortcut="Ctrl+=" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "promoteHeading" }))} />
             <MenuItem label="降低标题级别" shortcut="Ctrl+-" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "demoteHeading" }))} />
             <MenuSeparator />
-            <MenuItem label="表格" onSelect={() => runTopMenuAction(() => insertTable({ columns: 3, rows: 3 }))} />
+            <MenuItem label="表格" shortcut="Ctrl+T" onSelect={() => runTopMenuAction(openTableInsertDialog)} />
             <MenuItem label="公式块" shortcut="Ctrl+Shift+M" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "mathBlock" }))} />
             <MenuItem label="代码块" shortcut="Ctrl+Shift+K" onSelect={() => runTopMenuAction(() => runParagraphCommand({ type: "codeBlock" }))} />
             <MenuSubmenu label="警告框">
@@ -7994,7 +9489,7 @@ export function App() {
             <MenuItem label="显示 / 隐藏侧边栏" shortcut="Ctrl+Shift+L" onSelect={() => runTopMenuAction(toggleSidebarVisibility)} />
             <MenuItem label="搜索" shortcut="Ctrl+Shift+F" onSelect={() => runTopMenuAction(openWorkspaceSearch)} />
             <MenuItem label="链接总览" onSelect={() => runTopMenuAction(openKnowledgeRelationsPanel)} />
-            <MenuItem label="阅读设置..." onSelect={() => runTopMenuAction(() => openSettings("editor"))} />
+            <MenuItem label="阅读设置..." onSelect={() => runTopMenuAction(() => openSettings("notes"))} />
             <MenuSubmenu label="编辑模式" testId="menu-editor-mode">
               <MenuItem
                 checked={mode === "typora"}
@@ -8153,12 +9648,22 @@ export function App() {
   function renderActiveDocumentOutline() {
     if (!activeDocument) {
       return (
-        <div className="outline-empty" aria-label="当前文件为空" />
+        <div className="outline-empty" aria-label="当前文件为空">
+          <FileText size={26} />
+          <strong>没有当前文件</strong>
+          <span>从左侧打开一个文档后，这里会显示正文大纲。</span>
+        </div>
       );
     }
 
     if (!activeDocumentOutline.length) {
-      return <div className="outline-empty">当前文件没有可显示的标题</div>;
+      return (
+        <div className="outline-empty">
+          <FileText size={26} />
+          <strong>当前文件没有标题</strong>
+          <span>使用 Markdown 标题后，这里会自动生成大纲。</span>
+        </div>
+      );
     }
 
     return (
@@ -8213,7 +9718,81 @@ export function App() {
     );
   }
 
+  function renderDiaryDocumentOutline() {
+    if (!diaryDocument) {
+      return (
+        <div className="outline-empty" aria-label="当前日记为空">
+          <FileText size={26} />
+          <strong>没有当前日记</strong>
+          <span>打开或创建一篇日记后，这里会显示正文大纲。</span>
+        </div>
+      );
+    }
+
+    if (!diaryMarkdownOutline.length) {
+      return (
+        <div className="outline-empty">
+          <FileText size={26} />
+          <strong>当前日记没有标题</strong>
+          <span>写下标题段落后，这里会自动生成日记大纲。</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="outline-tree">
+        {diaryMarkdownOutline.map((entry) => {
+          const isActive = activeEditorLineIndex === entry.lineIndex;
+
+          return (
+            <button
+              className={
+                isActive
+                  ? "outline-item outline-item-active"
+                  : "outline-item"
+              }
+              data-outline-level={entry.level}
+              key={entry.id}
+              style={
+                {
+                  "--outline-depth": `${Math.max(entry.level - 1, 0) * 14}px`,
+                } as CSSProperties
+              }
+              title={entry.title}
+              type="button"
+              onClick={() => {
+                setIsHomeOpen(false);
+                diaryWorkspaceRef.current?.scrollToLine(entry.lineIndex);
+                setActiveEditorLineIndex(entry.lineIndex);
+              }}
+            >
+              <span>{entry.title}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   function renderCurrentDocumentPanel() {
+    if (isDiaryOpen) {
+      if (!diaryDocument) {
+        return (
+          <div className="current-document-empty" aria-label="当前日记为空">
+            <FileText size={28} />
+            <strong>没有当前日记</strong>
+            <span>打开或创建一篇日记后查看正文大纲。</span>
+          </div>
+        );
+      }
+
+      return (
+        <div className="current-document-panel">
+          {renderDiaryDocumentOutline()}
+        </div>
+      );
+    }
+
     if (!activeDocument) {
       return (
         <div className="current-document-empty" aria-label="当前文件为空">
@@ -8257,8 +9836,45 @@ export function App() {
     remoteSyncFeatureEnabled &&
     syncStatus.configuration.enabled &&
     syncStatus.configuration.tokenConfigured;
-  const localExplorerTree = isCloudWorkspace ? null : directoryTree;
-  const localExplorerDocuments = isCloudWorkspace ? [] : workspace.documents;
+  const knownDiaryDocumentPathKeys = useMemo(
+    () =>
+      new Set(
+        workspace.documents
+          .filter(
+            (document) =>
+              document.filePath && isDiaryDocumentContent(document.content),
+          )
+          .map((document) => document.filePath!),
+      ),
+    [workspace.documents],
+  );
+  const localExplorerTree = useMemo(
+    () =>
+      isCloudWorkspace
+        ? null
+        : removeDiaryRootFromDirectoryTree(
+            directoryTree,
+            workspace.workspacePath,
+            knownDiaryDocumentPathKeys,
+          ),
+    [
+      directoryTree,
+      isCloudWorkspace,
+      knownDiaryDocumentPathKeys,
+      workspace.workspacePath,
+    ],
+  );
+  const localExplorerDocuments = useMemo(
+    () =>
+      isCloudWorkspace
+        ? []
+        : workspace.documents.filter(
+          (document) =>
+              !isPathInsideDiaryRoot(document.filePath, workspace.workspacePath) &&
+              !isDiaryDocumentContent(document.content),
+          ),
+    [isCloudWorkspace, workspace.documents, workspace.workspacePath],
+  );
   const windowZoomPercent = Math.round(windowZoomFactor * 100);
   const isDefaultWindowZoom =
     Math.abs(windowZoomFactor - defaultWindowZoomFactor) < 0.005;
@@ -8319,6 +9935,18 @@ export function App() {
         gridTemplateRows: `minmax(${minStorageSectionHeight}px, ${storageSplitRatio}fr) 10px minmax(${minStorageSectionHeight}px, ${1 - storageSplitRatio}fr)`,
       } as CSSProperties)
     : undefined;
+  const enabledSidebarTabOrder = settings.homeShowDiaryPanel
+    ? settings.sidebarTabOrder
+    : settings.sidebarTabOrder.filter((tab) => tab !== "diary");
+  const sidebarTabRenderOrder = sidebarTabDrag?.isDragging
+    ? getReorderedSidebarTabOrder(
+        enabledSidebarTabOrder,
+        sidebarTabDrag.draggedTab,
+        sidebarTabDrag.targetIndex,
+      )
+    : enabledSidebarTabOrder;
+  const activeSidebarTab =
+    sidebarTab === "search" ? "current" : sidebarTab;
 
   function renderStorageExplorerSection({
     documents,
@@ -8611,10 +10239,23 @@ export function App() {
       >
         <AppMenubar
           appLogoUrl={appLogoUrl}
+          contentActions={
+            shouldShowWorkspaceDocumentActions ? workspaceContentActions : []
+          }
+          contentDirty={workspaceContentDirty}
+          contentKind={menubarContentKind}
+          contentTitle={menubarContentTitle}
+          contentTitleDetail={workspaceActionFilePath || menubarContentTitle}
           isFullScreen={isFullScreen}
           isMaximized={isMaximized}
+          onCloseContent={
+            shouldShowWorkspaceDocumentActions ? closeActiveDocument : undefined
+          }
           onHideTop={() => hideImmersiveEdge("top")}
-          onOpenHome={() => setIsHomeOpen(true)}
+          onOpenHome={() => {
+            setIsDiaryOpen(false);
+            setIsHomeOpen(true);
+          }}
           onRevealTop={() => revealImmersiveEdge("top")}
           platform={desktopPlatform}
           renderDropdown={renderMenubarDropdown}
@@ -8655,44 +10296,75 @@ export function App() {
         ) : null}
 
         <aside className="sidebar explorer-sidebar" aria-hidden={isSidebarHidden}>
-          <div className="explorer-tabs" role="tablist" aria-label="侧边栏视图">
-            <button
-              className={sidebarTab === "files" ? "explorer-tab explorer-tab-active" : "explorer-tab"}
-              type="button"
-              role="tab"
-              aria-selected={sidebarTab === "files"}
-              onClick={() => setSidebarTab("files")}
-            >
-              文件
-            </button>
-            <button
-              className={
-                sidebarTab === "current" || sidebarTab === "search"
-                  ? "explorer-tab explorer-tab-active"
-                  : "explorer-tab"
-              }
-              type="button"
-              role="tab"
-              aria-selected={sidebarTab === "current" || sidebarTab === "search"}
-              onClick={() =>
-                setSidebarTab(isWorkspaceSearchTabVisible ? "search" : "current")
-              }
-            >
-              {isWorkspaceSearchTabVisible ? "查找" : "当前文件"}
-            </button>
+          <div
+            className="explorer-tabs"
+            role="tablist"
+            aria-label="侧边栏视图"
+            style={
+              {
+                "--explorer-tab-count": sidebarTabRenderOrder.length,
+              } as CSSProperties
+            }
+          >
+            {sidebarTabRenderOrder.map((tab) => {
+              const isActive = activeSidebarTab === tab;
+              const isDragged = sidebarTabDrag?.draggedTab === tab;
+
+              return (
+                <button
+                  className={[
+                    "explorer-tab",
+                    `explorer-tab-${tab}`,
+                    isActive ? "explorer-tab-active" : "",
+                    isDragged && sidebarTabDrag?.isDragging
+                      ? "explorer-tab-dragging"
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={tab}
+                  ref={(node) => setSidebarTabButtonRef(tab, node)}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => activateSidebarTab(tab)}
+                  onPointerCancel={cancelSidebarTabDrag}
+                  onPointerDown={(event) => startSidebarTabDrag(event, tab)}
+                  onPointerMove={moveSidebarTabDrag}
+                  onPointerUp={finishSidebarTabDrag}
+                >
+                  {getSidebarTabLabel(tab)}
+                </button>
+              );
+            })}
           </div>
 
           <div
             className="explorer-tree"
             aria-label={
-              sidebarTab === "files"
+              sidebarTab === "diary"
+                ? "日记"
+                : sidebarTab === "files"
                 ? "文件目录"
                 : sidebarTab === "search"
                   ? "查找"
                   : "当前文件"
             }
           >
-            {sidebarTab === "files" ? (
+            {sidebarTab === "diary" ? (
+              <Suspense fallback={null}>
+                <DiarySidebarPanel
+                  document={diaryDocument}
+                  entries={diaryEntries}
+                  groups={diaryGroups}
+                  onCreateDate={(dateKey) => void confirmCreateDiaryForDate(dateKey)}
+                  onCreateToday={() => void createTodayDiary()}
+                  onDeleteEntry={(entry) => void deleteDiaryEntry(entry)}
+                  onOpenEntry={(entry) => void openDiaryEntry(entry)}
+                  workspacePath={workspace.workspacePath}
+                />
+              </Suspense>
+            ) : sidebarTab === "files" ? (
               <div
                 ref={storageSectionsRef}
                 className={storageSectionsClassName}
@@ -8963,12 +10635,6 @@ export function App() {
                       <span className="sidebar-recent-directory-label">
                         {directory.label}
                       </span>
-                      {directory.isCurrent ? (
-                        <span
-                          className="sidebar-recent-directory-current"
-                          aria-label="当前目录"
-                        />
-                      ) : null}
                     </button>
                   ))}
                 </div>
@@ -9009,6 +10675,15 @@ export function App() {
             >
               {fileExplorerView === "tree" ? <Rows3 size={17} /> : <ListTree size={17} />}
             </button>
+            <button
+              className="explorer-footer-icon-button"
+              type="button"
+              aria-label="打开设置"
+              title="打开设置"
+              onClick={() => openSettings("app")}
+            >
+              <Settings2 size={16} />
+            </button>
           </div>
         </aside>
 
@@ -9028,14 +10703,44 @@ export function App() {
         />
 
         <section className="workspace">
-          {isHomeOpen || !activeDocument ? (
-            <HomeWorkspace
-              activeDocument={activeDocument}
-              logoUrl={appLogoUrl}
+          {isDiaryOpen ? (
+            <Suspense
+              fallback={
+                <section className="standalone-document-viewer" tabIndex={-1}>
+                  <div className="document-loading-inline">
+                    <DocumentLoadingIndicator title="正在打开日记" />
+                  </div>
+                </section>
+              }
+            >
+              <DiaryWorkspace
+                ref={diaryWorkspaceRef}
+                document={diaryDocument}
+                editorMode={mode}
+                metadata={diaryMetadata}
+                moodOptions={diaryMoodValues}
+                onChange={updateDiaryMarkdown}
+                onCopyImage={(image) => copyDiaryTyporaImageToClipboard(image)}
+                onCreateToday={() => void createTodayDiary()}
+                onEditorContextMenu={openDiaryEditorMediaContextMenu}
+                onMoodChange={updateDiaryMood}
+                onPaste={handleDiaryPaste}
+                onPreviewImage={openDocumentImagePreview}
+                onRequestTableInsert={openTableInsertDialog}
+                onTagsChange={updateDiaryTags}
+                onTemplateChange={updateDiaryTemplate}
+                templateOptions={diaryTemplateOptions}
+                workspacePath={workspace.workspacePath}
+              />
+            </Suspense>
+          ) : isHomeOpen || !activeDocument ? (
+              <HomeWorkspace
+                activeDocument={activeDocument}
+                logoUrl={appLogoUrl}
               noteDialogRequestId={homeNoteDialogRequestId}
               onClearRecentDocuments={clearRecentDocuments}
               onCreateDocument={createNewDocument}
-              onOpenKnowledgeRelations={openKnowledgeRelationsPanel}
+                onOpenKnowledgeRelations={openKnowledgeRelationsPanel}
               onOpenRecentDocument={openRecentDocument}
               onOpenRecentDocumentContextMenu={(event, document) => {
                 if (document.filePath) {
@@ -9177,7 +10882,6 @@ export function App() {
                   )}
                   {mode === "typora" && (
                     <TyporaEditor
-                      key={`${activeDocument.id}:${documentReloadTokens[activeDocument.id] ?? 0}`}
                       ref={typoraEditorRef}
                       documentId={activeDocument.id}
                       filePath={activeDocument.filePath}
@@ -9193,7 +10897,7 @@ export function App() {
                       onPaste={handlePaste}
                       onPreviewImage={openDocumentImagePreview}
                       onRequestDocumentReference={openDocumentReferencePicker}
-                      onRequestTableInsert={() => insertTable({ columns: 3, rows: 3 })}
+                      onRequestTableInsert={openTableInsertDialog}
                     />
                   )}
 
@@ -9253,23 +10957,25 @@ export function App() {
             </div>
           ) : null}
           <WorkspaceStatusBar
-            activeDocument={activeDocument}
-            isInspectorOpen={isDocumentInspectorOpen}
+            activeDocument={isDiaryOpen ? diaryDocument : activeDocument}
+            isInspectorOpen={isDiaryOpen ? false : isDocumentInspectorOpen}
             isSidebarHidden={isSidebarHidden}
-            missingAssetReferences={missingAssetReferences}
-            saveState={saveState}
-            syncStatus={remoteSyncFeatureEnabled ? syncStatus : undefined}
-            wordCount={activeDocumentWordCount}
-            onCloseDocument={closeActiveDocument}
+            missingAssetReferences={isDiaryOpen ? [] : missingAssetReferences}
+            saveState={isDiaryOpen ? diarySaveState : saveState}
+            syncStatus={
+              !isDiaryOpen && remoteSyncFeatureEnabled ? syncStatus : undefined
+            }
+            wordCount={isDiaryOpen ? diaryDocumentWordCount : activeDocumentWordCount}
             onConfigureSync={
-              remoteSyncFeatureEnabled ? () => openSettings("sync") : undefined
+              !isDiaryOpen && remoteSyncFeatureEnabled
+                ? () => openSettings("sync")
+                : undefined
             }
-            onOpenSettings={() => openSettings("editor")}
             onOpenSyncMenu={
-              remoteSyncFeatureEnabled ? openSyncStatusMenu : undefined
+              !isDiaryOpen && remoteSyncFeatureEnabled ? openSyncStatusMenu : undefined
             }
-            onSyncNow={remoteSyncFeatureEnabled ? syncNow : undefined}
-            onToggleInspector={toggleDocumentInspector}
+            onSyncNow={!isDiaryOpen && remoteSyncFeatureEnabled ? syncNow : undefined}
+            onToggleInspector={isDiaryOpen ? undefined : toggleDocumentInspector}
             onToggleSidebar={toggleSidebarVisibility}
           />
         </section>
@@ -9313,19 +11019,6 @@ export function App() {
             }
           }}
         />
-
-        <div
-          className={[
-            "window-zoom-indicator",
-            isZoomIndicatorVisible ? "window-zoom-indicator-visible" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          aria-live="polite"
-          aria-hidden={!isZoomIndicatorVisible}
-        >
-          {windowZoomPercent}%
-        </div>
 
         {contextMenu ? (
           <div
@@ -9413,7 +11106,7 @@ export function App() {
 
         <Dialog.Root open={isDrawingOpen} onOpenChange={setDrawingDialogOpen}>
           <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Overlay className="dialog-overlay canvas-dialog-overlay" />
             <Dialog.Content className="drawing-dialog">
               <Dialog.Title className="sr-only">Excalidraw 流程图</Dialog.Title>
               <Suspense
@@ -9480,7 +11173,10 @@ export function App() {
                           ...document.drawings,
                           [storedAsset.id]: storedAsset,
                         },
-                        title: renameFromMarkdown(nextContent, document.title),
+                        title:
+                          document.filePath
+                            ? getDocumentTitleFromFilePath(document.filePath)
+                            : renameFromMarkdown(nextContent, document.title),
                       });
                       if (!shouldUpdatePreview) {
                         const title = createExcalidrawImageTitle(
@@ -9846,6 +11542,87 @@ export function App() {
         </Dialog.Root>
 
         <Dialog.Root
+          open={isTableInsertDialogOpen}
+          onOpenChange={setIsTableInsertDialogOpen}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Content
+              className="table-insert-dialog"
+              onCloseAutoFocus={(event) => event.preventDefault()}
+            >
+              <div className="create-file-header">
+                <div className="create-file-heading">
+                  <span className="create-file-icon table-insert-icon">
+                    <Table2 size={18} />
+                  </span>
+                  <div>
+                    <Dialog.Title className="create-file-title">
+                      插入表格
+                    </Dialog.Title>
+                    <Dialog.Description>
+                      设置行数和列数，插入后可继续在表格工具栏调整。
+                    </Dialog.Description>
+                  </div>
+                </div>
+                <Dialog.Close asChild>
+                  <button className="icon-button" type="button" aria-label="关闭">
+                    <X size={16} />
+                  </button>
+                </Dialog.Close>
+              </div>
+              <form
+                className="table-insert-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  confirmTableInsert();
+                }}
+              >
+                <label>
+                  <span>行数</span>
+                  <input
+                    autoFocus
+                    aria-label="表格行数"
+                    inputMode="numeric"
+                    max={20}
+                    min={2}
+                    onChange={(event) => setTableInsertRows(event.target.value)}
+                    type="number"
+                    value={tableInsertRows}
+                  />
+                </label>
+                <span className="table-insert-times" aria-hidden="true">×</span>
+                <label>
+                  <span>列数</span>
+                  <input
+                    aria-label="表格列数"
+                    inputMode="numeric"
+                    max={20}
+                    min={1}
+                    onChange={(event) =>
+                      setTableInsertColumns(event.target.value)
+                    }
+                    type="number"
+                    value={tableInsertColumns}
+                  />
+                </label>
+                <div className="dialog-actions table-insert-actions">
+                  <Dialog.Close asChild>
+                    <button className="secondary-button" type="button">
+                      取消
+                    </button>
+                  </Dialog.Close>
+                  <button className="primary-button" type="submit">
+                    <Table2 size={16} />
+                    插入表格
+                  </button>
+                </div>
+              </form>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root
           open={Boolean(reactFlowEditorState)}
           onOpenChange={(open) => {
             if (!open) {
@@ -9854,7 +11631,7 @@ export function App() {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Overlay className="dialog-overlay canvas-dialog-overlay" />
             <Dialog.Content className="drawing-dialog react-flow-dialog">
               <Dialog.Title className="sr-only">React Flow 图</Dialog.Title>
               {reactFlowEditorState && (
@@ -9879,7 +11656,7 @@ export function App() {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Overlay className="dialog-overlay canvas-dialog-overlay" />
             <Dialog.Content className="drawing-dialog mindmap-dialog">
               <Dialog.Title className="sr-only">思维导图</Dialog.Title>
               {mindMapEditorState && (
@@ -9904,7 +11681,7 @@ export function App() {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Overlay className="dialog-overlay canvas-dialog-overlay" />
             <Dialog.Content className="drawing-dialog univer-sheet-dialog">
               <Dialog.Title className="sr-only">在线表格</Dialog.Title>
               {univerSheetEditorState && (
@@ -9957,7 +11734,7 @@ export function App() {
                   >
                     <div className="document-history-browser-heading">
                       <strong>最近文档</strong>
-                      <span>最近操作的 10 条</span>
+                      <span>最近编辑的 10 个文档</span>
                     </div>
                     <div className="document-history-browser-list">
                       {historyBrowserDocuments.map((document) => {
@@ -10066,6 +11843,7 @@ export function App() {
           }}
         >
           <Dialog.Portal>
+            <Dialog.Overlay className="document-image-preview-overlay" />
             <Dialog.Content className="document-image-preview-dialog">
               <Dialog.Title className="sr-only">
                 {documentImagePreview?.alt || "图片预览"}
@@ -10125,7 +11903,7 @@ export function App() {
 
         <Dialog.Root open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
           <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Overlay className="dialog-overlay settings-dialog-overlay" />
             <Dialog.Content className="settings-dialog settings-redesign">
               <div className="settings-redesign-shell">
                 <aside className="settings-redesign-sidebar">
@@ -10177,67 +11955,36 @@ export function App() {
                 </aside>
 
                 <section className="settings-redesign-main">
-                  {activeSettingsSection === "editor" ? (
-                    <section className="settings-redesign-card settings-redesign-reader">
-                      <div className="settings-redesign-density-card">
-                        <ToggleGroup.Root
-                          className="settings-redesign-density"
-                          type="single"
-                          value={settings.editorContentDensity}
-                          aria-label="阅读密度"
-                          onValueChange={(nextDensity) => {
-                            if (nextDensity) {
-                              updateSetting(
-                                "editorContentDensity",
-                                nextDensity as AppSettings["editorContentDensity"],
-                              );
-                            }
-                          }}
-                        >
-                          {editorContentDensityOptions.map((option) => (
-                            <ToggleGroup.Item
-                              className="settings-redesign-density-item"
-                              key={option.value}
-                              value={option.value}
-                              aria-label={option.label}
-                            >
-                              {option.label}
-                            </ToggleGroup.Item>
-                          ))}
-                        </ToggleGroup.Root>
-                      </div>
-
-                      <div
-                        className="settings-redesign-preview"
-                        aria-label="显示预览"
-                      >
-                        <div className="settings-redesign-card-heading">
-                          <h3>效果预览</h3>
-                        </div>
-                        <div
-                          className="settings-redesign-preview-page"
-                          style={settingsPreviewStyle}
-                        >
-                          <h4>项目笔记</h4>
-                          <p>正文、列表和表格会跟随当前阅读密度。</p>
-                          <ul>
-                            <li>快速记录 Markdown 笔记</li>
-                            <li>阅读本地文档</li>
-                          </ul>
-                          <blockquote>合适的字号和行距可以减少长时间阅读的疲劳。</blockquote>
-                        </div>
-                      </div>
-                    </section>
-                  ) : null}
-
-                  {activeSettingsSection === "home" ? (
+                  {activeSettingsSection === "app" ? (
                     <section className="settings-redesign-card settings-redesign-home">
                       <div className="settings-redesign-card-heading">
-                        <h3>首页</h3>
+                        <h3>通用</h3>
+                        <p>调整应用外观和首页模块，保持工作台干净顺手。</p>
                       </div>
                       <div className="settings-redesign-toggle-list">
+                        <label className="settings-redesign-toggle-row settings-redesign-select-row">
+                          <span className="settings-redesign-setting-copy">
+                            <strong>应用主题</strong>
+                            <small>影响应用外壳和文档阅读主题</small>
+                          </span>
+                          <select
+                            value={theme}
+                            onChange={(event) =>
+                              setTheme(event.currentTarget.value as AppTheme)
+                            }
+                          >
+                            {themeOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <label className="settings-redesign-toggle-row">
-                          <span>今日待办</span>
+                          <span className="settings-redesign-setting-copy">
+                            <strong>今日待办</strong>
+                            <small>在首页安排并查看当天任务</small>
+                          </span>
                           <span className="settings-redesign-switch">
                             <input
                               type="checkbox"
@@ -10253,7 +12000,10 @@ export function App() {
                           </span>
                         </label>
                         <label className="settings-redesign-toggle-row">
-                          <span>灵感便签</span>
+                          <span className="settings-redesign-setting-copy">
+                            <strong>灵感便签</strong>
+                            <small>在首页保留随手记录区域</small>
+                          </span>
                           <span className="settings-redesign-switch">
                             <input
                               type="checkbox"
@@ -10268,6 +12018,276 @@ export function App() {
                             <span />
                           </span>
                         </label>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {activeSettingsSection === "notes" ? (
+                    <section className="settings-redesign-card settings-redesign-reader">
+                      <div className="settings-redesign-density-card">
+                        <div className="settings-redesign-card-heading">
+                          <h3>笔记</h3>
+                          <p>阅读密度会统一控制字号、段落间距、行高和默认内容宽度。</p>
+                        </div>
+                        <div
+                          className="settings-comfort-slider"
+                          style={
+                            {
+                              "--settings-slider-progress": `${getSettingsSliderProgress(
+                                editorContentDensityIndex,
+                                editorContentDensityOptions.length,
+                              )}%`,
+                            } as CSSProperties
+                          }
+                        >
+                          <div className="settings-comfort-slider-head">
+                            <span>阅读密度</span>
+                            <strong>{selectedEditorContentDensity.label}</strong>
+                            <small>{selectedEditorContentDensity.meta}</small>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={editorContentDensityOptions.length - 1}
+                            step={1}
+                            value={editorContentDensityIndex}
+                            aria-label="阅读密度"
+                            onChange={(event) => {
+                              const nextOption =
+                                editorContentDensityOptions[
+                                  Number(event.currentTarget.value)
+                                ];
+
+                              if (nextOption) {
+                                updateSetting(
+                                  "editorContentDensity",
+                                  nextOption.value,
+                                );
+                              }
+                            }}
+                          />
+                          <div className="settings-comfort-slider-labels">
+                            {editorContentDensityOptions.map((option, index) => (
+                              <span
+                                className={
+                                  index === editorContentDensityIndex
+                                    ? "settings-comfort-slider-label-active"
+                                    : ""
+                                }
+                                key={option.value}
+                              >
+                                {option.label}
+                              </span>
+                            ))}
+                          </div>
+                          <p>{selectedEditorContentDensity.description}</p>
+                        </div>
+                        <div className="settings-redesign-control-grid">
+                          <label className="settings-redesign-field">
+                            <span>笔记字体</span>
+                            <select
+                              value={settings.editorFontFamily}
+                              onChange={(event) =>
+                                updateSetting("editorFontFamily", event.currentTarget.value)
+                              }
+                            >
+                              {editorFontOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="settings-redesign-field">
+                            <span>编辑模式</span>
+                            <select
+                              value={mode}
+                              onChange={(event) =>
+                                updateEditorMode(event.currentTarget.value as EditorMode)
+                              }
+                            >
+                              {editorModeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div
+                        className="settings-redesign-preview"
+                        aria-label="显示预览"
+                      >
+                        <div className="settings-redesign-card-heading">
+                          <h3>效果预览</h3>
+                        </div>
+                        <div
+                          className="settings-redesign-preview-page"
+                          style={settingsPreviewStyle}
+                        >
+                          <h4>项目笔记</h4>
+                          <p>正文、列表和表格会跟随当前阅读预设。</p>
+                          <ul>
+                            <li>快速记录 Markdown 笔记</li>
+                            <li>阅读本地文档</li>
+                          </ul>
+                          <blockquote>合适的字号和行距可以减少长时间阅读的疲劳。</blockquote>
+                        </div>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {activeSettingsSection === "code" ? (
+                    <section className="settings-redesign-card settings-redesign-home">
+                      <div className="settings-redesign-card-heading">
+                        <h3>代码</h3>
+                        <p>只保留代码字体，让代码块清晰但不打扰正文阅读。</p>
+                      </div>
+                      <div className="settings-redesign-control-grid settings-redesign-single-grid">
+                        <label className="settings-redesign-field">
+                          <span>代码字体</span>
+                          <select
+                            value={settings.editorCodeFontFamily}
+                            onChange={(event) =>
+                              updateSetting(
+                                "editorCodeFontFamily",
+                                event.currentTarget.value,
+                              )
+                            }
+                          >
+                            {editorCodeFontOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {activeSettingsSection === "diary" ? (
+                    <section className="settings-redesign-card settings-redesign-home">
+                      <div className="settings-redesign-card-heading">
+                        <h3>日记</h3>
+                        <p>日记可以单独调整书写节奏和字体，保留更轻松的记录感。</p>
+                      </div>
+                      <div className="settings-redesign-toggle-list">
+                        <label className="settings-redesign-toggle-row">
+                          <span className="settings-redesign-setting-copy">
+                            <strong>日记</strong>
+                            <small>在左侧栏启用日记工作区</small>
+                          </span>
+                          <span className="settings-redesign-switch">
+                            <input
+                              type="checkbox"
+                              checked={settings.homeShowDiaryPanel}
+                              onChange={(event) =>
+                                setDiaryFeatureEnabled(event.currentTarget.checked)
+                              }
+                            />
+                            <span />
+                          </span>
+                        </label>
+                        <div className="settings-redesign-field settings-redesign-home-template">
+                          <span>默认日记模板</span>
+                          <button
+                            className="settings-redesign-template-button"
+                            type="button"
+                            onClick={() => setIsDefaultDiaryTemplateDialogOpen(true)}
+                          >
+                            <BookOpenText size={14} />
+                            {selectedDiaryTemplateOption.label}
+                          </button>
+                        </div>
+                        <div className="settings-redesign-diary-comfort">
+                          <div className="settings-redesign-card-heading">
+                            <h3>书写节奏</h3>
+                            <p>同时调整日记字号和行高。</p>
+                          </div>
+                          <div
+                            className="settings-comfort-slider"
+                            style={
+                              {
+                                "--settings-slider-progress": `${getSettingsSliderProgress(
+                                  diaryComfortIndex,
+                                  diaryComfortOptions.length,
+                                )}%`,
+                              } as CSSProperties
+                            }
+                          >
+                            <div className="settings-comfort-slider-head">
+                              <span>书写节奏</span>
+                              <strong>{selectedDiaryComfort.label}</strong>
+                              <small>
+                                {selectedDiaryComfort.fontSize} /{" "}
+                                {selectedDiaryComfort.lineHeight}
+                              </small>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={diaryComfortOptions.length - 1}
+                              step={1}
+                              value={diaryComfortIndex}
+                              aria-label="日记书写节奏"
+                              onChange={(event) => {
+                                const nextOption =
+                                  diaryComfortOptions[
+                                    Number(event.currentTarget.value)
+                                  ];
+
+                                if (!nextOption) {
+                                  return;
+                                }
+
+                                setSettings((current) => ({
+                                  ...current,
+                                  diaryFontSize: nextOption.fontSize,
+                                  diaryLineHeight: nextOption.lineHeight,
+                                }));
+                              }}
+                            />
+                            <div className="settings-comfort-slider-labels">
+                              {diaryComfortOptions.map((option, index) => (
+                                <span
+                                  className={
+                                    index === diaryComfortIndex
+                                      ? "settings-comfort-slider-label-active"
+                                      : ""
+                                  }
+                                  key={option.value}
+                                >
+                                  {option.label}
+                                </span>
+                              ))}
+                            </div>
+                            <p>{selectedDiaryComfort.description}</p>
+                          </div>
+                        </div>
+                        <div className="settings-redesign-field-row settings-redesign-diary-typography">
+                          <label className="settings-redesign-field">
+                            <span>日记字体</span>
+                            <select
+                              value={settings.diaryFontFamily}
+                              onChange={(event) =>
+                                updateSetting(
+                                  "diaryFontFamily",
+                                  event.currentTarget
+                                    .value as AppSettings["diaryFontFamily"],
+                                )
+                              }
+                            >
+                              {diaryFontOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
                       </div>
                     </section>
                   ) : null}
@@ -10384,6 +12404,78 @@ export function App() {
                     </section>
                   ) : null}
                 </section>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root
+          open={isDefaultDiaryTemplateDialogOpen}
+          onOpenChange={setIsDefaultDiaryTemplateDialogOpen}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="dialog-overlay diary-template-dialog-overlay" />
+            <Dialog.Content className="diary-template-dialog">
+              <div className="diary-template-dialog-header">
+                <div>
+                  <Dialog.Title className="diary-template-dialog-title">
+                    选择默认日记模板
+                  </Dialog.Title>
+                  <Dialog.Description className="diary-template-dialog-description">
+                    新建日记时会使用这里选择的模板。
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    className="icon-button diary-template-dialog-close"
+                    type="button"
+                    aria-label="关闭模板选择"
+                  >
+                    <X size={16} />
+                  </button>
+                </Dialog.Close>
+              </div>
+              <div className="diary-template-grid">
+                {diaryTemplateOptions.map((option) => {
+                  const isActive =
+                    option.value === settings.diaryDefaultTemplate;
+
+                  return (
+                    <button
+                      className={[
+                        "diary-template-card",
+                        isActive ? "diary-template-card-active" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      key={option.value}
+                      type="button"
+                      aria-pressed={isActive}
+                      onClick={() => {
+                        updateSetting("diaryDefaultTemplate", option.value);
+                        setIsDefaultDiaryTemplateDialogOpen(false);
+                      }}
+                    >
+                      <span className="diary-template-card-head">
+                        <strong>{option.label}</strong>
+                        {isActive ? (
+                          <span
+                            className="diary-template-card-check"
+                            aria-hidden="true"
+                          >
+                            <Check size={13} />
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="diary-template-card-description">
+                        {option.description}
+                      </span>
+                      <span className="diary-template-card-preview">
+                        {option.preview}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </Dialog.Content>
           </Dialog.Portal>

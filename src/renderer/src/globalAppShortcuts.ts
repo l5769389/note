@@ -66,6 +66,23 @@ export function isEditorShortcutTarget(
   );
 }
 
+export function isTableShortcutTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  if (target.closest(".ProseMirror td, .ProseMirror th")) {
+    return true;
+  }
+
+  const selection = target.ownerDocument.getSelection();
+  const anchor = selection?.anchorNode;
+  const anchorElement =
+    anchor instanceof Element ? anchor : anchor?.parentElement ?? null;
+
+  return Boolean(anchorElement?.closest(".ProseMirror td, .ProseMirror th"));
+}
+
 export function selectContentScopeContents(scope: Element) {
   const ownerDocument = scope.ownerDocument;
   const selection = ownerDocument.getSelection();
@@ -166,6 +183,7 @@ export function useGlobalAppShortcuts({
       const action = getAppShortcutAction(event, {
         isEditorTarget: isEditorShortcutTarget(event.target, editorElement),
         isFullScreen: currentFullScreen,
+        isTableTarget: isTableShortcutTarget(event.target),
       });
 
       if (!action) {

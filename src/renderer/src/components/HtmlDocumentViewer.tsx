@@ -117,7 +117,7 @@ function createHtmlAnnotationRuntime() {
 .notedock-html-annotation[data-notedock-html-annotation-selected="true"]{background-color:rgba(37,99,235,.1);box-shadow:inset 0 -.28em rgba(37,99,235,.18)}
 .notedock-html-annotation-menu{position:fixed;z-index:2147483647;display:grid;width:228px;gap:2px;border:1px solid rgba(148,163,184,.38);border-radius:10px;background:rgba(255,255,255,.96);padding:6px;box-shadow:0 18px 44px rgba(15,23,42,.18);font:13px/1.25 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;backdrop-filter:blur(12px)}
 .notedock-html-annotation-menu button{display:grid;grid-template-columns:minmax(0,1fr) auto;width:100%;align-items:center;gap:10px;border:0;border-radius:7px;background:transparent;color:inherit;padding:8px 9px;text-align:left;font:inherit;cursor:pointer}
-.notedock-html-annotation-menu button:hover:not(:disabled),.notedock-html-annotation-menu button:focus-visible{background:#eef4ff;color:#174ea6;outline:0}
+.notedock-html-annotation-menu button:hover:not(:disabled),.notedock-html-annotation-menu button:focus-visible{background:#F1EDFF;color:#6254E8;outline:0}
 .notedock-html-annotation-menu button:disabled{cursor:not-allowed;opacity:.42}
 .notedock-html-annotation-menu kbd{color:#64748b;font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .notedock-html-annotation-menu-separator{height:1px;margin:3px 4px;background:#e2e8f0}

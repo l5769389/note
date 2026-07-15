@@ -25,6 +25,7 @@ import {
   type SyncStatusSnapshot,
 } from "../shared/sync";
 import { remoteSyncFeatureEnabled } from "../shared/featureFlags";
+import { tableClipboardMimeType } from "../shared/tableClipboard";
 import {
   getClipboardFormatMimeType,
   getMediaFileExtensionFromMimeType,
@@ -1118,8 +1119,12 @@ async function writeDocumentFileWithHistory(filePath: string, content: string) {
 
   if (documentType === "markdown") {
     const previousContent = await readCurrentDocumentContent(filePath);
+    const previousContentUpdatedAt = await stat(filePath)
+      .then((fileStats) => fileStats.mtime)
+      .catch(() => undefined);
 
     await maybeCreateDocumentHistoryVersion({
+      contentUpdatedAt: previousContentUpdatedAt,
       filePath,
       historyRootPath: getDocumentHistoryRootPath(),
       nextContent: content,
@@ -1890,6 +1895,7 @@ function buildMacApplicationMenuTemplate(
         }),
         createSeparator(),
         createAppMenuItem("表格", "paragraph:table", {
+          accelerator: "CommandOrControl+T",
           enabled: markdownEnabled,
         }),
         createAppMenuItem("公式块", "paragraph:math-block", {
@@ -2631,6 +2637,10 @@ function registerFileIpc() {
   });
 
   ipcMain.handle("clipboard:read-text", () => clipboard.readText());
+
+  ipcMain.handle("clipboard:read-table-payload", () => {
+    return clipboard.readBuffer(tableClipboardMimeType).toString("utf8");
+  });
 
   ipcMain.handle(
     "clipboard:write-rich-html",

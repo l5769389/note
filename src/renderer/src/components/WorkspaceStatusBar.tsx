@@ -8,8 +8,6 @@ import {
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
-  Settings,
-  X,
 } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import {
@@ -26,7 +24,7 @@ import type { SyncStatusSnapshot } from "../../../shared/sync";
 const autoSaveStatus = {
   failed: {
     icon: <AlertTriangle size={14} />,
-    label: "自动保存失败",
+    label: "保存失败",
     title: "自动保存失败，请检查文件权限或磁盘状态",
   },
   idle: {
@@ -41,7 +39,7 @@ const autoSaveStatus = {
   },
   saving: {
     icon: <RefreshCw size={14} />,
-    label: "自动保存中",
+    label: "保存中",
     title: "正在保存当前修改",
   },
 } satisfies Record<SaveState, { icon: ReactNode; label: string; title: string }>;
@@ -54,9 +52,7 @@ type WorkspaceStatusBarProps = {
   saveState: SaveState;
   syncStatus?: SyncStatusSnapshot;
   wordCount: number;
-  onCloseDocument?: () => void;
   onConfigureSync?: () => void;
-  onOpenSettings?: () => void;
   onOpenSyncMenu?: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onSyncNow?: () => void;
   onToggleInspector?: () => void;
@@ -65,23 +61,23 @@ type WorkspaceStatusBarProps = {
 
 function getDocumentStatusLabel(document: MarkdownDocument | null, wordCount: number) {
   if (isHtmlDocument(document)) {
-    return "HTML preview";
+    return "HTML 阅读";
   }
 
   if (isPdfDocument(document)) {
-    return "PDF preview";
+    return "PDF 阅读";
   }
 
   if (isWordDocument(document)) {
-    return "Word preview";
+    return "Word 阅读";
   }
 
   if (isExcelDocument(document)) {
-    return "Excel preview";
+    return "Excel 阅读";
   }
 
   if (isSheetDocument(document)) {
-    return "Sheet";
+    return "表格";
   }
 
   if (isDrawingDocument(document)) {
@@ -144,9 +140,7 @@ export function WorkspaceStatusBar({
   saveState,
   syncStatus,
   wordCount,
-  onCloseDocument,
   onConfigureSync,
-  onOpenSettings,
   onOpenSyncMenu,
   onSyncNow,
   onToggleInspector,
@@ -164,7 +158,7 @@ export function WorkspaceStatusBar({
     (isSyncConfigured || syncState !== "idle");
   const canUseSyncStatus =
     syncState === "disabled"
-      ? Boolean(onConfigureSync ?? onOpenSettings)
+      ? Boolean(onConfigureSync)
       : Boolean(onOpenSyncMenu ?? onSyncNow) &&
         syncState !== "pending" &&
         syncState !== "syncing";
@@ -174,7 +168,7 @@ export function WorkspaceStatusBar({
 
   function handleSyncStatusClick(event: ReactMouseEvent<HTMLButtonElement>) {
     if (syncState === "disabled") {
-      (onConfigureSync ?? onOpenSettings)?.();
+      onConfigureSync?.();
       return;
     }
 
@@ -195,19 +189,11 @@ export function WorkspaceStatusBar({
         onClick={onToggleSidebar}
       >
         {isSidebarHidden ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
+        <span className="workspace-status-button-label">
+          {isSidebarHidden ? "展开侧栏" : "折叠侧栏"}
+        </span>
       </button>
       <span className="workspace-status-spacer" />
-      {onOpenSettings ? (
-        <button
-          className="workspace-settings-button"
-          type="button"
-          title="打开设置"
-          aria-label="打开设置"
-          onClick={onOpenSettings}
-        >
-          <Settings size={15} />
-        </button>
-      ) : null}
       {shouldShowSyncStatus ? (
         <button
           className={[
@@ -222,38 +208,6 @@ export function WorkspaceStatusBar({
         >
           {syncDisplay.icon}
           {syncDisplay.label}
-        </button>
-      ) : null}
-      {shouldShowDocumentStatus && onCloseDocument ? (
-        <button
-          className="workspace-close-document-button"
-          type="button"
-          title="关闭当前文档"
-          aria-label="关闭当前文档"
-          onClick={onCloseDocument}
-        >
-          <X size={14} />
-        </button>
-      ) : null}
-      {shouldShowDocumentStatus && onToggleInspector ? (
-        <button
-          className={[
-            "workspace-inspector-button",
-            isInspectorOpen ? "workspace-inspector-button-active" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          type="button"
-          title={inspectorTitle}
-          aria-label={inspectorTitle}
-          aria-pressed={isInspectorOpen}
-          onClick={onToggleInspector}
-        >
-          {isInspectorOpen ? (
-            <PanelRightClose size={15} />
-          ) : (
-            <PanelRightOpen size={15} />
-          )}
         </button>
       ) : null}
       {shouldShowDocumentStatus && missingAssetReferences.length > 0 && (
@@ -279,6 +233,30 @@ export function WorkspaceStatusBar({
             {getDocumentStatusLabel(activeDocument, wordCount)}
           </span>
         </>
+      ) : null}
+      {shouldShowDocumentStatus && onToggleInspector ? (
+        <button
+          className={[
+            "workspace-inspector-button",
+            isInspectorOpen ? "workspace-inspector-button-active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          type="button"
+          title={inspectorTitle}
+          aria-label={inspectorTitle}
+          aria-pressed={isInspectorOpen}
+          onClick={onToggleInspector}
+        >
+          {isInspectorOpen ? (
+            <PanelRightClose size={15} />
+          ) : (
+            <PanelRightOpen size={15} />
+          )}
+          <span className="workspace-status-button-label">
+            {isInspectorOpen ? "隐藏右栏" : "显示右栏"}
+          </span>
+        </button>
       ) : null}
     </footer>
   );

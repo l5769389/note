@@ -144,7 +144,35 @@ export function getDocumentFileExtension(document: MarkdownDocument) {
   );
 }
 
+export function getFileNameFromPath(filePath?: string) {
+  const normalizedPath = filePath?.trim().replace(/\\/g, "/");
+  const fileName = normalizedPath?.split("/").pop()?.trim();
+
+  return fileName || undefined;
+}
+
+export function getDocumentTitleFromFilePath(filePath?: string) {
+  const fileName = getFileNameFromPath(filePath);
+  const extension = getFileExtension(fileName);
+
+  if (!fileName) {
+    return undefined;
+  }
+
+  return extension && fileName.length > extension.length
+    ? fileName.slice(0, -extension.length)
+    : fileName;
+}
+
 export function getDocumentDisplayName(document: MarkdownDocument) {
+  // A local file's path is the source of truth. Its first Markdown heading is
+  // document content, not a request to rename the file in navigation surfaces.
+  const fileName = getFileNameFromPath(document.filePath);
+
+  if (fileName) {
+    return fileName;
+  }
+
   const extension = getDocumentFileExtension(document);
   const title = document.title || "Untitled";
 

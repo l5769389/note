@@ -54,6 +54,7 @@ export type DocumentHistoryVersionReason = "auto" | "manual" | "restore";
 export type DocumentHistoryVersion = {
   byteSize: number;
   contentHash: string;
+  contentUpdatedAt?: string;
   createdAt: string;
   filePath: string;
   id: string;

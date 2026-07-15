@@ -4,6 +4,7 @@ import {
   getExcalidrawDrawingId,
   getExcalidrawSceneReference,
   getDefaultImageFitMode,
+  getImageResizeStartWidth,
   parseImageMeta,
   patchExcalidrawSceneReference,
   patchImageMetaTitle,
@@ -11,6 +12,12 @@ import {
 } from "../imageMeta";
 
 describe("image metadata helpers", () => {
+  it("uses the current rendered width as the next resize baseline", () => {
+    expect(getImageResizeStartWidth(438.4, 640)).toBe(438);
+    expect(getImageResizeStartWidth(null, 640)).toBe(640);
+    expect(getImageResizeStartWidth(undefined, undefined)).toBe(120);
+  });
+
   it("keeps auto images contained by default", () => {
     expect(getDefaultImageFitMode(2400, 800)).toBe("contain");
     expect(getDefaultImageFitMode(480, 1200)).toBe("contain");

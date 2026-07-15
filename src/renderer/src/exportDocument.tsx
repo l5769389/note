@@ -30,7 +30,7 @@ const exportStyles = `
   body {
     margin: 0;
     background:
-      radial-gradient(circle at top right, rgba(99, 102, 241, 0.08), transparent 34%),
+      radial-gradient(circle at top right, rgba(67, 169, 107, 0.08), transparent 34%),
       #f4f6fb;
   }
 
@@ -118,7 +118,7 @@ const exportStyles = `
   }
 
   .markdown-export-document a {
-    color: #4f46e5;
+    color: #6254E8;
     text-decoration: none;
   }
 
@@ -157,7 +157,7 @@ const exportStyles = `
     width: 1.05em;
     height: 1.05em;
     margin: 0 0.55em 0 -1.55em;
-    accent-color: #6254e8;
+    accent-color: #6254E8;
     vertical-align: -0.16em;
   }
 

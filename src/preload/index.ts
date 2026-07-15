@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld("desktop", {
   readClipboardImage: () => ipcRenderer.invoke("clipboard:read-image"),
   readClipboardMediaFiles: () => ipcRenderer.invoke("clipboard:read-media-files"),
   readClipboardText: () => ipcRenderer.invoke("clipboard:read-text"),
+  readClipboardTablePayload: () =>
+    ipcRenderer.invoke("clipboard:read-table-payload"),
   writeRichHtmlToClipboard: (payload: { html?: string; text?: string }) =>
     ipcRenderer.invoke("clipboard:write-rich-html", payload),
   writeImageFileToClipboard: (filePath: string) =>

@@ -108,6 +108,19 @@ function getStoredFileExtension(filePath?: string) {
   return filePath?.match(/\.([^.\\/]+)$/)?.[0]?.toLowerCase();
 }
 
+function getStoredTitleFromFilePath(filePath?: string) {
+  const fileName = filePath?.trim().replace(/\\/g, "/").split("/").pop()?.trim();
+  const extension = getStoredFileExtension(fileName);
+
+  if (!fileName) {
+    return undefined;
+  }
+
+  return extension && fileName.length > extension.length
+    ? fileName.slice(0, -extension.length)
+    : fileName;
+}
+
 function getBrowserStorage() {
   return typeof window === "undefined" ? undefined : window.localStorage;
 }
@@ -200,6 +213,7 @@ function normalizeStoredMetadata(value: unknown): DocumentMetadata {
 
 function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
   const documentType = document.documentType ?? getStoredDocumentType(document.filePath);
+  const fileTitle = getStoredTitleFromFilePath(document.filePath);
 
   return {
     ...document,
@@ -227,6 +241,7 @@ function normalizeStoredDocument(document: MarkdownDocument): MarkdownDocument {
         ? document.lastOpenedAt
         : undefined,
     metadata: normalizeStoredMetadata(document.metadata),
+    title: fileTitle ?? document.title,
   };
 }
 

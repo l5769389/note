@@ -218,6 +218,8 @@ describe("getAppShortcutAction", () => {
     ["Alt+ArrowUp", { altKey: true, key: "ArrowUp" }, { action: { command: "moveLineUp", type: "edit" }, type: "editor" }],
     ["Alt+ArrowDown", { altKey: true, key: "ArrowDown" }, { action: { command: "moveLineDown", type: "edit" }, type: "editor" }],
     ["Ctrl+Alt+L", { altKey: true, ctrlKey: true, key: "l" }, { action: { type: "insertDocumentReference" }, type: "editor" }],
+    ["Ctrl+T", { ctrlKey: true, key: "t" }, { action: { type: "insertTable" }, type: "editor" }],
+    ["Meta+T", { metaKey: true, key: "t" }, { action: { type: "insertTable" }, type: "editor" }],
     ["Tab", { key: "Tab" }, { action: { command: { type: "indentList" }, type: "paragraph" }, type: "editor" }],
     ["Shift+Tab", { key: "Tab", shiftKey: true }, { action: { command: { type: "outdentList" }, type: "paragraph" }, type: "editor" }],
     ["Ctrl+1", { ctrlKey: true, key: "1" }, { action: { command: { level: 1, type: "heading" }, type: "paragraph" }, type: "editor" }],
@@ -235,6 +237,21 @@ describe("getAppShortcutAction", () => {
     expect(
       getAppShortcutAction(shortcut(event), { isEditorTarget: true }),
     ).toEqual(action);
+  });
+
+  it("leaves Tab and Shift+Tab to the table editor", () => {
+    expect(
+      getAppShortcutAction(shortcut({ key: "Tab" }), {
+        isEditorTarget: true,
+        isTableTarget: true,
+      }),
+    ).toBeNull();
+    expect(
+      getAppShortcutAction(shortcut({ key: "Tab", shiftKey: true }), {
+        isEditorTarget: true,
+        isTableTarget: true,
+      }),
+    ).toBeNull();
   });
 
   it.each([

@@ -59,6 +59,17 @@ describe("document model helpers", () => {
     ).toBe("budget.xlsx");
   });
 
+  it("uses the file name for path-backed documents instead of their Markdown heading", () => {
+    expect(
+      getDocumentDisplayName(
+        document({
+          filePath: "/notes/a.md",
+          title: "b",
+        }),
+      ),
+    ).toBe("a.md");
+  });
+
   it("merges opened files by path while preserving the existing document id", () => {
     const existing = document({
       content: "old",
@@ -79,4 +90,3 @@ describe("document model helpers", () => {
     ]);
   });
 });
-

@@ -104,8 +104,8 @@ export function ImageToolbar({
         <button
           className="milkdown-image-toolbar-button"
           type="button"
-          title="Edit Excalidraw"
-          aria-label="Edit Excalidraw"
+          aria-label="编辑绘图"
+          data-tooltip="编辑绘图"
           onClick={() => onEditDrawing(state.drawingId!)}
         >
           <Pencil size={15} />
@@ -121,8 +121,8 @@ export function ImageToolbar({
             }
             key={action.align}
             type="button"
-            title={action.label}
             aria-label={action.label}
+            data-tooltip={action.label}
             onClick={() => onSetAlign(state.pos, action.align)}
           >
             {action.icon}
@@ -143,8 +143,8 @@ export function ImageToolbar({
       <button
         className="milkdown-image-toolbar-button"
         type="button"
-        title="恢复自适应宽度"
         aria-label="恢复自适应宽度"
+        data-tooltip="恢复自适应宽度"
         onClick={() => onResetWidth(state.pos)}
       >
         <Maximize2 size={15} />

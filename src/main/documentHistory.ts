@@ -7,6 +7,7 @@ export type DocumentHistoryVersionReason = "auto" | "manual" | "restore";
 export type DocumentHistoryVersion = {
   byteSize: number;
   contentHash: string;
+  contentUpdatedAt?: string;
   createdAt: string;
   filePath: string;
   id: string;
@@ -22,7 +23,9 @@ export type DocumentHistoryVersionWithContent = DocumentHistoryVersion & {
 };
 
 const markdownHistoryExtensions = new Set([".md", ".markdown", ".mdown"]);
-const documentHistoryMinIntervalMs = 5 * 60 * 1000;
+// Autosave can write often while the user is typing. Keep a recoverable
+// checkpoint at a useful cadence without turning every keystroke into a file.
+const documentHistoryAutoCheckpointIntervalMs = 60 * 1000;
 const documentHistoryMaxVersions = 80;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -113,6 +116,8 @@ function normalizeHistoryMetadata(value: unknown): DocumentHistoryVersion | null
   return {
     byteSize: value.byteSize,
     contentHash: value.contentHash,
+    contentUpdatedAt:
+      typeof value.contentUpdatedAt === "string" ? value.contentUpdatedAt : undefined,
     createdAt: value.createdAt,
     filePath: value.filePath,
     id: value.id,
@@ -233,12 +238,14 @@ async function pruneDocumentHistoryVersions({
 
 export async function createDocumentHistoryVersion({
   content,
+  contentUpdatedAt,
   filePath,
   historyRootPath,
   now = new Date(),
   reason = "manual",
 }: {
   content: string;
+  contentUpdatedAt?: Date;
   filePath: string;
   historyRootPath: string;
   now?: Date;
@@ -260,6 +267,10 @@ export async function createDocumentHistoryVersion({
   const metadata = {
     byteSize: Buffer.byteLength(content, "utf-8"),
     contentHash,
+    contentUpdatedAt:
+      contentUpdatedAt && !Number.isNaN(contentUpdatedAt.getTime())
+        ? contentUpdatedAt.toISOString()
+        : undefined,
     createdAt,
     filePath: resolve(filePath),
     id,
@@ -286,11 +297,13 @@ export async function createDocumentHistoryVersion({
 }
 
 export async function maybeCreateDocumentHistoryVersion({
+  contentUpdatedAt,
   filePath,
   historyRootPath,
   nextContent,
   previousContent,
 }: {
+  contentUpdatedAt?: Date;
   filePath: string;
   historyRootPath: string;
   nextContent: string;
@@ -316,11 +329,12 @@ export async function maybeCreateDocumentHistoryVersion({
   const isPastMinimumInterval =
     !latestCreatedAt ||
     Number.isNaN(latestCreatedAt) ||
-    Date.now() - latestCreatedAt >= documentHistoryMinIntervalMs;
+    Date.now() - latestCreatedAt >= documentHistoryAutoCheckpointIntervalMs;
 
   if (!latestVersion || isPastMinimumInterval) {
     return createDocumentHistoryVersion({
       content: previousContent,
+      contentUpdatedAt,
       filePath,
       historyRootPath,
       reason: "auto",

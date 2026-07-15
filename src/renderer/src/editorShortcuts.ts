@@ -10,7 +10,8 @@ export type EditorShortcutAction =
   | { command: TyporaFormatCommand; type: "format" }
   | { command: TyporaParagraphCommand; type: "paragraph" }
   | { type: "createLink" }
-  | { type: "insertDocumentReference" };
+  | { type: "insertDocumentReference" }
+  | { type: "insertTable" };
 
 export type EditorShortcutEvent = Pick<
   KeyboardEvent,
@@ -28,6 +29,7 @@ export type AppShortcutAction =
 export type AppShortcutContext = {
   isEditorTarget?: boolean;
   isFullScreen?: boolean;
+  isTableTarget?: boolean;
 };
 
 export type SelectAllShortcutScope = "blocked" | "content" | "input";
@@ -272,6 +274,14 @@ export function getAppShortcutAction(
     return { action: { type: "insertDocumentReference" }, type: "editor" };
   }
 
+  if (
+    context.isEditorTarget &&
+    hasOnlyAppModifier(event) &&
+    key === "t"
+  ) {
+    return { action: { type: "insertTable" }, type: "editor" };
+  }
+
   if (hasOnlyAppModifier(event, true)) {
     const digit = getShortcutDigit(event);
 
@@ -350,6 +360,7 @@ export function getAppShortcutAction(
 
   if (
     context.isEditorTarget &&
+    !context.isTableTarget &&
     event.key === "Tab" &&
     !event.ctrlKey &&
     !event.metaKey &&

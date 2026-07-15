@@ -8,6 +8,7 @@ import { prism, prismConfig } from "@milkdown/plugin-prism";
 import {
   findTable,
   isInTable,
+  TableMap,
 } from "@milkdown/kit/prose/tables";
 import type { Node as ProseMirrorNode } from "@milkdown/kit/prose/model";
 import { lift, setBlockType, toggleMark, wrapIn } from "@milkdown/kit/prose/commands";
@@ -23,7 +24,18 @@ import {
 } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { commonmark, htmlSchema } from "@milkdown/kit/preset/commonmark";
-import { gfm } from "@milkdown/kit/preset/gfm";
+import {
+  autoInsertSpanPlugin,
+  commands as gfmCommands,
+  createTable,
+  inputRules as gfmInputRules,
+  keymap as gfmKeymap,
+  markInputRules as gfmMarkInputRules,
+  pasteRules as gfmPasteRules,
+  remarkGFMPlugin,
+  schema as gfmSchema,
+  tableEditingPlugin,
+} from "@milkdown/kit/preset/gfm";
 import { $prose, insert, replaceAll } from "@milkdown/kit/utils";
 import { Milkdown, MilkdownProvider, useEditor } from "@milkdown/react";
 import "@milkdown/kit/prose/gapcursor/style/gapcursor.css";
@@ -75,6 +87,7 @@ import {
   findVisibleSearchRange,
 } from "../editorSearch";
 import { createMarkdownImageToken } from "../markdownImages";
+import { createMarkdownTable } from "../markdownCommands";
 import {
   isSelectAllShortcut,
   selectEntireDocument,
@@ -129,6 +142,7 @@ import {
   getDefaultImageFitMode,
   getExcalidrawDrawingId,
   getExcalidrawSceneReference,
+  getImageResizeStartWidth,
   minImageWidth,
   parseImageMeta,
   patchExcalidrawSceneReference,
@@ -140,6 +154,7 @@ import {
   getMarkdownAlertByMarker,
   getMarkdownAlertByPrefix,
 } from "../markdownAlerts";
+import { normalizeMarkdownHtmlBreaks } from "../markdownBreaks";
 import { resolveDocumentResourceUrl } from "../localPreviewUrls";
 import {
   createTableOfContentsMarkdown,
@@ -158,8 +173,36 @@ import {
 } from "../documentReferenceNode";
 import {
   collectClipboardImageTokens,
+  getSingleClipboardImageToken,
   writeMarkdownRichClipboard,
 } from "../richClipboard";
+import {
+  parseTableClipboardPayload,
+  serializeTableClipboardPayload,
+  tableClipboardMimeType,
+  tableClipboardPayloadToText,
+  type TableClipboardPayload,
+} from "../../../shared/tableClipboard";
+import {
+  createTableKeyboardBehavior,
+  getTableClipboardCopyData,
+  pasteTableClipboardPayloadIntoView,
+} from "./tableEditing";
+
+// Milkdown's default keepTableAlignPlugin forces every body cell to inherit
+// its header column alignment. noteDock supports explicit cell/range alignment,
+// so compose GFM without that one normalizer.
+const noteDockGfm = [
+  gfmSchema,
+  gfmInputRules,
+  gfmPasteRules,
+  gfmMarkInputRules,
+  gfmKeymap,
+  gfmCommands,
+  autoInsertSpanPlugin,
+  remarkGFMPlugin,
+  tableEditingPlugin,
+].flat();
 
 export type {
   ImageAlignment,
@@ -282,11 +325,15 @@ export type TyporaEditorHandle = {
   clearSearchHighlight: () => void;
   deleteContextDocumentReference: () => void;
   deleteSelectedImage: () => boolean;
+  focusEditor: () => void;
   focusAtClientPoint: (clientX: number, clientY: number) => void;
   getSelectedImageClipboardData: () => TyporaClipboardImage | null;
+  getTableClipboardData: () => ReturnType<typeof getTableClipboardCopyData>;
   insertDocumentReference: (target: string, display?: string) => void;
   insertImage: (image: TyporaImageInsert) => void;
   insertMarkdown: (markdown: string) => void;
+  insertTable: (size: TableSize) => boolean;
+  pasteTableClipboardPayload: (payload: TableClipboardPayload) => boolean;
   rememberDocumentReferenceInsertionPoint: () => void;
   prepareContextMenuTarget: (
     clientX: number,
@@ -1638,6 +1685,70 @@ function focusDocumentEnd(view: EditorView, scrollIntoView = true) {
 
   view.dispatch(scrollIntoView ? transaction.scrollIntoView() : transaction);
   view.focus();
+}
+
+type EditorViewportSnapshot = {
+  from: number;
+  hadFocus: boolean;
+  scrollLeft: number;
+  scrollTop: number;
+  to: number;
+};
+
+function captureEditorViewport(
+  view: EditorView,
+  root?: HTMLElement | null,
+): EditorViewportSnapshot {
+  const { selection } = view.state;
+
+  return {
+    from: selection.from,
+    hadFocus: view.hasFocus(),
+    scrollLeft: root?.scrollLeft ?? 0,
+    scrollTop: root?.scrollTop ?? 0,
+    to: selection.to,
+  };
+}
+
+function restoreEditorViewport(
+  view: EditorView,
+  root: HTMLElement | null | undefined,
+  snapshot: EditorViewportSnapshot,
+) {
+  const docSize = view.state.doc.content.size;
+  const from = Math.min(snapshot.from, docSize);
+  const to = Math.min(Math.max(snapshot.to, from), docSize);
+
+  try {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)),
+    );
+  } catch {
+    try {
+      view.dispatch(
+        view.state.tr.setSelection(
+          Selection.near(view.state.doc.resolve(from), 1),
+        ),
+      );
+    } catch {
+      // Keep the new document content even if the previous selection cannot map.
+    }
+  }
+
+  if (root) {
+    root.scrollTop = snapshot.scrollTop;
+    root.scrollLeft = snapshot.scrollLeft;
+  }
+
+  if (snapshot.hadFocus) {
+    view.focus();
+    if (root) {
+      root.scrollTop = snapshot.scrollTop;
+      root.scrollLeft = snapshot.scrollLeft;
+    }
+  } else {
+    view.dom.blur();
+  }
 }
 
 function isNonEditorControl(target: EventTarget | null) {
@@ -3419,6 +3530,7 @@ function VideoResizeHandle({
   return (
     <div
       className="milkdown-video-resize-handle"
+      data-tooltip="拖动调整视频尺寸"
       role="presentation"
       style={{
         left: state.videoLeft + state.videoWidth + 2,
@@ -3961,14 +4073,41 @@ function getSelectedImageClipboardDataFromView(
   const selectedNode = (selection as unknown as {
     node?: ProseMirrorNode;
   }).node;
+  let imageNode =
+    selection instanceof NodeSelection && selectedNode?.type.name === "image"
+      ? selectedNode
+      : null;
 
-  if (!(selection instanceof NodeSelection) || selectedNode?.type.name !== "image") {
+  if (!imageNode && !selection.empty) {
+    let hasOtherContent = false;
+
+    view.state.doc.nodesBetween(selection.from, selection.to, (node) => {
+      if (node.type.name === "image") {
+        if (imageNode) {
+          hasOtherContent = true;
+        } else {
+          imageNode = node;
+        }
+        return;
+      }
+
+      if (node.isText && node.text?.trim()) {
+        hasOtherContent = true;
+      }
+    });
+
+    if (hasOtherContent) {
+      imageNode = null;
+    }
+  }
+
+  if (!imageNode) {
     return null;
   }
 
   const source =
-    typeof selectedNode.attrs.src === "string"
-      ? selectedNode.attrs.src.trim()
+    typeof imageNode.attrs.src === "string"
+      ? imageNode.attrs.src.trim()
       : "";
 
   if (!source) {
@@ -3976,10 +4115,10 @@ function getSelectedImageClipboardDataFromView(
   }
 
   const alt =
-    typeof selectedNode.attrs.alt === "string" ? selectedNode.attrs.alt : "";
+    typeof imageNode.attrs.alt === "string" ? imageNode.attrs.alt : "";
   const title =
-    typeof selectedNode.attrs.title === "string"
-      ? selectedNode.attrs.title
+    typeof imageNode.attrs.title === "string"
+      ? imageNode.attrs.title
       : undefined;
 
   return {
@@ -3992,11 +4131,8 @@ function getSelectedImageClipboardDataFromView(
 
 function deleteSelectedImageFromView(view: EditorView) {
   const selection = view.state.selection;
-  const selectedNode = (selection as unknown as {
-    node?: ProseMirrorNode;
-  }).node;
 
-  if (!(selection instanceof NodeSelection) || selectedNode?.type.name !== "image") {
+  if (!getSelectedImageClipboardDataFromView(view)) {
     return false;
   }
 
@@ -4042,6 +4178,47 @@ async function writeTyporaImageClipboardData({
   }
 }
 
+function getSingleDomSelectionImage(
+  selection: Exclude<ReturnType<typeof window.getSelection>, null>,
+  root: HTMLElement,
+): TyporaClipboardImage | null {
+  if (selection.rangeCount !== 1) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  const media = Array.from(root.querySelectorAll("img, video")).filter((element) => {
+    try {
+      return range.intersectsNode(element);
+    } catch {
+      return false;
+    }
+  });
+  const image = media.length === 1 && media[0] instanceof HTMLImageElement
+    ? media[0]
+    : null;
+
+  if (!image || selection.toString().trim()) {
+    return null;
+  }
+
+  const source = image.currentSrc || image.getAttribute("src") || "";
+
+  if (!source || !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) {
+    return null;
+  }
+
+  const alt = image.alt || "图片";
+  const title = image.getAttribute("title") || undefined;
+
+  return {
+    alt,
+    markdown: createMarkdownImageToken({ alt, source, title }),
+    source,
+    title,
+  };
+}
+
 type MilkdownRuntimeProps = TyporaEditorProps & {
   controllerRef: MutableRefObject<TyporaEditorHandle | null>;
   markdownRef: MutableRefObject<string>;
@@ -4065,6 +4242,7 @@ function MilkdownRuntime({
   value,
   valueRef,
 }: MilkdownRuntimeProps) {
+  const normalizedValue = normalizeMarkdownHtmlBreaks(value);
   const applyingExternalValueRef = useRef(false);
   const pendingLocalMarkdownRef = useRef<string | null>(null);
   const filePathRef = useRef(filePath);
@@ -4087,6 +4265,7 @@ function MilkdownRuntime({
   const [tableToolbar, setTableToolbar] = useState<TableToolbarState>({
     visible: false,
   });
+  const tableSelectionRef = useRef<Selection | null>(null);
   const [videoToolbar, setVideoToolbar] = useState<VideoToolbarState>({
     visible: false,
   });
@@ -4856,6 +5035,8 @@ function MilkdownRuntime({
       return;
     }
 
+    tableSelectionRef.current = view.state.selection;
+
     const overlay = getOverlayContainer(root);
     const rootRect = root.getBoundingClientRect();
     const overlayRect = overlay.getBoundingClientRect();
@@ -5460,15 +5641,19 @@ function MilkdownRuntime({
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     const imageElement = getImageElementForResize(state);
+    const startWidth = getImageResizeStartWidth(
+      imageElement?.getBoundingClientRect().width,
+      state.width ?? state.displayWidth,
+    );
 
     imageResizeRef.current = {
-      currentWidth: clampImageWidth(state.displayWidth),
+      currentWidth: startWidth,
       imageElement,
       isCompact:
         imageElement?.classList.contains("typora-editable-image-fit-compact") ??
         false,
       pos: state.pos,
-      startWidth: clampImageWidth(state.displayWidth),
+      startWidth,
       startX: event.clientX,
       pendingWidth: null,
       frameId: null,
@@ -5658,7 +5843,18 @@ function MilkdownRuntime({
 
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
+      const savedSelection = tableSelectionRef.current;
+
+      if (
+        savedSelection &&
+        savedSelection.$from.doc === view.state.doc &&
+        !view.state.selection.eq(savedSelection)
+      ) {
+        view.dispatch(view.state.tr.setSelection(savedSelection));
+      }
+
       command(view.state, view.dispatch.bind(view), view);
+      tableSelectionRef.current = view.state.selection;
       view.focus();
       requestAnimationFrame(() => updateTableToolbarFromView(view));
     });
@@ -5716,11 +5912,13 @@ function MilkdownRuntime({
         ctx
           .get(listenerCtx)
           .markdownUpdated((_, markdown) => {
-            markdownRef.current = markdown;
+            const nextMarkdown = normalizeMarkdownHtmlBreaks(markdown);
+
+            markdownRef.current = nextMarkdown;
 
             if (!applyingExternalValueRef.current) {
-              pendingLocalMarkdownRef.current = markdown;
-              onChangeRef.current(markdown);
+              pendingLocalMarkdownRef.current = nextMarkdown;
+              onChangeRef.current(nextMarkdown);
             }
           })
           .mounted((mountedCtx) => {
@@ -5752,7 +5950,8 @@ function MilkdownRuntime({
       .use(history)
       .use(trailing)
       .use(clipboard)
-      .use(gfm)
+      .use(createTableKeyboardBehavior())
+      .use(noteDockGfm)
       .use(documentReferencePlugins)
       .use(math)
       .use(prism)
@@ -5905,7 +6104,7 @@ function MilkdownRuntime({
       return;
     }
 
-    if (value === markdownRef.current) {
+    if (normalizedValue === markdownRef.current) {
       pendingLocalMarkdownRef.current = null;
 
       if (isDifferentDocument) {
@@ -5913,7 +6112,7 @@ function MilkdownRuntime({
           const view = ctx.get(editorViewCtx);
 
           requestAnimationFrame(() => {
-            if (isBlankMarkdown(value)) {
+            if (isBlankMarkdown(normalizedValue)) {
               focusDocumentStart(view, false);
             } else {
               view.dom.blur();
@@ -5933,26 +6132,36 @@ function MilkdownRuntime({
 
     applyingExternalValueRef.current = true;
     pendingLocalMarkdownRef.current = null;
-    markdownRef.current = value;
+    markdownRef.current = normalizedValue;
     editor.action((ctx) => {
-      replaceAll(value)(ctx);
+      const view = ctx.get(editorViewCtx);
+      const viewportSnapshot = isDifferentDocument
+        ? null
+        : captureEditorViewport(view, rootRef.current);
+
+      replaceAll(normalizedValue)(ctx);
 
       if (isDifferentDocument) {
-        const view = ctx.get(editorViewCtx);
-
         requestAnimationFrame(() => {
-          if (isBlankMarkdown(value)) {
+          if (isBlankMarkdown(normalizedValue)) {
             focusDocumentStart(view, false);
           } else {
             view.dom.blur();
           }
+        });
+        return;
+      }
+
+      if (viewportSnapshot) {
+        requestAnimationFrame(() => {
+          restoreEditorViewport(view, rootRef.current, viewportSnapshot);
         });
       }
     });
     queueMicrotask(() => {
       applyingExternalValueRef.current = false;
     });
-  }, [documentId, get, loading, markdownRef, value]);
+  }, [documentId, get, loading, markdownRef, normalizedValue]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -6033,6 +6242,17 @@ function MilkdownRuntime({
           view.dispatch(transaction);
         });
       },
+      focusEditor() {
+        const editor = get();
+
+        if (!editor) {
+          return;
+        }
+
+        editor.action((ctx) => {
+          ctx.get(editorViewCtx).focus();
+        });
+      },
       focusAtClientPoint(clientX: number, clientY: number) {
         const editor = get();
 
@@ -6079,6 +6299,20 @@ function MilkdownRuntime({
         });
 
         return imageData;
+      },
+      getTableClipboardData() {
+        const editor = get();
+        let copyData: ReturnType<typeof getTableClipboardCopyData> = null;
+
+        if (!editor) {
+          return null;
+        }
+
+        editor.action((ctx) => {
+          copyData = getTableClipboardCopyData(ctx.get(editorViewCtx).state);
+        });
+
+        return copyData;
       },
       deleteSelectedImage() {
         const editor = get();
@@ -6142,6 +6376,72 @@ function MilkdownRuntime({
           ctx.get(editorViewCtx).focus();
           insert(markdown)(ctx);
         });
+      },
+      insertTable(size: TableSize) {
+        const editor = get();
+
+        if (!editor) {
+          onChangeRef.current(
+            appendMarkdown(valueRef.current, createMarkdownTable(size)),
+          );
+          return true;
+        }
+
+        let didInsert = false;
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+
+          if (isInTable(view.state)) {
+            return;
+          }
+
+          const table = createTable(ctx, size.rows, size.columns);
+          const tablePos = view.state.selection.from;
+          const tableMap = TableMap.get(table);
+          const transaction = view.state.tr.replaceSelectionWith(table);
+          const insertedTablePos = transaction.mapping.map(tablePos, -1);
+          const firstCellPos = insertedTablePos + 1 + tableMap.map[0];
+          transaction.setSelection(
+            TextSelection.create(transaction.doc, firstCellPos + 2),
+          );
+
+          view.dispatch(transaction.scrollIntoView());
+          view.focus();
+          window.setTimeout(() => view.focus(), 0);
+          didInsert = true;
+        });
+
+        return didInsert;
+      },
+      pasteTableClipboardPayload(payload: TableClipboardPayload) {
+        const editor = get();
+
+        if (!editor) {
+          onChangeRef.current(
+            appendMarkdown(
+              valueRef.current,
+              tableClipboardPayloadToText(payload),
+            ),
+          );
+          return true;
+        }
+
+        let didPaste = false;
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+
+          didPaste = pasteTableClipboardPayloadIntoView(view, payload);
+
+          if (!didPaste) {
+            view.focus();
+            view.pasteText(tableClipboardPayloadToText(payload));
+            didPaste = true;
+          }
+        });
+
+        return didPaste;
       },
       insertImage(image: TyporaImageInsert) {
         const markdown = createMarkdownImageToken({
@@ -6938,16 +7238,17 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
     },
     ref,
   ) {
+    const normalizedValue = normalizeMarkdownHtmlBreaks(value);
     const rootRef = useRef<HTMLElement | null>(null);
     const controllerRef = useRef<TyporaEditorHandle | null>(null);
-    const markdownRef = useRef(value);
+    const markdownRef = useRef(normalizedValue);
     const onChangeRef = useRef(onChange);
     const onPasteRef = useRef(onPaste);
-    const valueRef = useRef(value);
+    const valueRef = useRef(normalizedValue);
 
     onChangeRef.current = onChange;
     onPasteRef.current = onPaste;
-    valueRef.current = value;
+    valueRef.current = normalizedValue;
 
     useEffect(() => {
       const root = rootRef.current;
@@ -6957,6 +7258,19 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
       }
 
       const listener = (event: globalThis.ClipboardEvent) => {
+        const payload = parseTableClipboardPayload(
+          event.clipboardData?.getData(tableClipboardMimeType),
+        );
+
+        if (
+          payload &&
+          controllerRef.current?.pasteTableClipboardPayload(payload)
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+
         onPasteRef.current(event as unknown as ClipboardEvent<HTMLElement>);
       };
 
@@ -6968,6 +7282,23 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
     }, []);
 
     function handleCopyCapture(event: ClipboardEvent<HTMLElement>) {
+      const tableData = controllerRef.current?.getTableClipboardData();
+
+      if (tableData) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.clipboardData.setData("text/plain", tableData.text);
+
+        if (tableData.payload) {
+          event.clipboardData.setData(
+            tableClipboardMimeType,
+            serializeTableClipboardPayload(tableData.payload),
+          );
+        }
+
+        return;
+      }
+
       handleImageClipboardCapture(event, "copy");
     }
 
@@ -7029,14 +7360,45 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
         ? markdownRef.current
         : selection.toString();
       const imageTokens = collectClipboardImageTokens(markdown);
+      const singleDomImage = getSingleDomSelectionImage(selection, root);
 
-      if (!imageTokens.length) {
+      if (!imageTokens.length && !singleDomImage) {
         return;
       }
 
       event.preventDefault();
       event.stopPropagation();
-      event.clipboardData.setData("text/plain", markdown);
+      event.clipboardData.setData(
+        "text/plain",
+        singleDomImage?.markdown ?? markdown,
+      );
+
+      const singleImage = getSingleClipboardImageToken(markdown);
+
+      if (singleImage) {
+        void writeTyporaImageClipboardData({
+          filePath,
+          image: {
+            alt: singleImage.alt,
+            markdown: markdown.trim(),
+            source:
+              resolveDocumentResourceUrl(singleImage.source, filePath) ||
+              singleImage.source,
+            title: singleImage.title,
+          },
+          onCopyImage,
+        });
+        return;
+      }
+
+      if (singleDomImage) {
+        void writeTyporaImageClipboardData({
+          filePath,
+          image: singleDomImage,
+          onCopyImage,
+        });
+        return;
+      }
 
       void writeMarkdownRichClipboard(markdown, filePath);
     }
@@ -7056,11 +7418,17 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
         deleteSelectedImage() {
           return controllerRef.current?.deleteSelectedImage() ?? false;
         },
+        focusEditor() {
+          controllerRef.current?.focusEditor();
+        },
         focusAtClientPoint(clientX: number, clientY: number) {
           controllerRef.current?.focusAtClientPoint(clientX, clientY);
         },
         getSelectedImageClipboardData() {
           return controllerRef.current?.getSelectedImageClipboardData() ?? null;
+        },
+        getTableClipboardData() {
+          return controllerRef.current?.getTableClipboardData() ?? null;
         },
         insertDocumentReference(target: string, display?: string) {
           if (controllerRef.current) {
@@ -7098,6 +7466,29 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
           }
 
           onChangeRef.current(appendMarkdown(valueRef.current, markdown));
+        },
+        insertTable(size: TableSize) {
+          if (controllerRef.current) {
+            return controllerRef.current.insertTable(size);
+          }
+
+          onChangeRef.current(
+            appendMarkdown(valueRef.current, createMarkdownTable(size)),
+          );
+          return true;
+        },
+        pasteTableClipboardPayload(payload: TableClipboardPayload) {
+          if (controllerRef.current) {
+            return controllerRef.current.pasteTableClipboardPayload(payload);
+          }
+
+          onChangeRef.current(
+            appendMarkdown(
+              valueRef.current,
+              tableClipboardPayloadToText(payload),
+            ),
+          );
+          return true;
         },
         rememberDocumentReferenceInsertionPoint() {
           controllerRef.current?.rememberDocumentReferenceInsertionPoint();
@@ -7185,7 +7576,26 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
             src,
           });
         }}
-        onPasteCapture={onPaste}
+        onPasteCapture={(event) => {
+          if (event.defaultPrevented) {
+            return;
+          }
+
+          const payload = parseTableClipboardPayload(
+            event.clipboardData.getData(tableClipboardMimeType),
+          );
+
+          if (
+            payload &&
+            controllerRef.current?.pasteTableClipboardPayload(payload)
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+
+          onPaste(event);
+        }}
         spellCheck={false}
       >
         <MilkdownProvider>
@@ -7204,7 +7614,7 @@ export const TyporaEditor = forwardRef<TyporaEditorHandle, TyporaEditorProps>(
             onRequestDocumentReference={onRequestDocumentReference}
             onRequestTableInsert={onRequestTableInsert}
             rootRef={rootRef}
-            value={value}
+            value={normalizedValue}
             valueRef={valueRef}
           />
         </MilkdownProvider>

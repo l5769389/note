@@ -48,6 +48,7 @@ type DesktopApi = {
     }>
   >;
   readClipboardText: () => Promise<string>;
+  readClipboardTablePayload: () => Promise<string>;
   writeRichHtmlToClipboard: (payload: {
     html?: string;
     text?: string;

@@ -168,7 +168,7 @@ function createGraph(items: WorkspaceRelationItem[]) {
 
   const edges: Edge[] = pairs.map((pair) => {
     const isDocumentRelation = pair.documentCount > 0;
-    const color = isDocumentRelation ? "#6366f1" : "#14b8a6";
+    const color = isDocumentRelation ? "#6254E8" : "#14b8a6";
     const label =
       pair.count > 1
         ? `${pair.count} 条`

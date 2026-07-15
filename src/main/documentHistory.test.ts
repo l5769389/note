@@ -48,6 +48,24 @@ describe("document history", () => {
     expect(versions[0].id).toBe(version?.id);
   });
 
+  it("keeps the original content save time separate from the checkpoint time", async () => {
+    const root = await makeTempDir();
+    const historyRootPath = join(root, "history");
+    const filePath = join(root, "note.md");
+    const contentUpdatedAt = new Date("2026-01-01T10:00:00.000Z");
+
+    const version = await maybeCreateDocumentHistoryVersion({
+      contentUpdatedAt,
+      filePath,
+      historyRootPath,
+      nextContent: "next",
+      previousContent: "previous",
+    });
+
+    expect(version?.contentUpdatedAt).toBe(contentUpdatedAt.toISOString());
+    expect(version?.createdAt).not.toBe(version?.contentUpdatedAt);
+  });
+
   it("does not create duplicate automatic snapshots for the same content", async () => {
     const root = await makeTempDir();
     const historyRootPath = join(root, "history");
@@ -71,7 +89,7 @@ describe("document history", () => {
     ).resolves.toHaveLength(1);
   });
 
-  it("throttles automatic snapshots for five minutes", async () => {
+  it("creates automatic checkpoints at a one-minute cadence", async () => {
     const root = await makeTempDir();
     const historyRootPath = join(root, "history");
     const filePath = join(root, "note.md");
@@ -88,7 +106,7 @@ describe("document history", () => {
       listDocumentHistoryVersions({ filePath, historyRootPath }),
     ).resolves.toHaveLength(1);
 
-    vi.setSystemTime(new Date("2026-01-01T00:04:59.000Z"));
+    vi.setSystemTime(new Date("2026-01-01T00:00:59.000Z"));
     await maybeCreateDocumentHistoryVersion({
       filePath,
       historyRootPath,
@@ -99,7 +117,7 @@ describe("document history", () => {
       listDocumentHistoryVersions({ filePath, historyRootPath }),
     ).resolves.toHaveLength(1);
 
-    vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
+    vi.setSystemTime(new Date("2026-01-01T00:01:00.000Z"));
     await maybeCreateDocumentHistoryVersion({
       filePath,
       historyRootPath,

@@ -86,6 +86,18 @@ describe("workspace storage helpers", () => {
         title: "D:/Docs/B.pdf",
       },
     ]);
+    expect(storedDocument!.title).toBe("manual");
+  });
+
+  it("repairs stale local titles from the file path", () => {
+    const normalized = normalizeWorkspaceSnapshot({
+      activeDocumentId: "doc",
+      documents: [document({ filePath: "/notes/a.md", title: "A heading" })],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      version: 1,
+    });
+
+    expect(normalized.documents[0]?.title).toBe("a");
   });
 
   it("falls back to an initial workspace for invalid stored data", () => {

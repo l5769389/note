@@ -19,6 +19,18 @@ export function clampImageWidth(width: number) {
   return Math.max(minImageWidth, Math.min(maxImageWidth, Math.round(width)));
 }
 
+export function getImageResizeStartWidth(
+  renderedWidth: number | null | undefined,
+  fallbackWidth: number | null | undefined,
+) {
+  const width =
+    typeof renderedWidth === "number" && Number.isFinite(renderedWidth) && renderedWidth > 0
+      ? renderedWidth
+      : fallbackWidth;
+
+  return clampImageWidth(width ?? minImageWidth);
+}
+
 export function getDefaultImageFitMode(
   width: number | null | undefined,
   height: number | null | undefined,

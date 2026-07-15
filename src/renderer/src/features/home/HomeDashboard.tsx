@@ -206,30 +206,15 @@ export function HomeDashboard({
               <img src={logoUrl} alt="" draggable={false} />
             </div>
             <div className="home-brand-copy">
-              <span>noteDock</span>
               <h1>工作台</h1>
               <p>开始今天的整理、阅读与写作。</p>
             </div>
-            <div className="home-hero-visual" aria-hidden="true">
-              <div className="home-hero-sheet">
-                <span />
-                <span />
-                <span />
-              </div>
-              <div className="home-hero-fold" />
-              <div className="home-hero-pencil" />
-            </div>
-          </section>
-
-          <section className="home-shortcut-panel" aria-label="快捷操作">
-            <header className="home-section-header">
-              <h2>快捷操作</h2>
-            </header>
-            <div className="home-brand-actions">
+            <div className="home-brand-actions" aria-label="快捷操作">
               <HomeQuickAction
                 icon={<FilePlus2 size={18} />}
                 label="新建文档"
                 onClick={onCreateDocument}
+                variant="primary"
               />
               <HomeQuickAction
                 icon={<FolderOpen size={18} />}
@@ -336,6 +321,7 @@ export function HomeDashboard({
               )}
             </div>
           </section>
+
         </section>
 
         {showSideColumn ? (

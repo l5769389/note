@@ -259,6 +259,9 @@ export function DirectoryFileList({
         const preview = getFileListPreview(file.document);
         const kindLabel = getDocumentKindLabel(file.document, file.path);
         const displayDetail = preview || kindLabel;
+        const secondaryDetail = [file.directoryLabel, displayDetail]
+          .filter(Boolean)
+          .join(" · ");
         const { baseName, extension } = splitFileName(file.name, file.document);
         const timestamp = file.document?.updatedAt || file.document?.createdAt;
         const isRenaming = renamingEntryPath === file.path;
@@ -308,38 +311,31 @@ export function DirectoryFileList({
               <DocumentFileIcon filePath={file.path} size={17} />
               <span className="directory-file-list-text">
                 <span className="directory-file-list-meta-row">
-                  {file.directoryLabel ? (
-                    <span className="directory-file-list-meta">
-                      {file.directoryLabel}
-                    </span>
-                  ) : (
-                    <span />
-                  )}
+                  <span className="directory-entry-rename directory-file-list-rename">
+                    <input
+                      aria-label="重命名文件"
+                      autoFocus
+                      value={renameInputValue}
+                      onBlur={() => onCommitRename?.(file.path)}
+                      onChange={(event) =>
+                        onRenameDraftChange?.(event.target.value)
+                      }
+                      onClick={(event) => event.stopPropagation()}
+                      onFocus={(event) => event.currentTarget.select()}
+                      onKeyDown={handleRenameKeyDown}
+                      onPointerDown={(event) => event.stopPropagation()}
+                    />
+                    {renameParts.extension ? <em>{renameParts.extension}</em> : null}
+                  </span>
                   {timestamp ? (
                     <time dateTime={timestamp}>
                       {formatRecentTimestamp(timestamp)}
                     </time>
                   ) : null}
                 </span>
-                <span className="directory-entry-rename directory-file-list-rename">
-                  <input
-                    aria-label="重命名文件"
-                    autoFocus
-                    value={renameInputValue}
-                    onBlur={() => onCommitRename?.(file.path)}
-                    onChange={(event) =>
-                      onRenameDraftChange?.(event.target.value)
-                    }
-                    onClick={(event) => event.stopPropagation()}
-                    onFocus={(event) => event.currentTarget.select()}
-                    onKeyDown={handleRenameKeyDown}
-                    onPointerDown={(event) => event.stopPropagation()}
-                  />
-                  {renameParts.extension ? <em>{renameParts.extension}</em> : null}
-                </span>
-                {displayDetail ? (
+                {secondaryDetail ? (
                   <span className="directory-file-list-preview">
-                    {displayDetail}
+                    {secondaryDetail}
                   </span>
                 ) : null}
               </span>
@@ -397,26 +393,19 @@ export function DirectoryFileList({
             <DocumentFileIcon filePath={file.path} size={17} />
             <span className="directory-file-list-text">
               <span className="directory-file-list-meta-row">
-                {file.directoryLabel ? (
-                  <span className="directory-file-list-meta">
-                    {file.directoryLabel}
-                  </span>
-                ) : (
-                  <span />
-                )}
+                <span className="directory-file-list-title">
+                  <strong>{baseName}</strong>
+                  {extension ? <em>{extension}</em> : null}
+                </span>
                 {timestamp ? (
                   <time dateTime={timestamp}>
                     {formatRecentTimestamp(timestamp)}
                   </time>
                 ) : null}
               </span>
-              <span className="directory-file-list-title">
-                <strong>{baseName}</strong>
-                {extension ? <em>{extension}</em> : null}
-              </span>
-              {displayDetail ? (
+              {secondaryDetail ? (
                 <span className="directory-file-list-preview">
-                  {displayDetail}
+                  {secondaryDetail}
                 </span>
               ) : null}
             </span>

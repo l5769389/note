@@ -6,6 +6,9 @@ import {
   defaultAppSettings,
   formatEditorFontSizeAdjustment,
   getAdjustedEditorFontSize,
+  getDiaryFontFamily,
+  getDiaryFontSize,
+  getDiaryLineHeight,
   getEditorCodeFontFamily,
   getEditorContentDensityStyle,
   getEditorContentWidth,
@@ -56,9 +59,15 @@ describe("loadAppSettings", () => {
               editorFontSize: "16px",
               editorLineHeight: "2",
               editorMode: "split",
+              diaryDefaultTemplate: "daily-review",
+              diaryFontFamily: "handwriting",
+              diaryFontSize: "19px",
+              diaryLineHeight: "2.15",
+              homeShowDiaryPanel: false,
               homeShowNotePanel: false,
               homeShowTodoPanel: false,
               settingsVersion: appSettingsVersion,
+              sidebarTabOrder: ["files", "current", "diary"],
               imageUploadEndpoint: "https://example.com/upload",
               remoteServerUrl: "https://example.com/sync",
             })
@@ -74,9 +83,15 @@ describe("loadAppSettings", () => {
       editorFontSize: "16px",
       editorLineHeight: "2",
       editorMode: "split",
+      diaryDefaultTemplate: "daily-review",
+      diaryFontFamily: "handwriting",
+      diaryFontSize: "19px",
+      diaryLineHeight: "2.15",
+      homeShowDiaryPanel: false,
       homeShowNotePanel: false,
       homeShowTodoPanel: false,
       settingsVersion: appSettingsVersion,
+      sidebarTabOrder: ["files", "current", "diary"],
     });
   });
 
@@ -97,6 +112,56 @@ describe("loadAppSettings", () => {
     expect(loadAppSettings(storage)).toEqual(defaultAppSettings);
   });
 
+  it("normalizes sidebar tab order values", () => {
+    const storage = {
+      getItem: () =>
+        JSON.stringify({
+          settingsVersion: appSettingsVersion,
+          sidebarTabOrder: ["current", "missing", "current", "diary"],
+        }),
+    } as unknown as Storage;
+
+    expect(loadAppSettings(storage).sidebarTabOrder).toEqual([
+      "current",
+      "diary",
+      "files",
+    ]);
+  });
+
+  it("normalizes diary typography settings", () => {
+    const storage = {
+      getItem: () =>
+        JSON.stringify({
+          settingsVersion: appSettingsVersion,
+          diaryFontFamily: "xingkai",
+          diaryFontSize: "20px",
+          diaryLineHeight: "2.15",
+        }),
+    } as unknown as Storage;
+
+    expect(loadAppSettings(storage)).toMatchObject({
+      diaryFontFamily: "xingkai",
+      diaryFontSize: "20px",
+      diaryLineHeight: "2.15",
+    });
+
+    const invalidStorage = {
+      getItem: () =>
+        JSON.stringify({
+          settingsVersion: appSettingsVersion,
+          diaryFontFamily: "missing",
+          diaryFontSize: "12px",
+          diaryLineHeight: "9",
+        }),
+    } as unknown as Storage;
+
+    expect(loadAppSettings(invalidStorage)).toMatchObject({
+      diaryFontFamily: defaultAppSettings.diaryFontFamily,
+      diaryFontSize: defaultAppSettings.diaryFontSize,
+      diaryLineHeight: defaultAppSettings.diaryLineHeight,
+    });
+  });
+
   it("migrates legacy default typography to theme-backed defaults", () => {
     const storage = {
       getItem: () =>
@@ -113,22 +178,33 @@ describe("loadAppSettings", () => {
     expect(loadAppSettings(storage)).toEqual(defaultAppSettings);
   });
 
-  it("infers a content density when migrating older typography settings", () => {
+  it("moves all older typography settings to the comfortable reading preset", () => {
     const storage = {
       getItem: () =>
         JSON.stringify({
+          editorCodeFontFamily: "consolas",
+          editorContentDensity: "compact",
+          editorContentWidth: "980px",
+          editorFontFamily: "serif",
           editorFontSize: "14px",
+          editorFontSizeAdjustment: -1,
           editorLineHeight: "1.55",
           editorMode: "typora",
+          diaryDefaultTemplate: "missing",
+          settingsVersion: 8,
         }),
     } as unknown as Storage;
 
     expect(loadAppSettings(storage)).toEqual({
       ...defaultAppSettings,
-      editorContentDensity: "compact",
+      diaryDefaultTemplate: "blank",
+      editorCodeFontFamily: "consolas",
+      editorContentDensity: "comfortable",
+      editorContentWidth: "980px",
+      editorFontFamily: "serif",
       editorFontSizeAdjustment: 0,
-      editorFontSize: "14px",
-      editorLineHeight: "1.55",
+      editorFontSize: "theme",
+      editorLineHeight: "theme",
     });
   });
 });
@@ -149,15 +225,25 @@ describe("editor font helpers", () => {
     expect(getEditorContentWidth("theme")).toBe(
       "var(--theme-editor-content-width)",
     );
+    expect(getDiaryFontSize("theme")).toBe("var(--editor-font-size)");
+    expect(getDiaryLineHeight("theme")).toBe("var(--editor-line-height)");
+  });
+
+  it("returns diary font stacks for handwritten presets", () => {
+    expect(getDiaryFontFamily("handwriting")).toContain("HanziPen");
+    expect(getDiaryFontFamily("xingkai")).toContain("STXingkai");
+    expect(getDiaryFontSize("18px")).toBe("18px");
+    expect(getDiaryLineHeight("2")).toBe("2");
   });
 
   it("returns content density styles for reader size presets", () => {
     expect(getEditorContentDensityStyle("compact").fontSize).toBe(
       "calc(var(--theme-editor-font-size) - 0.5px)",
     );
-    expect(getEditorContentDensityStyle("normal").lineHeight).toBe(
-      "var(--theme-editor-line-height)",
+    expect(getEditorContentDensityStyle("normal").fontSize).toBe(
+      "calc(var(--theme-editor-font-size) + 0.5px)",
     );
+    expect(getEditorContentDensityStyle("normal").lineHeight).toBe("1.76");
     expect(getEditorContentDensityStyle("comfortable").contentWidth).toBe("820px");
   });
 

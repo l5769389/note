@@ -125,11 +125,18 @@ describe("HomeDashboard", () => {
     const html = renderHomeDashboard();
 
     expect(html).toContain("工作台");
-    expect(html).toContain("快捷操作");
+    expect(html).not.toContain("noteDock");
+    expect(html).toContain('aria-label="快捷操作"');
+    expect(html).not.toContain("home-shortcut-panel");
+    expect(html).toContain(
+      'class="home-quick-action home-quick-action-primary"',
+    );
     expect(html).toContain("还没有最近文档");
+    expect(html).not.toContain("写今天");
     expect(html).toContain("暂无待办");
     expect(html).not.toContain("0 项未完成");
     expect(html).toContain("保存后的便签会显示在这里");
+    expect(html).toContain("home-side-column");
   });
 
   it("renders recent documents, todos, and notes", () => {
@@ -176,5 +183,14 @@ describe("HomeDashboard", () => {
     expect(html).not.toContain("灵感便签");
     expect(html).not.toContain("整理会议笔记");
     expect(html).not.toContain("一个临时想法");
+  });
+
+  it("keeps diary entry points out of the home dashboard", () => {
+    const html = renderHomeDashboard();
+
+    expect(html).not.toContain('aria-label="日记"');
+    expect(html).not.toContain("写今天");
+    expect(html).not.toContain("进入日记");
+    expect(html).not.toContain("home-diary-panel");
   });
 });

@@ -3,6 +3,10 @@ import {
   legacyNoteDockStorageKeys,
   noteDockStorageKeys,
 } from "./storageKeys";
+import {
+  normalizeDiaryTemplateId,
+  type DiaryTemplateId,
+} from "./diaryModel";
 
 export const appThemeValues = [
   "paper",
@@ -16,7 +20,25 @@ export const appThemeValues = [
 
 export type AppTheme = (typeof appThemeValues)[number];
 
+export const sidebarTabOrderValues = ["diary", "files", "current"] as const;
+
+export type SidebarTabOrderItem = (typeof sidebarTabOrderValues)[number];
+
+export const diaryFontFamilyValues = [
+  "theme",
+  "handwriting",
+  "kaiti",
+  "xingkai",
+  "serif",
+] as const;
+
+export type DiaryFontFamily = (typeof diaryFontFamilyValues)[number];
+
 export type AppSettings = {
+  diaryDefaultTemplate: DiaryTemplateId;
+  diaryFontFamily: DiaryFontFamily;
+  diaryFontSize: string;
+  diaryLineHeight: string;
   editorCodeFontFamily: string;
   editorContentWidth: string;
   editorContentDensity: EditorContentDensity;
@@ -25,14 +47,16 @@ export type AppSettings = {
   editorFontSize: string;
   editorLineHeight: string;
   editorMode: "typora" | "source" | "split" | "preview";
+  homeShowDiaryPanel: boolean;
   homeShowNotePanel: boolean;
   homeShowTodoPanel: boolean;
   settingsVersion: number;
+  sidebarTabOrder: SidebarTabOrderItem[];
 };
 
 export const appSettingsStorageKey = noteDockStorageKeys.appSettings;
 export const appThemeStorageKey = noteDockStorageKeys.theme;
-export const appSettingsVersion = 4;
+export const appSettingsVersion = 9;
 
 const themeValue = "theme";
 
@@ -60,17 +84,23 @@ const legacyDefaultSettings = {
 };
 
 export const defaultAppSettings: AppSettings = {
+  diaryDefaultTemplate: "blank",
+  diaryFontFamily: themeValue,
+  diaryFontSize: "18px",
+  diaryLineHeight: "2",
   editorCodeFontFamily: themeValue,
-  editorContentDensity: "normal",
+  editorContentDensity: "comfortable",
   editorContentWidth: themeValue,
   editorFontFamily: themeValue,
   editorFontSizeAdjustment: 0,
   editorFontSize: themeValue,
   editorLineHeight: themeValue,
   editorMode: "typora",
+  homeShowDiaryPanel: true,
   homeShowNotePanel: true,
   homeShowTodoPanel: true,
   settingsVersion: appSettingsVersion,
+  sidebarTabOrder: [...sidebarTabOrderValues],
 };
 
 export const themeOptions: Array<{ label: string; value: AppTheme }> = [
@@ -175,8 +205,54 @@ export const editorCodeFontOptions: FontOption[] = [
   },
 ];
 
+export const diaryFontOptions: FontOption[] = [
+  {
+    label: "跟随笔记",
+    value: themeValue,
+    cssFamily: "var(--editor-font-family)",
+  },
+  {
+    label: "手写感",
+    value: "handwriting",
+    cssFamily:
+      '"Hannotate SC", "HanziPen SC", "Xingkai SC", "STXingkai", "Kaiti SC", KaiTi, "Segoe Print", "Bradley Hand", cursive',
+  },
+  {
+    label: "楷体",
+    value: "kaiti",
+    cssFamily: 'KaiTi, "Kaiti SC", STKaiti, serif',
+  },
+  {
+    label: "行楷",
+    value: "xingkai",
+    cssFamily:
+      '"Xingkai SC", "STXingkai", "HanziPen SC", "Kaiti SC", KaiTi, cursive',
+  },
+  {
+    label: "柔和衬线",
+    value: "serif",
+    cssFamily:
+      'Georgia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif',
+  },
+];
+
+export const diaryFontSizeOptions: SelectOption[] = [
+  { label: "跟随笔记", value: themeValue },
+  { label: "标准 · 17px", value: "17px" },
+  { label: "舒适 · 18px", value: "18px" },
+  { label: "宽松 · 19px", value: "19px" },
+  { label: "大字 · 20px", value: "20px" },
+];
+
+export const diaryLineHeightOptions: SelectOption[] = [
+  { label: "跟随笔记", value: themeValue },
+  { label: "舒适 · 1.9", value: "1.9" },
+  { label: "日记 · 2.0", value: "2" },
+  { label: "宽松 · 2.15", value: "2.15" },
+];
+
 export const editorFontSizeOptions: SelectOption[] = [
-  { label: "跟随主题", value: themeValue },
+  { label: "跟随阅读预设", value: themeValue },
   { label: "小 · 14px", value: "14px" },
   { label: "默认 · 15px", value: "15px" },
   { label: "舒适 · 16px", value: "16px" },
@@ -184,14 +260,14 @@ export const editorFontSizeOptions: SelectOption[] = [
 ];
 
 export const editorLineHeightOptions: SelectOption[] = [
-  { label: "跟随主题", value: themeValue },
+  { label: "跟随阅读预设", value: themeValue },
   { label: "紧凑 · 1.55", value: "1.55" },
   { label: "默认 · 1.78", value: "1.78" },
   { label: "宽松 · 2.0", value: "2" },
 ];
 
 export const editorContentWidthOptions: SelectOption[] = [
-  { label: "跟随主题", value: themeValue },
+  { label: "跟随阅读预设", value: themeValue },
   { label: "窄 · 760px", value: "760px" },
   { label: "默认 · 860px", value: "860px" },
   { label: "宽 · 980px", value: "980px" },
@@ -237,9 +313,9 @@ const editorContentDensityStyles: Record<
   normal: {
     blockMargin: "var(--theme-block-margin)",
     codeBlockMargin: "var(--theme-code-block-margin)",
-    contentWidth: "var(--theme-editor-content-width)",
-    fontSize: "calc(var(--theme-editor-font-size) + 1px)",
-    lineHeight: "var(--theme-editor-line-height)",
+    contentWidth: "900px",
+    fontSize: "calc(var(--theme-editor-font-size) + 0.5px)",
+    lineHeight: "1.76",
     listMargin: "var(--theme-list-margin)",
     paragraphMargin: "var(--theme-paragraph-margin)",
     tableCellPadding: "8px 12px",
@@ -248,8 +324,8 @@ const editorContentDensityStyles: Record<
     blockMargin: "1.24em 0",
     codeBlockMargin: "1.15em 0",
     contentWidth: "820px",
-    fontSize: "calc(var(--theme-editor-font-size) + 2.5px)",
-    lineHeight: "1.92",
+    fontSize: "calc(var(--theme-editor-font-size) + 1px)",
+    lineHeight: "1.86",
     listMargin: "0.58em 0 1.08em",
     paragraphMargin: "0 0 1em",
     tableCellPadding: "10px 14px",
@@ -302,6 +378,10 @@ export function getEditorCodeFontFamily(value: string) {
   return getFontFamily(editorCodeFontOptions, value);
 }
 
+export function getDiaryFontFamily(value: string) {
+  return getFontFamily(diaryFontOptions, value);
+}
+
 function getThemeBackedValue(value: string, cssVariable: string) {
   return value === themeValue ? `var(${cssVariable})` : value;
 }
@@ -316,6 +396,14 @@ export function getEditorLineHeight(value: string) {
 
 export function getEditorContentWidth(value: string) {
   return getThemeBackedValue(value, "--theme-editor-content-width");
+}
+
+export function getDiaryFontSize(value: string) {
+  return value === themeValue ? "var(--editor-font-size)" : value;
+}
+
+export function getDiaryLineHeight(value: string) {
+  return value === themeValue ? "var(--editor-line-height)" : value;
 }
 
 export function getEditorContentDensityStyle(value: EditorContentDensity) {
@@ -364,30 +452,6 @@ export function getAdjustedEditorFontSize(
   return `calc(${baseFontSize} ${operator} ${Math.abs(normalizedAdjustment)}px)`;
 }
 
-function inferContentDensityFromTypography(settings: Partial<AppSettings>) {
-  if (
-    editorContentDensityOptions.some(
-      (option) => option.value === settings.editorContentDensity,
-    )
-  ) {
-    return settings.editorContentDensity as EditorContentDensity;
-  }
-
-  if (settings.editorFontSize === "14px" || settings.editorLineHeight === "1.55") {
-    return "compact";
-  }
-
-  if (
-    settings.editorFontSize === "16px" ||
-    settings.editorFontSize === "18px" ||
-    settings.editorLineHeight === "2"
-  ) {
-    return "comfortable";
-  }
-
-  return defaultAppSettings.editorContentDensity;
-}
-
 function normalizeTypographyValue(
   options: readonly SelectOption[],
   value: unknown,
@@ -404,6 +468,27 @@ function normalizeBooleanSetting(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
 }
 
+export function normalizeSidebarTabOrder(value: unknown): SidebarTabOrderItem[] {
+  const result: SidebarTabOrderItem[] = [];
+  const source = Array.isArray(value) ? value : [];
+
+  for (const item of source) {
+    const allowedValue = sidebarTabOrderValues.find((tab) => tab === item);
+
+    if (allowedValue && !result.includes(allowedValue)) {
+      result.push(allowedValue);
+    }
+  }
+
+  for (const item of sidebarTabOrderValues) {
+    if (!result.includes(item)) {
+      result.push(item);
+    }
+  }
+
+  return result;
+}
+
 export function normalizeAppSettings(settings: unknown): AppSettings {
   const source =
     settings && typeof settings === "object"
@@ -412,6 +497,24 @@ export function normalizeAppSettings(settings: unknown): AppSettings {
   const hasCurrentVersion = source.settingsVersion === appSettingsVersion;
 
   return {
+    diaryDefaultTemplate: normalizeDiaryTemplateId(
+      source.diaryDefaultTemplate,
+    ),
+    diaryFontFamily: getAllowedValue(
+      diaryFontOptions,
+      source.diaryFontFamily,
+      defaultAppSettings.diaryFontFamily,
+    ) as DiaryFontFamily,
+    diaryFontSize: getAllowedValue(
+      diaryFontSizeOptions,
+      source.diaryFontSize,
+      defaultAppSettings.diaryFontSize,
+    ),
+    diaryLineHeight: getAllowedValue(
+      diaryLineHeightOptions,
+      source.diaryLineHeight,
+      defaultAppSettings.diaryLineHeight,
+    ),
     editorCodeFontFamily: hasCurrentVersion
       ? getAllowedValue(editorCodeFontOptions, source.editorCodeFontFamily, themeValue)
       : normalizeTypographyValue(
@@ -425,7 +528,7 @@ export function normalizeAppSettings(settings: unknown): AppSettings {
           source.editorContentDensity,
           defaultAppSettings.editorContentDensity,
         ) as EditorContentDensity)
-      : inferContentDensityFromTypography(source),
+      : "comfortable",
     editorContentWidth: hasCurrentVersion
       ? getAllowedValue(editorContentWidthOptions, source.editorContentWidth, themeValue)
       : normalizeTypographyValue(
@@ -440,28 +543,24 @@ export function normalizeAppSettings(settings: unknown): AppSettings {
           source.editorFontFamily,
           legacyDefaultSettings.editorFontFamily,
         ),
-    editorFontSizeAdjustment: normalizeEditorFontSizeAdjustment(
-      source.editorFontSizeAdjustment,
-    ),
+    editorFontSizeAdjustment: hasCurrentVersion
+      ? normalizeEditorFontSizeAdjustment(source.editorFontSizeAdjustment)
+      : 0,
     editorFontSize: hasCurrentVersion
       ? getAllowedValue(editorFontSizeOptions, source.editorFontSize, themeValue)
-      : normalizeTypographyValue(
-          editorFontSizeOptions,
-          source.editorFontSize,
-          legacyDefaultSettings.editorFontSize,
-        ),
+      : themeValue,
     editorLineHeight: hasCurrentVersion
       ? getAllowedValue(editorLineHeightOptions, source.editorLineHeight, themeValue)
-      : normalizeTypographyValue(
-          editorLineHeightOptions,
-          source.editorLineHeight,
-          legacyDefaultSettings.editorLineHeight,
-        ),
+      : themeValue,
     editorMode: getAllowedValue(
       editorModeOptions,
       source.editorMode,
       defaultAppSettings.editorMode,
     ) as AppSettings["editorMode"],
+    homeShowDiaryPanel: normalizeBooleanSetting(
+      source.homeShowDiaryPanel,
+      defaultAppSettings.homeShowDiaryPanel,
+    ),
     homeShowNotePanel: normalizeBooleanSetting(
       source.homeShowNotePanel,
       defaultAppSettings.homeShowNotePanel,
@@ -471,6 +570,7 @@ export function normalizeAppSettings(settings: unknown): AppSettings {
       defaultAppSettings.homeShowTodoPanel,
     ),
     settingsVersion: appSettingsVersion,
+    sidebarTabOrder: normalizeSidebarTabOrder(source.sidebarTabOrder),
   };
 }
 

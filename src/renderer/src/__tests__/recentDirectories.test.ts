@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeDirectoryKey,
   rememberRecentDirectoryPath,
+  shouldShowInRecentDirectories,
 } from "../recentDirectories";
 
 describe("recent directory helpers", () => {
@@ -29,5 +30,17 @@ describe("recent directory helpers", () => {
       "D:/three",
       "D:/one",
     ]);
+  });
+
+  it("hides diary directories from recent directories", () => {
+    expect(
+      shouldShowInRecentDirectories(
+        "/Users/jun/Notes/日记/2026/07",
+        "/Users/jun/Notes",
+      ),
+    ).toBe(false);
+    expect(
+      shouldShowInRecentDirectories("/Users/jun/Notes/project", "/Users/jun/Notes"),
+    ).toBe(true);
   });
 });
